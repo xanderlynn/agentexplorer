@@ -3,7 +3,7 @@
 // printed once. MIT, Apache-2.0, BSD and ISC all require these notices to be
 // distributed with the binary. Uses only Node built-ins and `cargo metadata`.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,5 +62,7 @@ for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
 const rule = "-".repeat(78);
 let out = `Execution Ledger includes the following third-party software.\n${entries.length} packages.\n\n`;
 for (const [text, names] of groups) out += `${rule}\n${names.join("\n")}\n${rule}\n\n${text}\n\n`;
+// public/ holds only generated files, so it may not exist in a fresh clone.
+mkdirSync(join(root, "public"), { recursive: true });
 writeFileSync(join(root, "public", "third-party-notices.txt"), out);
 console.log(`Wrote third-party notices for ${entries.length} packages in ${groups.size} license groups.`);
