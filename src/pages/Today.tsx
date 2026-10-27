@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, FlaskConical, Target } from "lucide-react";
+import { ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
 import { api } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
+import { Swimlanes } from "../components/Swimlanes";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
@@ -30,6 +31,11 @@ export default function Today({
   const goals = useQuery({ queryKey: ["goals"], queryFn: api.goals });
   const intents = useQuery({ queryKey: ["intents"], queryFn: api.intents });
   const insights = useQuery({ queryKey: ["insights", 30], queryFn: () => api.insights(30) });
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const since = midnight.getTime();
+  const lanes = useQuery({ queryKey: ["timelines", since], queryFn: () => api.timelines(since), refetchInterval: 30_000 });
+  const unusual = useQuery({ queryKey: ["anomalies", 14], queryFn: () => api.anomalies(14) });
 
   const waiting = live.data?.sessions.filter((s) => s.state === "waiting" || s.state === "needs_you") ?? [];
   const active = exps.data?.filter((e) => e.status === "active") ?? [];
@@ -67,6 +73,12 @@ export default function Today({
               </li>
             ))}
           </ul>
+        </Card>
+      )}
+
+      {lanes.data && lanes.data.length > 0 && (
+        <Card title="Today's agents" className="mb-4">
+          <Swimlanes lanes={lanes.data} since={since} onOpen={onOpen} />
         </Card>
       )}
 
@@ -163,6 +175,24 @@ export default function Today({
           </Card>
         </div>
       </div>
+
+      {unusual.data && unusual.data.length > 0 && (
+        <Card title="Unusual sessions (last 2 weeks)" className="mt-4">
+          <ul className="divide-y divide-zinc-800/70">
+            {unusual.data.slice(0, 5).map((a) => (
+              <li key={a.id}>
+                <button className="flex w-full items-start gap-3 py-2 text-left hover:bg-zinc-800/30" onClick={() => onOpen(a.id)}>
+                  <Flag size={15} className="mt-0.5 shrink-0 text-amber-400" aria-label="Unusual" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm text-zinc-100">{a.title ?? "Untitled"}</span>
+                    <span className="block text-xs text-zinc-400">{a.reasons.join("; ")}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {insights.data && insights.data.length > 0 && (
         <Card title="Worth a look" className="mt-4" action={<button className="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => go("overview")}>All insights →</button>}>

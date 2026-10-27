@@ -1,0 +1,66 @@
+import type { Lane } from "../api";
+import { SOURCE_COLOR } from "../format";
+import { duration, projectName } from "../format";
+
+/**
+ * One lane per session: agent working (accent) and waiting on you (amber)
+ * across the day, with a "now" line. Shows at a glance when parallel
+ * agents were idling on you.
+ */
+export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: number; onOpen: (id: string) => void }) {
+  const now = Date.now();
+  const start = Math.min(since, ...lanes.flatMap((l) => l.spans.map((s) => s[0])));
+  const span = Math.max(1, now - start);
+  const x = (t: number) => `${((Math.max(t, start) - start) / span) * 100}%`;
+  const w = (a: number, b: number) => `${Math.max(0.2, ((Math.min(b, now) - Math.max(a, start)) / span) * 100)}%`;
+  const hours: number[] = [];
+  const first = new Date(start);
+  first.setMinutes(0, 0, 0);
+  for (let t = first.getTime() + 3_600_000; t < now; t += 3_600_000) hours.push(t);
+
+  return (
+    <div>
+      <div className="relative ml-[9.5rem] h-4 text-xs text-zinc-500">
+        {hours.map((t) => (
+          <span key={t} className="absolute -translate-x-1/2" style={{ left: x(t) }}>
+            {new Date(t).getHours()}
+          </span>
+        ))}
+      </div>
+      <ul className="space-y-1.5">
+        {lanes.map((l) => {
+          const working = l.spans.filter((s) => s[2] === 1).reduce((a, s) => a + s[1] - s[0], 0);
+          const waiting = l.spans.filter((s) => s[2] === 0).reduce((a, s) => a + s[1] - s[0], 0);
+          return (
+            <li key={l.id}>
+              <button className="flex w-full items-center gap-2 text-left" onClick={() => onOpen(l.id)} title={`${duration(working)} working, ${duration(waiting)} waiting on you`}>
+                <span className="w-36 shrink-0 truncate text-xs text-zinc-300">
+                  <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: SOURCE_COLOR[l.source] }} aria-hidden />
+                  {l.title ?? projectName(l.projectPath)}
+                </span>
+                <span className="relative h-4 flex-1 rounded bg-zinc-800/60">
+                  {l.spans.map(([a, b, k], i) => (
+                    <span
+                      key={i}
+                      className="absolute top-0.5 h-3 rounded-sm"
+                      style={{ left: x(a), width: w(a, b), background: k === 1 ? "var(--color-emerald-500)" : "var(--color-amber-500)", opacity: k === 1 ? 0.9 : 0.75 }}
+                    />
+                  ))}
+                  <span className="absolute -top-0.5 h-5 w-px bg-zinc-300" style={{ left: "100%" }} aria-hidden />
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-2 flex gap-4 text-xs text-zinc-400">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> agent working
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" /> waiting on you
+        </span>
+      </div>
+    </div>
+  );
+}

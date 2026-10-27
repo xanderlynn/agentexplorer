@@ -349,6 +349,29 @@ export interface ToolHealth {
   vetoes: number;
 }
 
+export interface Anomaly {
+  id: string;
+  title: string | null;
+  source: Source;
+  startedAt: number | null;
+  reasons: string[];
+}
+
+export interface FailureCluster {
+  cause: string;
+  advice: string;
+  ids: string[];
+}
+
+export interface Lane {
+  id: string;
+  source: Source;
+  title: string | null;
+  projectPath: string | null;
+  /** [start, end, kind]: 1 = agent working, 0 = waiting on you. */
+  spans: [number, number, number][];
+}
+
 export interface MetricDef {
   key: string;
   label: string;
@@ -537,6 +560,9 @@ export const api = {
   exportSessions: (filter: SessionFilter) => invoke<string>("export_sessions", { filter }),
   usage: (days: number) => invoke<Usage>("get_usage", { days }),
   reality: (days: number) => invoke<Reality>("get_reality", { days }),
+  anomalies: (days: number) => invoke<Anomaly[]>("get_anomalies", { days }),
+  failureClusters: (days: number) => invoke<FailureCluster[]>("get_failure_clusters", { days }),
+  timelines: (since: number) => invoke<Lane[]>("get_timelines", { since }),
   fit: (days: number) => invoke<FitCell[]>("get_fit", { days }),
   toolHealth: (days: number) => invoke<ToolHealth[]>("get_tool_health", { days }),
   patterns: (days: number) => invoke<Patterns>("get_patterns", { days }),

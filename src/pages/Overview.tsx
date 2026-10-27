@@ -37,6 +37,7 @@ export default function Overview({
   const ov = useQuery({ queryKey: ["overview", days], queryFn: () => api.overview(days) });
   const ins = useQuery({ queryKey: ["insights", days], queryFn: () => api.insights(days) });
   const unrated = useQuery({ queryKey: ["sessions", { days, outcome: "unrated" }], queryFn: () => api.sessions({ days, outcome: "unrated" }) });
+  const failures = useQuery({ queryKey: ["failures", days], queryFn: () => api.failureClusters(days) });
 
   const header = (
     <PageHeader
@@ -144,6 +145,25 @@ export default function Overview({
           </ul>
         </Card>
       </div>
+
+      {failures.data && failures.data.length > 0 && (
+        <Card title="Why sessions go wrong" className="mt-4">
+          <p className="mb-3 text-xs text-zinc-500">Abandoned, redone, or reworked after shipping, grouped by the clearest signal in each session.</p>
+          <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {failures.data.map((f) => (
+              <li key={f.cause}>
+                <button className="w-full rounded-lg border border-zinc-800 p-3 text-left hover:bg-zinc-800/30" onClick={() => drill({ label: f.cause, ids: f.ids })}>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-medium text-zinc-100">{f.cause}</span>
+                    <span className="text-sm tabular-nums text-zinc-300">{f.ids.length}</span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-zinc-400">{f.advice}</div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Sessions per day" action={<Legend items={[["Shipped", chart.accent], ["Other", chart.muted]]} />}>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Download, Search, X } from "lucide-react";
+import { Download, Flag, Search, X } from "lucide-react";
 import type { Drill } from "../App";
 import { api, OUTCOMES, type Outcome, type Source } from "../api";
 import { Button, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
@@ -41,6 +41,8 @@ export default function Sessions({
     category: category || undefined,
     ...drillFilter,
   };
+  const unusual = useQuery({ queryKey: ["anomalies", filter.days], queryFn: () => api.anomalies(filter.days) });
+  const flagged = new Map((unusual.data ?? []).map((a) => [a.id, a.reasons.join("; ")]));
   const exportCsv = useMutation({ mutationFn: () => api.exportSessions(filter), onSuccess: setExported });
   const q = useQuery({ queryKey: ["sessions", filter], queryFn: () => api.sessions(filter), placeholderData: (prev) => prev });
 
@@ -126,7 +128,10 @@ export default function Sessions({
               {rows.map((s) => (
                 <tr key={s.id} className="cursor-pointer hover:bg-zinc-800/30 [&>td]:px-3 [&>td]:py-2" onClick={() => onOpen(s.id)}>
                   <td className="max-w-md">
-                    <div className="truncate text-zinc-100">{s.title ?? "Untitled"}</div>
+                    <div className="flex items-center gap-1.5 truncate text-zinc-100">
+                      {flagged.has(s.id) && <Flag size={13} className="shrink-0 text-amber-400" aria-label={`Unusual: ${flagged.get(s.id)}`} />}
+                      <span className="truncate" title={flagged.get(s.id)}>{s.title ?? "Untitled"}</span>
+                    </div>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
                       <SourceBadge source={s.source} />
                       <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}{s.category ? ` · ${s.category}` : ""}</span>

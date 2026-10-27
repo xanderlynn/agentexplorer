@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { BookOpenCheck, ChartColumn, Coins, FlaskConical, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
+import { ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
 import { api, type LiveSession, type LiveState, type SessionFilter } from "./api";
 import { cx } from "./components/ui";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Preflight } from "./components/Preflight";
 import { QuickReview } from "./components/QuickReview";
+import { CommandPalette } from "./components/CommandPalette";
 import { projectName } from "./format";
 import Today from "./pages/Today";
 import Experiments from "./pages/Experiments";
@@ -27,20 +28,30 @@ export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
 export type Page = "today" | "experiments" | "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
-const NAV: { id: Page; label: string; icon: typeof Gauge }[] = [
-  { id: "today", label: "Today", icon: Sun },
-  { id: "overview", label: "Overview", icon: Gauge },
-  { id: "live", label: "Live", icon: Radio },
-  { id: "sessions", label: "Sessions", icon: ListChecks },
-  { id: "patterns", label: "Patterns", icon: ChartColumn },
-  { id: "usage", label: "Usage", icon: Coins },
-  { id: "journal", label: "Journal", icon: NotebookPen },
-  { id: "playbooks", label: "Playbooks", icon: BookOpenCheck },
-  { id: "scorecard", label: "Scorecard", icon: Trophy },
-  { id: "experiments", label: "Experiments", icon: FlaskConical },
-  { id: "retro", label: "Weekly retro", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+/**
+ * Six areas, each with one or more tabs. Pages keep their ids so links and
+ * drill-throughs work unchanged; the sidebar shows the area, the tab bar
+ * the page.
+ */
+const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Page; label: string }[] }[] = [
+  { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }, { page: "live", label: "Live agents" }] },
+  { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
+  { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
+  {
+    id: "practice",
+    label: "Practice",
+    icon: ChartColumn,
+    tabs: [
+      { page: "patterns", label: "Patterns" },
+      { page: "journal", label: "Journal" },
+      { page: "playbooks", label: "Playbooks" },
+    ],
+  },
+  { id: "cost", label: "Cost", icon: Coins, tabs: [{ page: "usage", label: "Cost" }] },
+  { id: "improve", label: "Improve", icon: Sparkles, tabs: [{ page: "retro", label: "Weekly retro" }, { page: "experiments", label: "Experiments & goals" }] },
 ];
+
+const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p));
 
 const NEEDS_YOU: LiveState[] = ["waiting", "needs_you"];
 
@@ -65,6 +76,20 @@ export default function App() {
   const qc = useQueryClient();
   const [page, setPage] = useState<Page>(() => readStored("page", "today"));
   const [planning, setPlanning] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const group = groupOf(page);
+
+  // ⌘K / Ctrl+K opens the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [days, setDays] = useState<number>(() => readStored("days", 30));
   const [openSession, setOpenSession] = useState<string | null>(null);
   const [drill, setDrill] = useState<Drill | null>(null);
@@ -103,30 +128,68 @@ export default function App() {
           <div className="text-xs text-zinc-500">Get better at delegating to AI</div>
         </div>
         <nav className="flex flex-col gap-0.5">
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {GROUPS.map(({ id, label, icon: Icon, tabs }) => (
             <button
               key={id}
-              onClick={() => go(id)}
+              onClick={() => go(tabs[0].page)}
               className={cx(
                 "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors",
-                page === id ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+                group?.id === id ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
               )}
             >
-              <Icon size={16} />
+              <Icon size={16} aria-hidden />
               <span className="flex-1">{label}</span>
-              {id === "live" && waiting > 0 && (
-                <span className="rounded-full bg-amber-500/20 px-1.5 text-xs font-semibold text-amber-300">{waiting}</span>
+              {id === "today" && waiting > 0 && (
+                <span className="rounded-full bg-amber-500/20 px-1.5 text-xs font-semibold text-amber-300" aria-label={`${waiting} waiting on you`}>
+                  {waiting}
+                </span>
               )}
             </button>
           ))}
         </nav>
-        <div className="mt-auto px-2 text-xs leading-relaxed text-zinc-500">
-          All data stays on this computer, except a retro you choose to generate.
+        <button
+          onClick={() => setPalette(true)}
+          className="mt-4 flex items-center justify-between rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+        >
+          <span className="inline-flex items-center gap-2">
+            <Search size={13} aria-hidden /> Search
+          </span>
+          <kbd className="font-sans text-zinc-500">⌘K</kbd>
+        </button>
+        <div className="mt-auto space-y-3">
+          <button
+            onClick={() => go("settings")}
+            className={cx(
+              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors",
+              page === "settings" ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+            )}
+          >
+            <SettingsIcon size={16} aria-hidden /> Settings
+          </button>
+          <div className="px-2 text-xs leading-relaxed text-zinc-500">All data stays on this computer, except a retro you choose to generate.</div>
         </div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 lg:px-8">
+          {group && group.tabs.length > 1 && (
+            <div className="mb-5 flex gap-1 border-b border-zinc-800" role="tablist">
+              {group.tabs.map((t) => (
+                <button
+                  key={t.page}
+                  role="tab"
+                  aria-selected={page === t.page}
+                  onClick={() => go(t.page)}
+                  className={cx(
+                    "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
+                    page === t.page ? "border-emerald-500 text-zinc-50" : "border-transparent text-zinc-400 hover:text-zinc-200",
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
           {page === "today" && <Today onOpen={setOpenSession} go={go} drill={openSessions} plan={() => setPlanning(true)} />}
           {page === "experiments" && <Experiments drill={openSessions} />}
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
@@ -144,6 +207,15 @@ export default function App() {
 
       {openSession && <SessionDrawer id={openSession} onClose={() => setOpenSession(null)} />}
       {planning && <Preflight onClose={() => setPlanning(false)} />}
+      {palette && (
+        <CommandPalette
+          onClose={() => setPalette(false)}
+          go={go}
+          openSession={setOpenSession}
+          plan={() => setPlanning(true)}
+          pages={GROUPS.flatMap((g) => g.tabs.map((t) => ({ page: t.page, label: t.label === g.label ? t.label : `${g.label} › ${t.label}` })))}
+        />
+      )}
       <ReviewPrompt sessions={live.data?.sessions} onOpen={setOpenSession} />
     </div>
   );

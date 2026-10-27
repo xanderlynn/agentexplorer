@@ -839,3 +839,264 @@ pub fn tool_health(conn: &Connection, days: i64) -> Result<Vec<ToolHealth>> {
     out.truncate(15);
     Ok(out)
 }
+
+// -------------------------------------------------------------- anomalies
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Anomaly {
+    pub id: String,
+    pub title: Option<String>,
+    pub source: String,
+    pub started_at: Option<i64>,
+    pub reasons: Vec<String>,
+}
+
+/// Sessions far outside your usual range on time, cost, steering or tool
+/// failures. Uses the median and median absolute deviation, so a few
+/// extreme sessions don't hide each other the way they would with a mean.
+pub fn anomalies(conn: &Connection, days: i64) -> Result<Vec<Anomaly>> {
+    let rows = load_sessions(conn, Range::last_days(days))?;
+    if rows.len() < 10 {
+        return Ok(vec![]);
+    }
+    type Probe = (
+        &'static str,
+        fn(&SessionRow) -> Option<f64>,
+        f64,
+        fn(f64) -> String,
+    );
+    let probes: [Probe; 4] = [
+        (
+            "active time",
+            |s| Some(s.active_ms as f64 / 60_000.0),
+            30.0,
+            |v| format!("{v:.0} active minutes"),
+        ),
+        ("cost", |s| s.cost_usd, 2.0, |v| format!("${v:.2}")),
+        (
+            "steering",
+            |s| Some((s.corrections + s.interruptions) as f64),
+            3.0,
+            |v| format!("{v:.0} corrections and interruptions"),
+        ),
+        (
+            "tool failures",
+            |s| Some(s.tool_errors as f64),
+            5.0,
+            |v| format!("{v:.0} failed tool calls"),
+        ),
+    ];
+    let mut flagged: BTreeMap<String, Anomaly> = BTreeMap::new();
+    for (_, get, floor, describe) in probes {
+        let values: Vec<f64> = rows.iter().filter_map(get).collect();
+        let Some(median) = median(&values) else {
+            continue;
+        };
+        let deviations: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
+        let mad = median_of(deviations).unwrap_or(0.0) * 1.4826;
+        let limit = (median + 3.0 * mad).max(floor);
+        for s in &rows {
+            if let Some(v) = get(s)
+                && v > limit
+            {
+                flagged
+                    .entry(s.id.clone())
+                    .or_insert_with(|| Anomaly {
+                        id: s.id.clone(),
+                        title: s.title.clone(),
+                        source: s.source.clone(),
+                        started_at: s.started_at,
+                        reasons: vec![],
+                    })
+                    .reasons
+                    .push(format!(
+                        "{} (usually about {})",
+                        describe(v),
+                        describe(median)
+                    ));
+            }
+        }
+    }
+    let mut out: Vec<Anomaly> = flagged.into_values().collect();
+    out.sort_by_key(|a| std::cmp::Reverse(a.started_at));
+    out.truncate(20);
+    Ok(out)
+}
+
+fn median(values: &[f64]) -> Option<f64> {
+    median_of(values.to_vec())
+}
+
+fn median_of(mut v: Vec<f64>) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    let m = v.len() / 2;
+    Some(if v.len().is_multiple_of(2) {
+        (v[m - 1] + v[m]) / 2.0
+    } else {
+        v[m]
+    })
+}
+
+// -------------------------------------------------------- failure causes
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureCluster {
+    pub cause: String,
+    pub advice: String,
+    pub ids: Vec<String>,
+}
+
+/// Groups sessions that went wrong (abandoned, redone, or reworked after
+/// shipping) by their most likely cause, from the session's own signals.
+/// Each session goes to the first cause that fits.
+pub fn failure_clusters(conn: &Connection, days: i64) -> Result<Vec<FailureCluster>> {
+    let rows = load_sessions(conn, Range::last_days(days))?;
+    type Rule = (&'static str, &'static str, fn(&SessionRow) -> bool);
+    let rules: [Rule; 6] = [
+        (
+            "Ran out of context",
+            "The session hit context compaction. Split the task so each part fits one context window.",
+            |s| s.compactions > 0,
+        ),
+        (
+            "Unclear ask",
+            "The opening prompt lacked done-criteria or anchors. Use the pre-flight card.",
+            |s| s.friction.requirements <= 2,
+        ),
+        (
+            "Steering churn",
+            "Two or more corrections or interruptions. Restart with a sharper prompt instead of steering.",
+            |s| s.corrections + s.interruptions >= 2,
+        ),
+        (
+            "Ran too long",
+            "The session sprawled. Smaller, bounded tasks succeed more often.",
+            |s| s.friction.scope <= 2,
+        ),
+        (
+            "Tool trouble",
+            "Many tool calls failed. Fix the environment (commands, paths, tests) or describe it in CLAUDE.md / AGENTS.md.",
+            |s| s.tool_calls >= 10 && s.tool_errors as f64 / s.tool_calls as f64 > 0.15,
+        ),
+        (
+            "Edited without reading",
+            "The agent changed files it hadn't read. Point it at the right files first.",
+            |s| s.edits >= 5 && s.edits_without_read as f64 / s.edits as f64 > 0.3,
+        ),
+    ];
+    let failed = rows.iter().filter(|s| {
+        s.has_signals && (matches!(s.outcome.as_deref(), Some("abandoned" | "redo")) || s.reworked)
+    });
+    let mut groups: Vec<FailureCluster> = vec![];
+    let mut other = vec![];
+    for s in failed {
+        match rules.iter().find(|(_, _, test)| test(s)) {
+            Some((cause, advice, _)) => match groups.iter_mut().find(|g| g.cause == *cause) {
+                Some(g) => g.ids.push(s.id.clone()),
+                None => groups.push(FailureCluster {
+                    cause: (*cause).into(),
+                    advice: (*advice).into(),
+                    ids: vec![s.id.clone()],
+                }),
+            },
+            None => other.push(s.id.clone()),
+        }
+    }
+    groups.sort_by_key(|g| std::cmp::Reverse(g.ids.len()));
+    if !other.is_empty() {
+        groups.push(FailureCluster {
+            cause: "No clear signal".into(),
+            advice: "Nothing in the transcript stands out. Your notes on these sessions are the best clue.".into(),
+            ids: other,
+        });
+    }
+    Ok(groups)
+}
+
+// --------------------------------------------------------------- timeline
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lane {
+    pub id: String,
+    pub source: String,
+    pub title: Option<String>,
+    pub project_path: Option<String>,
+    /// (start, end, kind): 1 = agent working, 0 = waiting on you.
+    pub spans: Vec<(i64, i64, u8)>,
+}
+
+/// One lane per session active since `since`, for the swimlane view.
+pub fn timelines(conn: &Connection, since: i64) -> Result<Vec<Lane>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, source, title, project_path, timeline FROM sessions
+         WHERE ended_at >= ?1 AND timeline != '[]' ORDER BY started_at LIMIT 40",
+    )?;
+    let lanes = stmt
+        .query_map([since], |r| {
+            let spans: String = r.get(4)?;
+            Ok(Lane {
+                id: r.get(0)?,
+                source: r.get(1)?,
+                title: r.get(2)?,
+                project_path: r.get(3)?,
+                spans: serde_json::from_str::<Vec<(i64, i64, u8)>>(&spans)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(_, end, _)| *end >= since)
+                    .collect(),
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(lanes.into_iter().filter(|l| !l.spans.is_empty()).collect())
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn flags_outliers_and_groups_failures() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_ms();
+        for i in 0..12 {
+            let (active, corrections, outcome, compactions) = match i {
+                0 => (300 * 60_000, 0, "abandoned", 1),
+                1 => (10 * 60_000, 4, "redo", 0),
+                _ => (10 * 60_000 + i * 1000, 0, "shipped", 0),
+            };
+            conn.execute(
+                "INSERT INTO sessions (id, source, external_id, file_path, started_at, ended_at, active_ms,
+                                       user_turns, outcome, corrections, compactions, signals_version,
+                                       ask_score, timeline, ingested_at)
+                 VALUES (?1, 'claude_code', ?1, '/f', ?2, ?2, ?3, 3, ?4, ?5, ?6, 3, 4, '[[1,2,1]]', 0)",
+                params![format!("s{i}"), now - (i + 1) * 60_000, active, outcome, corrections, compactions],
+            )
+            .unwrap();
+        }
+        let a = anomalies(&conn, 7).unwrap();
+        assert!(
+            a.iter()
+                .any(|x| x.id == "s0" && x.reasons[0].contains("active minutes"))
+        );
+        assert!(a.iter().any(|x| x.id == "s1"));
+        assert!(!a.iter().any(|x| x.id == "s5"));
+
+        let f = failure_clusters(&conn, 7).unwrap();
+        let cause = |id: &str| {
+            f.iter()
+                .find(|g| g.ids.contains(&id.to_string()))
+                .map(|g| g.cause.clone())
+        };
+        assert_eq!(cause("s0").as_deref(), Some("Ran out of context"));
+        assert_eq!(cause("s1").as_deref(), Some("Steering churn"));
+
+        assert_eq!(timelines(&conn, 0).unwrap().len(), 12);
+    }
+}

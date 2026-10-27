@@ -8,21 +8,18 @@ Built with Tauri 2, Rust and React. Runs on macOS and Windows. All data stays on
 
 ## What it does
 
-| Page | What you get |
+The app is organised around a daily and a weekly loop, in six areas (press ⌘K anywhere to jump to a page or find any prompt you've written):
+
+| Area | What you get |
 | --- | --- |
-| **Overview** | Sessions, success rate, commits, how long agents waited on you, spend, interruptions and tool errors, with trends against the previous period, plus rule-based insights about your habits. |
-| **Live** | Every agent active in the last 3 hours, and whether it is working, waiting on you or asking for permission. Optional desktop notification when one starts waiting. |
-| **Sessions** | Every session from every tool. Open one to rate the outcome (shipped / partial / abandoned / redo), add a 1–5 quality score and a note, and see its prompts, commits and the playbooks in effect. |
-| **Patterns** | A year-long activity calendar, a weekday × hour heatmap, what you delegate (task categories with success rates), what the agents do (reads vs edits vs shell, top tools), heuristic friction scores (requirements / steering / scope), a learning curve of re-edit and blind-edit rates, "then vs now" benchmarks, and how context compaction and sub-agents relate to success. |
-| **Usage** | Spend per day by tool, token mix (input / output / cache), cache hit rate and savings, month-to-date with projection, and a model comparison (cost, prompts, friction, success). |
-| **Journal** | Before you delegate, log the goal, expected time and confidence. Close it afterwards with the outcome and what surprised you. Calibration tables show whether you underestimate, and for which task types and tools. |
-| **Playbooks** | Your CLAUDE.md, AGENTS.md and copilot-instructions.md files, with past versions read from git history, plus prompt templates you save. Each version shows the success rate, follow-up prompts and interruptions of the sessions that used it. |
-| **Scorecard** | Output instead of activity: how many sessions lead to commits, cost and active time per commit, and weekly output. |
-| **Weekly retro** | Claude reviews the period's data and your notes. You get what worked, where execution leaked, how you prompt, and three experiments for next week. It follows up on the previous retro's experiments. |
+| **Today** | Agents waiting on you and what they asked; a swimlane of today's agents (working vs waiting on you); recent sessions to rate in one tap; running experiments; goals; planned tasks; unusual sessions. **Live agents** shows every active session's state. |
+| **Sessions** | Every session from every tool, searchable across all prompts, filterable, exportable to CSV. Charts and insights elsewhere open here with the matching filter. The drawer shows the Flow score, tool use, failures and your rejections, the agent's last reply, commits (and whether they were reworked), and a resume command. |
+| **Outcomes** | **Summary:** KPIs with 12-week sparklines, your usual range and sample size; insights that open the sessions behind them; why sessions go wrong, grouped by cause. **Delivery & reality:** sessions to commits, rework within 7 days of shipping, "felt faster" against evidence, your estimate ratio, agent-to-human time, and a delegation-fit matrix (task type × tool). |
+| **Practice** | **Patterns:** activity calendar, weekday × hour heatmap, task categories, tool mix, tool reliability and vetoes, learning curve (with playbook changes marked), then vs now. **Journal:** plan tasks with the pre-flight card, close them with what happened, calibration. **Playbooks:** CLAUDE.md / AGENTS.md / prompt-template versions compared by outcome and rework. |
+| **Cost** | Month-to-date spend against pace and an optional budget, spend by tool, cache hit rate and savings, tokens, and a model comparison. |
+| **Improve** | **Weekly retro:** your reflection first, then Claude's review grounded in measured results, ending in three experiments you can adopt in one click. **Experiments & goals:** one habit per experiment with a locked baseline, adherence and a keep / drop / extend verdict; up to three goals, each with a counter-metric. |
 
-Sessions can be searched across every prompt, filtered by tool, outcome and category, and exported to CSV. Each session shows its execution signals, the agent's last reply and a command to resume it.
-
-**Appearance:** eight themes (Midnight, Graphite, Slate, Nord, Dracula, Solarized Dark, Light, Solarized Light), six accent colours, three densities and three corner styles, plus one-click skins. Change them under Settings → Appearance.
+Numbers are honest about their sample: rates show n, small samples read "k/n rated" instead of a percentage, and heuristic scores are labelled as such.
 
 ## Data sources
 

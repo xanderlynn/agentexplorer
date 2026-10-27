@@ -253,6 +253,13 @@ pub fn prepare(conn: &Connection, days: i64, reflection: Option<&str>) -> Result
             ));
         }
     }
+    let clusters = crate::trends::failure_clusters(conn, days.max(1))?;
+    if !clusters.is_empty() {
+        prompt.push_str("\n# Why sessions went wrong (abandoned, redone or reworked), grouped by likely cause\n");
+        for c in &clusters {
+            prompt.push_str(&format!("- {}: {} sessions\n", c.cause, c.ids.len()));
+        }
+    }
     let goals = crate::experiments::goals(conn)?;
     if !goals.is_empty() {
         prompt.push_str("\n# Goals (last 7 days)\n");
