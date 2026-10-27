@@ -166,6 +166,12 @@ ALTER TABLE sessions ADD COLUMN category TEXT;
 ALTER TABLE sessions ADD COLUMN last_message TEXT;
 DELETE FROM source_files;
 "#,
+    // Marks which sessions carry the signals above; 0 means "parsed before
+    // they existed" (for example, a transcript Claude Code already deleted).
+    r#"
+ALTER TABLE sessions ADD COLUMN signals_version INTEGER NOT NULL DEFAULT 0;
+DELETE FROM source_files;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

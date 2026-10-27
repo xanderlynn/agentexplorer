@@ -118,7 +118,23 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 s.last_event = Some(LastEvent::TurnEnded);
             }
             "tool.execution_start" => {
-                let name = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
+                // Sub-agent work is reported by subagent.* events; counting
+                // its tool calls here would not match Claude Code's numbers.
+                if d.get("parentAgentTaskId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|x| !x.is_empty())
+                {
+                    continue;
+                }
+                let mut name = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
+                // str_replace_editor multiplexes view/create/str_replace.
+                if let Some(cmd) = d.pointer("/arguments/command").and_then(Value::as_str) {
+                    if cmd == "view" {
+                        name = "view";
+                    } else if cmd == "create" {
+                        name = "create";
+                    }
+                }
                 let path = d.pointer("/arguments/path").and_then(Value::as_str);
                 s.note_tool(name, path);
                 s.last_event = Some(LastEvent::Working);

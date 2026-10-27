@@ -84,6 +84,9 @@ pub struct SessionRow {
     pub subagents: i64,
     pub corrections: i64,
     pub friction: Friction,
+    /// False for sessions parsed before tool, correction and category
+    /// signals existed; they are left out of statistics built on them.
+    pub has_signals: bool,
 }
 
 impl SessionRow {
@@ -101,7 +104,8 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.wait_ms_total, s.wait_count, length(COALESCE(s.first_prompt, '')),
        s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
        s.last_event, s.tags, s.category, s.reads, s.edits, s.shell_calls,
-       s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections
+       s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
+       s.signals_version >= 1
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai
@@ -165,6 +169,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         compactions: r.get(38)?,
         subagents: r.get(39)?,
         corrections,
+        has_signals: r.get(41)?,
     })
 }
 
@@ -191,24 +196,40 @@ pub struct SessionFilter {
     pub category: Option<String>,
 }
 
+/// Rows shown in the Sessions table; exports are not capped.
+const LIST_LIMIT: usize = 2000;
+
 pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<SessionRow>> {
+    let mut rows = filter_sessions(conn, f)?;
+    rows.truncate(LIST_LIMIT);
+    Ok(rows)
+}
+
+pub fn filter_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<SessionRow>> {
     let needle = f
         .search
         .as_deref()
         .map(str::to_lowercase)
         .filter(|s| !s.is_empty());
     // Search every prompt, not just the opening one.
-    let prompt_hits: std::collections::HashSet<String> = match &needle {
-        Some(n) => {
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT session_id FROM prompts WHERE instr(lower(text), ?1) > 0",
-            )?;
-            stmt.query_map([n], |r| r.get(0))?
-                .collect::<rusqlite::Result<_>>()?
+    // Lowercasing happens in Rust: SQLite's lower() only handles ASCII.
+    let range = Range::last_days(f.days);
+    let mut prompt_hits: std::collections::HashSet<String> = Default::default();
+    if let Some(n) = &needle {
+        let mut stmt = conn.prepare(
+            "SELECT p.session_id, p.text FROM prompts p JOIN sessions s ON s.id = p.session_id
+             WHERE s.started_at >= ?1 AND s.started_at < ?2",
+        )?;
+        for row in stmt.query_map(params![range.since, range.until], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })? {
+            let (id, text) = row?;
+            if !prompt_hits.contains(&id) && text.to_lowercase().contains(n.as_str()) {
+                prompt_hits.insert(id);
+            }
         }
-        None => Default::default(),
-    };
-    let rows = load_sessions(conn, Range::last_days(f.days))?
+    }
+    let rows = load_sessions(conn, range)?
         .into_iter()
         .filter(|s| {
             f.category
@@ -238,7 +259,6 @@ pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<Session
                         })
             })
         })
-        .take(2000)
         .collect();
     Ok(rows)
 }
@@ -1071,6 +1091,9 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
         }
     }
 
+    // The checks below rely on per-session signals that older sessions
+    // (parsed before those signals existed) don't have.
+    let measured: Vec<SessionRow> = rows.iter().filter(|s| s.has_signals).cloned().collect();
     // Corrections: the human had to say "no, that's not it".
     let by_corr = buckets(
         &rows,
@@ -1096,7 +1119,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
     }
 
     // Context compaction: the session outgrew its context window.
-    let by_compact = buckets(&rows, &["no compaction", "compacted"], |s| {
+    let by_compact = buckets(&measured, &["no compaction", "compacted"], |s| {
         Some(usize::from(s.compactions > 0))
     });
     if let (Some(clean), Some(compacted)) = (by_compact[0].success(), by_compact[1].success())
@@ -1118,10 +1141,11 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
     }
 
     // Agent edit hygiene.
-    let edits: i64 = rows.iter().map(|s| s.edits).sum();
+    let edits: i64 = measured.iter().map(|s| s.edits).sum();
     if edits >= 40 {
-        let blind = rows.iter().map(|s| s.edits_without_read).sum::<i64>() as f64 / edits as f64;
-        let re = rows.iter().map(|s| s.re_edits).sum::<i64>() as f64 / edits as f64;
+        let blind =
+            measured.iter().map(|s| s.edits_without_read).sum::<i64>() as f64 / edits as f64;
+        let re = measured.iter().map(|s| s.re_edits).sum::<i64>() as f64 / edits as f64;
         if blind >= 0.25 {
             out.push(insight(
                 "blind-edits",
@@ -1144,7 +1168,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
 
     // Task categories.
     let mut cats: BTreeMap<String, Vec<&SessionRow>> = BTreeMap::new();
-    for s in &rows {
+    for s in &measured {
         if let Some(c) = &s.category {
             cats.entry(c.clone()).or_default().push(s);
         }
@@ -1230,10 +1254,16 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
 }
 
 fn csv_field(v: &str) -> String {
+    // A leading = + - @ makes spreadsheets evaluate the cell as a formula.
+    let v = if v.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{v}")
+    } else {
+        v.to_string()
+    };
     if v.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", v.replace('"', "\"\""))
     } else {
-        v.to_string()
+        v
     }
 }
 

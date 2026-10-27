@@ -129,7 +129,10 @@ pub struct ParsedSession {
     /// The agent's most recent text reply, for "what is it asking me?".
     pub last_message: Option<String>,
     pub read_paths: HashSet<String>,
+    /// Files changed with Edit-type tools in this session.
     pub edited_paths: HashSet<String>,
+    /// Files created or overwritten whole with Write-type tools.
+    pub written_paths: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,14 +232,22 @@ impl ParsedSession {
             kind @ (ToolKind::Edit | ToolKind::Write) => {
                 self.edits += 1;
                 if let Some(p) = path {
-                    if kind == ToolKind::Edit
-                        && !self.read_paths.contains(&p)
-                        && !self.edited_paths.contains(&p)
-                    {
-                        self.edits_without_read += 1;
-                    }
-                    if !self.edited_paths.insert(p.clone()) {
-                        self.re_edits += 1;
+                    let edited_before = self.edited_paths.contains(&p);
+                    let written_before = self.written_paths.contains(&p);
+                    if kind == ToolKind::Edit {
+                        if !self.read_paths.contains(&p) && !edited_before && !written_before {
+                            self.edits_without_read += 1;
+                        }
+                        // The first edit after creating a file is not rework.
+                        if edited_before {
+                            self.re_edits += 1;
+                        }
+                        self.edited_paths.insert(p.clone());
+                    } else {
+                        if edited_before || written_before {
+                            self.re_edits += 1;
+                        }
+                        self.written_paths.insert(p.clone());
                     }
                     // The agent has seen what it wrote.
                     self.read_paths.insert(p);

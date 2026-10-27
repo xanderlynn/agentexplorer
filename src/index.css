@@ -20,7 +20,8 @@ body {
   margin: 0;
   background: var(--color-zinc-950);
   color: var(--color-zinc-200);
-  font-size: 14px;
+  /* rem, so the density setting scales body text too. */
+  font-size: 0.875rem;
   -webkit-font-smoothing: antialiased;
 }
 

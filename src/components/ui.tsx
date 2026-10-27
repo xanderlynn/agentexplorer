@@ -83,7 +83,7 @@ export function Button({ variant = "secondary", size = "md", busy, className, ch
       className={cx(
         "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
-        variant === "primary" && "bg-emerald-500 text-zinc-950 hover:bg-emerald-400",
+        variant === "primary" && "bg-emerald-500 text-[var(--color-on-accent)] hover:bg-emerald-400",
         variant === "secondary" && "border border-zinc-700 bg-zinc-800/70 text-zinc-200 hover:bg-zinc-700/70",
         variant === "ghost" && "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
         variant === "danger" && "border border-rose-900 bg-rose-950/40 text-rose-300 hover:bg-rose-900/40",

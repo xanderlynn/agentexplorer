@@ -99,6 +99,8 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             *s.model_turns.entry(model.clone()).or_default() += 1;
         }
 
+        // A reply streams in as many markdown parts.
+        let mut reply = String::new();
         for item in req
             .get("response")
             .and_then(Value::as_array)
@@ -114,12 +116,13 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 // Plain markdown parts carry no kind.
                 None | Some("markdownContent") => {
                     if let Some(t) = item.get("value").and_then(Value::as_str) {
-                        s.note_message(t);
+                        reply.push_str(t);
                     }
                 }
                 _ => {}
             }
         }
+        s.note_message(&reply);
         if result.and_then(|r| r.get("errorDetails")).is_some() {
             s.tool_errors += 1;
         }

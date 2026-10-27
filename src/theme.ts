@@ -31,13 +31,15 @@ export const THEMES: ThemeDef[] = [
   { id: "solarized-light", label: "Solarized Light", light: true, neutral: solarized },
 ];
 
-export const ACCENTS: { id: string; label: string; scale: Scale }[] = [
-  { id: "emerald", label: "Emerald", scale: ["#ecfdf5", "#d1fae5", "#a7f3d0", "#6ee7b7", "#34d399", "#10b981", "#059669", "#047857", "#065f46", "#064e3b", "#022c22"] },
-  { id: "blue", label: "Blue", scale: ["#eff6ff", "#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a", "#172554"] },
-  { id: "violet", label: "Violet", scale: ["#f5f3ff", "#ede9fe", "#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95", "#2e1065"] },
-  { id: "cyan", label: "Cyan", scale: ["#ecfeff", "#cffafe", "#a5f3fc", "#67e8f9", "#22d3ee", "#06b6d4", "#0891b2", "#0e7490", "#155e75", "#164e63", "#083344"] },
-  { id: "amber", label: "Amber", scale: ["#fffbeb", "#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b", "#d97706", "#b45309", "#92400e", "#78350f", "#451a03"] },
-  { id: "rose", label: "Rose", scale: ["#fff1f2", "#ffe4e6", "#fecdd3", "#fda4af", "#fb7185", "#f43f5e", "#e11d48", "#be123c", "#9f1239", "#881337", "#4c0519"] },
+// `onAccent` is the text colour on a solid accent button: dark on light hues
+// (emerald, cyan, amber), white on deep ones: whichever reads better.
+export const ACCENTS: { id: string; label: string; scale: Scale; onAccent: string }[] = [
+  { id: "emerald", label: "Emerald", scale: ["#ecfdf5", "#d1fae5", "#a7f3d0", "#6ee7b7", "#34d399", "#10b981", "#059669", "#047857", "#065f46", "#064e3b", "#022c22"], onAccent: "#04130d" },
+  { id: "blue", label: "Blue", scale: ["#eff6ff", "#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a", "#172554"], onAccent: "#ffffff" },
+  { id: "violet", label: "Violet", scale: ["#f5f3ff", "#ede9fe", "#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95", "#2e1065"], onAccent: "#ffffff" },
+  { id: "cyan", label: "Cyan", scale: ["#ecfeff", "#cffafe", "#a5f3fc", "#67e8f9", "#22d3ee", "#06b6d4", "#0891b2", "#0e7490", "#155e75", "#164e63", "#083344"], onAccent: "#04161b" },
+  { id: "amber", label: "Amber", scale: ["#fffbeb", "#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b", "#d97706", "#b45309", "#92400e", "#78350f", "#451a03"], onAccent: "#1c1003" },
+  { id: "rose", label: "Rose", scale: ["#fff1f2", "#ffe4e6", "#fecdd3", "#fda4af", "#fb7185", "#f43f5e", "#e11d48", "#be123c", "#9f1239", "#881337", "#4c0519"], onAccent: "#ffffff" },
 ];
 
 // Status colours used for warnings and outcomes. Light themes invert them too
@@ -116,6 +118,7 @@ export function applyAppearance(a: Appearance) {
 
   setScale(style, "zinc", theme.neutral, theme.light);
   setScale(style, "emerald", accent.scale, theme.light);
+  style.setProperty("--color-on-accent", accent.onAccent);
   for (const [name, scale] of Object.entries(STATUS)) setScale(style, name, scale, theme.light);
   style.setProperty("color-scheme", theme.light ? "light" : "dark");
   style.fontSize = `${density.rootPx}px`;

@@ -85,7 +85,7 @@ pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patt
 #[tauri::command(async)]
 pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<String> {
     with_db(&state, |c| {
-        let rows = analytics::list_sessions(c, &filter)?;
+        let rows = analytics::filter_sessions(c, &filter)?;
         let dir = dirs::download_dir().unwrap_or_else(|| state.data_dir.clone());
         let path = dir.join(format!(
             "execution-ledger-sessions-{}.csv",

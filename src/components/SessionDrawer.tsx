@@ -172,7 +172,7 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                       <span className="min-w-0 flex-1 truncate text-zinc-200">{c.subject}</span>
                       <span className="shrink-0 text-xs tabular-nums text-zinc-500">
                         <span className="text-emerald-400">+{c.insertions}</span> <span className="text-rose-400">−{c.deletions}</span>
-                        {c.aiTrailer && <span className="ml-1.5 rounded bg-zinc-800 px-1 text-zinc-400">AI</span>}
+                        {c.aiTrailer && <span className="ml-1.5 rounded-sm bg-zinc-800 px-1 text-zinc-400">AI</span>}
                       </span>
                     </li>
                   ))}

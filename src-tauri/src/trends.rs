@@ -93,13 +93,13 @@ struct Tokens {
     model: Option<String>,
     started_at: i64,
     t: [i64; 4],
-    cost: f64,
+    cost: Option<f64>,
 }
 
 fn load_tokens(conn: &Connection, range: Range) -> Result<HashMap<String, Tokens>> {
     let mut stmt = conn.prepare(
         "SELECT id, source, model, started_at, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, COALESCE(cost_usd, 0)
+                cache_write_tokens, cost_usd
          FROM sessions WHERE started_at >= ?1 AND started_at < ?2",
     )?;
     let rows = stmt.query_map(params![range.since, range.until], |r| {
@@ -160,7 +160,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
             savings += t.t[2] as f64 * (p.input - p.cache_read) / 1_000_000.0;
         }
         if let Some(day) = local_date(t.started_at).and_then(|d| daily.get_mut(&d)) {
-            *day.cost.entry(t.source.clone()).or_default() += t.cost;
+            *day.cost.entry(t.source.clone()).or_default() += t.cost.unwrap_or(0.0);
             day.input += t.t[0];
             day.output += t.t[1];
             day.cache_read += t.t[2];
@@ -180,7 +180,8 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         .map(|(model, g)| {
             let n = g.len() as f64;
             let (rated, success_rate) = success(&g);
-            let cost: f64 = g.iter().filter_map(|s| s.cost_usd).sum();
+            let costs: Vec<f64> = g.iter().filter_map(|s| s.cost_usd).collect();
+            let cost: f64 = costs.iter().sum();
             ModelRow {
                 model,
                 sessions: g.len(),
@@ -191,7 +192,11 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
                 avg_turns: g.iter().map(|s| s.user_turns as f64).sum::<f64>() / n,
                 avg_active_minutes: g.iter().map(|s| s.active_ms as f64 / 60_000.0).sum::<f64>()
                     / n,
-                cost_per_session: cost / n,
+                cost_per_session: if costs.is_empty() {
+                    0.0
+                } else {
+                    cost / costs.len() as f64
+                },
                 avg_friction: g.iter().map(|s| s.friction.overall).sum::<f64>() / n,
             }
         })
@@ -220,7 +225,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         next.map(|n| (n - month_start).num_days()).unwrap_or(30) as f64
     };
     let elapsed = (today - month_start).num_days() as f64 + 1.0;
-    let total_cost: f64 = tokens.values().map(|t| t.cost).sum();
+    let costed: Vec<f64> = tokens.values().filter_map(|t| t.cost).collect();
 
     Ok(Usage {
         daily: daily.into_values().collect(),
@@ -233,7 +238,8 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         cache_savings_usd: savings,
         month_to_date_usd: mtd,
         projected_month_usd: mtd / elapsed * days_in_month,
-        cost_per_session: (!tokens.is_empty()).then(|| total_cost / tokens.len() as f64),
+        cost_per_session: (!costed.is_empty())
+            .then(|| costed.iter().sum::<f64>() / costed.len() as f64),
     })
 }
 
@@ -358,7 +364,10 @@ fn benchmark(label: &str, rows: &[&SessionRow]) -> Benchmark {
 pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
     let range = Range::last_days(days);
     let rows = load_sessions(conn, range)?;
-    let all: Vec<&SessionRow> = rows.iter().collect();
+    // Statistics built on tool, correction and category signals use only the
+    // sessions that have them (older ones may predate those signals).
+    let measured: Vec<SessionRow> = rows.iter().filter(|s| s.has_signals).cloned().collect();
+    let all: Vec<&SessionRow> = measured.iter().collect();
 
     // Calendar: always a full year so the heatmap reads like a contribution graph.
     let year = load_sessions(conn, Range::last_days(365))?;
@@ -398,7 +407,7 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
     }
 
     let mut cats: BTreeMap<String, Vec<&SessionRow>> = BTreeMap::new();
-    for s in &rows {
+    for s in &measured {
         cats.entry(s.category.clone().unwrap_or_else(|| "other".into()))
             .or_default()
             .push(s);
@@ -426,7 +435,8 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
     let mut tool_totals: HashMap<String, i64> = HashMap::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT tool_counts FROM sessions WHERE started_at >= ?1 AND started_at < ?2",
+            "SELECT tool_counts FROM sessions
+             WHERE started_at >= ?1 AND started_at < ?2 AND signals_version >= 1",
         )?;
         for json in stmt.query_map(params![range.since, range.until], |r| r.get::<_, String>(0))? {
             let counts: BTreeMap<String, i64> = serde_json::from_str(&json?).unwrap_or_default();
@@ -442,13 +452,13 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
     tools.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.tool.cmp(&b.tool)));
     tools.truncate(15);
 
-    let reads: i64 = rows.iter().map(|s| s.reads).sum();
-    let edits: i64 = rows.iter().map(|s| s.edits).sum();
-    let shell_calls: i64 = rows.iter().map(|s| s.shell_calls).sum();
-    let tool_calls: i64 = rows.iter().map(|s| s.tool_calls).sum();
+    let reads: i64 = measured.iter().map(|s| s.reads).sum();
+    let edits: i64 = measured.iter().map(|s| s.edits).sum();
+    let shell_calls: i64 = measured.iter().map(|s| s.shell_calls).sum();
+    let tool_calls: i64 = measured.iter().map(|s| s.tool_calls).sum();
 
     let mut weeks: BTreeMap<NaiveDate, Vec<&SessionRow>> = BTreeMap::new();
-    for s in &rows {
+    for s in &measured {
         if let Some(d) = s.started_at.and_then(local_date) {
             let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
             weeks.entry(monday).or_default().push(s);
@@ -472,9 +482,9 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
         })
         .collect();
 
-    let friction = (!rows.is_empty()).then(|| {
-        let n = rows.len() as f64;
-        let avg = |f: &dyn Fn(&SessionRow) -> f64| rows.iter().map(f).sum::<f64>() / n;
+    let friction = (!measured.is_empty()).then(|| {
+        let n = measured.len() as f64;
+        let avg = |f: &dyn Fn(&SessionRow) -> f64| measured.iter().map(f).sum::<f64>() / n;
         FrictionAvg {
             requirements: avg(&|s| s.friction.requirements as f64),
             steering: avg(&|s| s.friction.steering as f64),
@@ -484,7 +494,10 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
     });
 
     // Then vs now spans all history, independent of the selected range.
-    let history = load_sessions(conn, Range::last_days(0))?;
+    let history: Vec<SessionRow> = load_sessions(conn, Range::last_days(0))?
+        .into_iter()
+        .filter(|s| s.has_signals)
+        .collect();
     let then_vs_now = {
         let first = history.iter().filter_map(|s| s.started_at).min();
         let now = now_ms();
@@ -560,10 +573,10 @@ mod tests {
                 "INSERT INTO sessions (id, source, external_id, file_path, first_prompt, model, started_at,
                                        ended_at, active_ms, user_turns, input_tokens, cache_read_tokens,
                                        cost_usd, reads, edits, re_edits, category, tool_counts, outcome,
-                                       ingested_at)
+                                       ingested_at, signals_version)
                  VALUES (?1, 'claude_code', ?1, '/f', 'Fix the failing test', 'claude-opus-5-5', ?2,
                          ?2 + 600000, 600000, 2, 1000, 3000, 1.5, 4, 2, 1, 'bugfix',
-                         '{\"Read\":4,\"Edit\":2}', 'shipped', 0)",
+                         '{\"Read\":4,\"Edit\":2}', 'shipped', 0, 1)",
                 params![format!("s{i}"), now - (i + 1) * 3_600_000],
             )
             .unwrap();

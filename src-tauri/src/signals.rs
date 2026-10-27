@@ -6,38 +6,86 @@
 
 use serde::Serialize;
 
+/// Lowercases and splits into words (letters, digits and apostrophes), so
+/// keywords match whole words: "latest" does not contain the word "test".
+fn words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .replace(['\u{2019}', '\u{2018}'], "'")
+        .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A keyword is a word or phrase matched on word boundaries. A trailing `*`
+/// matches any word starting with the stem ("fail*" matches "failing").
+fn matches(words: &[String], keyword: &str) -> bool {
+    let parts: Vec<&str> = keyword.split(' ').collect();
+    if parts.is_empty() || words.len() < parts.len() {
+        return false;
+    }
+    words.windows(parts.len()).any(|window| {
+        window
+            .iter()
+            .zip(&parts)
+            .all(|(w, p)| match p.strip_suffix('*') {
+                Some(stem) => w.starts_with(stem),
+                None => w == p,
+            })
+    })
+}
+
 /// Ordered: the first category whose keywords match wins, so the more
 /// specific intents come before the generic "feature".
 const CATEGORIES: &[(&str, &[&str])] = &[
-    ("review", &["review", "audit", "critique", "look over"]),
+    (
+        "review",
+        &["review", "reviewing", "audit*", "critique", "look over"],
+    ),
     (
         "bugfix",
         &[
             "fix",
-            "bug",
-            "error",
+            "fixes",
+            "fixing",
+            "bug*",
+            "error*",
             "broken",
-            "failing",
-            "fails",
-            "crash",
-            "issue",
-            "exception",
+            "fail*",
+            "crash*",
+            "issue*",
+            "exception*",
             "not working",
             "doesn't work",
+            "regression*",
         ],
     ),
-    ("tests", &["test", "spec", "coverage", "e2e", "unit test"]),
+    (
+        "tests",
+        &[
+            "test",
+            "tests",
+            "testing",
+            "unit test*",
+            "spec",
+            "specs",
+            "coverage",
+            "e2e",
+        ],
+    ),
     (
         "refactor",
         &[
-            "refactor",
+            "refactor*",
             "clean up",
             "cleanup",
-            "rename",
-            "restructure",
-            "simplify",
-            "reorganize",
-            "extract",
+            "rename*",
+            "restructur*",
+            "simplif*",
+            "reorganiz*",
+            "extract*",
+            "dedupe",
+            "deduplicate",
         ],
     ),
     (
@@ -45,66 +93,72 @@ const CATEGORIES: &[(&str, &[&str])] = &[
         &[
             "readme",
             "docs",
-            "document",
-            "documentation",
-            "comment",
+            "document*",
+            "comments",
             "changelog",
+            "jsdoc",
+            "docstring*",
         ],
     ),
     (
         "infra",
         &[
-            "deploy",
-            "pipeline",
-            "ci ",
-            "ci/",
-            "github action",
-            "workflow",
-            "docker",
+            "deploy*",
+            "pipeline*",
+            "ci",
+            "github action*",
+            "workflow*",
+            "docker*",
             "terraform",
             "kubernetes",
+            "k8s",
             "azure",
             "aws",
-            "infra",
-            "release",
+            "gcp",
+            "infra*",
+            "release*",
         ],
     ),
     (
         "research",
         &[
-            "explain",
-            "investigate",
-            "why ",
+            "explain*",
+            "investigat*",
+            "why",
             "how does",
             "how do",
-            "research",
-            "compare",
+            "research*",
+            "compare*",
             "what is",
             "what are",
-            "understand",
-            "review the",
+            "understand*",
             "options",
+            "tradeoff*",
+            "trade off*",
         ],
     ),
     (
         "feature",
         &[
             "add",
-            "implement",
-            "create",
-            "build",
-            "new ",
-            "support",
-            "make ",
+            "adding",
+            "adds",
+            "implement*",
+            "create*",
+            "build*",
+            "new",
+            "support*",
+            "make",
+            "introduce*",
         ],
     ),
 ];
 
 pub fn categorize(first_prompt: &str, title: &str) -> &'static str {
-    let text = format!(" {} {} ", first_prompt, title).to_lowercase();
+    let w = words(&format!("{first_prompt} {title}"));
     CATEGORIES
         .iter()
-        .find(|(_, words)| words.iter().any(|w| text.contains(w)))
+        .find(|(_, keywords)| keywords.iter().any(|k| matches(&w, k)))
         .map(|(c, _)| *c)
         .unwrap_or("other")
 }
@@ -122,27 +176,31 @@ const CORRECTION_MARKERS: &[&str] = &[
     "still broken",
     "still failing",
     "still doesn't",
-    "wrong",
+    "still wrong",
+    "that's wrong",
+    "is wrong",
+    "wrong again",
     "revert",
     "undo",
     "you broke",
-    "broke ",
+    "it broke",
     "why did you",
     "i said",
     "i asked",
     "try again",
-    "again,",
 ];
+
+/// "No" that opens a reply but isn't a correction ("no worries, now…").
+const BENIGN_NO: &[&str] = &["worries", "problem", "need", "rush", "thanks"];
 
 /// A follow-up prompt that corrects the agent rather than moving on.
 pub fn is_correction(prompt: &str) -> bool {
-    let p = prompt.trim().to_lowercase();
-    p.starts_with("no ")
-        || p.starts_with("no,")
-        || p.starts_with("no.")
-        || p == "no"
-        || p.starts_with("stop")
-        || CORRECTION_MARKERS.iter().any(|m| p.contains(m))
+    let w = words(prompt);
+    let opens_with_no = w.first().is_some_and(|f| f == "no" || f == "nope")
+        && w.get(1)
+            .is_none_or(|next| !BENIGN_NO.contains(&next.as_str()));
+    let opens_with_stop = w.first().is_some_and(|f| f == "stop");
+    opens_with_no || opens_with_stop || CORRECTION_MARKERS.iter().any(|m| matches(&w, m))
 }
 
 pub fn count_corrections<'a>(prompts: impl Iterator<Item = &'a str>) -> u64 {
@@ -229,6 +287,13 @@ mod tests {
             "research"
         );
         assert_eq!(categorize("hello", ""), "other");
+        // Whole words only.
+        assert_eq!(categorize("Explain the latest changes", ""), "research");
+        assert_eq!(categorize("Add a preview pane", ""), "feature");
+        assert_eq!(
+            categorize("Update the padding on the address form", ""),
+            "other"
+        );
     }
 
     #[test]
@@ -241,6 +306,10 @@ mod tests {
         ];
         assert_eq!(count_corrections(prompts.iter().copied()), 2);
         assert!(!is_correction("Now add pagination"));
+        assert!(!is_correction("No worries, now add the docs"));
+        assert!(!is_correction("Document the undocumented flags"));
+        assert!(!is_correction("Use a stopwatch for timing"));
+        assert!(is_correction("Nope, revert that"));
     }
 
     #[test]

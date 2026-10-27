@@ -56,6 +56,27 @@ impl Ingestor {
             .flat_map(sources::discover)
             .collect();
         let (mut report, _) = self.ingest_units(conn, &units, force)?;
+        // Sessions parsed before the current signals existed, whose original
+        // transcript has since been deleted, are re-read from the archive.
+        let stale: Vec<(String, String)> = {
+            let mut stmt =
+                conn.prepare("SELECT source, file_path FROM sessions WHERE signals_version < ?1")?;
+            stmt.query_map([SIGNALS_VERSION], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let from_archive: Vec<Unit> = stale
+            .iter()
+            .filter(|(_, path)| !Path::new(path).exists())
+            .filter_map(|(source, path)| {
+                let source = Source::ALL.into_iter().find(|s| s.as_str() == source)?;
+                archived_unit(&self.data_dir, source, Path::new(path))
+            })
+            .collect();
+        if !from_archive.is_empty() {
+            let (r, _) = self.ingest_units(conn, &from_archive, false)?;
+            report.updated += r.updated;
+            report.errors.extend(r.errors);
+        }
         // A full pass re-links every session so new commits, instruction-file
         // edits and intents reach sessions whose transcripts did not change.
         self.postprocess(conn, None)?;
@@ -209,6 +230,11 @@ impl Ingestor {
     }
 }
 
+/// Bump when the parsers start recording new per-session signals; rows with
+/// a lower version are re-parsed and left out of signal-based statistics
+/// until they are.
+pub const SIGNALS_VERSION: i64 = 1;
+
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())
 }
@@ -281,14 +307,16 @@ fn upsert_session(
             cost_is_estimate, premium_requests, lines_added, lines_removed, last_event,
             wait_ms_total, wait_count, ingested_at, tool_counts, reads, edits, shell_calls,
             edits_without_read, re_edits, compactions, subagents, corrections, category,
-            last_message
+            last_message, signals_version
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
                    ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
-                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)
+                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45)
          ON CONFLICT(id) DO UPDATE SET
-            file_path = excluded.file_path, project_path = excluded.project_path,
-            repo_root = excluded.repo_root, git_branch = excluded.git_branch,
-            title = excluded.title, first_prompt = excluded.first_prompt,
+            file_path = excluded.file_path,
+            project_path = COALESCE(excluded.project_path, project_path),
+            repo_root = COALESCE(excluded.repo_root, repo_root),
+            git_branch = COALESCE(excluded.git_branch, git_branch),
+            title = COALESCE(excluded.title, title), first_prompt = excluded.first_prompt,
             entrypoint = excluded.entrypoint, started_at = excluded.started_at,
             ended_at = excluded.ended_at, active_ms = excluded.active_ms, model = excluded.model,
             user_turns = excluded.user_turns, assistant_turns = excluded.assistant_turns,
@@ -307,7 +335,7 @@ fn upsert_session(
             edits_without_read = excluded.edits_without_read, re_edits = excluded.re_edits,
             compactions = excluded.compactions, subagents = excluded.subagents,
             corrections = excluded.corrections, category = excluded.category,
-            last_message = excluded.last_message",
+            last_message = excluded.last_message, signals_version = excluded.signals_version",
         params![
             id,
             source.as_str(),
@@ -356,6 +384,7 @@ fn upsert_session(
                 s.title.as_deref().unwrap_or("")
             ),
             s.last_message,
+            SIGNALS_VERSION,
         ],
     )?;
 
@@ -371,11 +400,11 @@ fn upsert_session(
 
 /// Copies the raw files so history survives the tools' own cleanup (Claude
 /// Code deletes transcripts after 30 days by default).
-fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
-    let main = &unit.paths[0];
-    // The session's id as the tool names it: the transcript's file stem, or
-    // the session folder for Copilot CLI.
-    let id_source = match unit.source {
+/// Where a session's raw files are archived: one folder per session, named
+/// by the id the tool uses (the transcript's file stem, or the session folder
+/// for Copilot CLI).
+fn archive_dir(data_dir: &Path, source: Source, main: &Path) -> PathBuf {
+    let id_source = match source {
         Source::CopilotCli => main.parent().and_then(|d| d.file_name()),
         _ => main.file_stem(),
     };
@@ -391,10 +420,27 @@ fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
             }
         })
         .collect();
-    let dest = data_dir
-        .join("archive")
-        .join(unit.source.as_str())
-        .join(safe_id);
+    data_dir.join("archive").join(source.as_str()).join(safe_id)
+}
+
+/// The archived copy of a session whose original transcript is gone.
+fn archived_unit(data_dir: &Path, source: Source, original_main: &Path) -> Option<Unit> {
+    let dir = archive_dir(data_dir, source, original_main);
+    let main = dir.join(original_main.file_name()?);
+    if !main.is_file() {
+        return None;
+    }
+    let mut paths = vec![main];
+    if let Ok(rd) = std::fs::read_dir(dir.join("sub")) {
+        let mut subs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        subs.sort();
+        paths.extend(subs);
+    }
+    Some(Unit { source, paths })
+}
+
+fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
+    let dest = archive_dir(data_dir, unit.source, &unit.paths[0]);
     for (i, p) in unit.paths.iter().enumerate() {
         let Ok(meta) = std::fs::metadata(p) else {
             continue;
