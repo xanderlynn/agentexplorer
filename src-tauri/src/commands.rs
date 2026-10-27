@@ -1,5 +1,8 @@
 //! The Tauri command surface. Each command is a thin wrapper; the logic
 //! lives in the domain modules so it can be tested without a window.
+//!
+//! Every command is `async` (runs on a worker thread) so that waiting on a
+//! database the ingester is writing never freezes the window.
 
 use std::collections::BTreeMap;
 
@@ -52,37 +55,37 @@ async fn blocking<T: Send + 'static>(
     .map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_overview(state: State<AppState>, days: i64) -> CmdResult<Overview> {
     with_db(&state, |c| analytics::overview(c, days))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_insights(state: State<AppState>, days: i64) -> CmdResult<Vec<Insight>> {
     with_db(&state, |c| analytics::insights(c, days))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_scorecard(state: State<AppState>, days: i64) -> CmdResult<Scorecard> {
     with_db(&state, |c| analytics::scorecard(c, days))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<Vec<SessionRow>> {
     with_db(&state, |c| analytics::list_sessions(c, &filter))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_session(state: State<AppState>, id: String) -> CmdResult<SessionDetail> {
     with_db(&state, |c| analytics::session_detail(c, &id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_review(state: State<AppState>, review: Review) -> CmdResult<()> {
     with_db(&state, |c| analytics::save_review(c, &review))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_live(state: State<AppState>) -> CmdResult<LiveSummary> {
     with_db(&state, live::summary)
 }
@@ -106,7 +109,7 @@ pub struct SourceStatus {
     pub sessions: i64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_sources(state: State<AppState>) -> CmdResult<Vec<SourceStatus>> {
     with_db(&state, |c| {
         let roots = sources::roots();
@@ -136,7 +139,7 @@ pub fn get_sources(state: State<AppState>) -> CmdResult<Vec<SourceStatus>> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_source_enabled(state: State<AppState>, source: Source, enabled: bool) -> CmdResult<()> {
     with_db(&state, |c| {
         db::set_setting(
@@ -147,7 +150,7 @@ pub fn set_source_enabled(state: State<AppState>, source: Source, enabled: bool)
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(state: State<AppState>) -> CmdResult<Vec<String>> {
     with_db(&state, |c| {
         let mut stmt = c.prepare(
@@ -163,37 +166,37 @@ pub fn list_projects(state: State<AppState>) -> CmdResult<Vec<String>> {
 
 // ----------------------------------------------------------------- journal
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_intents(state: State<AppState>) -> CmdResult<Vec<Intent>> {
     with_db(&state, journal::list)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_intent(state: State<AppState>, input: NewIntent) -> CmdResult<i64> {
     with_db(&state, |c| journal::create(c, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_intent(state: State<AppState>, input: CloseIntent) -> CmdResult<()> {
     with_db(&state, |c| journal::close(c, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reopen_intent(state: State<AppState>, id: i64) -> CmdResult<()> {
     with_db(&state, |c| journal::reopen(c, id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_intent(state: State<AppState>, id: i64) -> CmdResult<()> {
     with_db(&state, |c| journal::delete(c, id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn link_intent(state: State<AppState>, id: i64, session_id: Option<String>) -> CmdResult<()> {
     with_db(&state, |c| journal::link(c, id, session_id.as_deref()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_calibration(state: State<AppState>, days: i64) -> CmdResult<Calibration> {
     with_db(&state, |c| {
         journal::calibration(c, analytics::Range::last_days(days).since)
@@ -202,12 +205,12 @@ pub fn get_calibration(state: State<AppState>, days: i64) -> CmdResult<Calibrati
 
 // --------------------------------------------------------------- playbooks
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_playbooks(state: State<AppState>) -> CmdResult<Vec<PlaybookStats>> {
     with_db(&state, playbooks::list)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_prompt_template(
     state: State<AppState>,
     name: String,
@@ -221,7 +224,7 @@ pub fn create_prompt_template(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_prompt_template(
     state: State<AppState>,
     id: i64,
@@ -233,7 +236,7 @@ pub fn update_prompt_template(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_playbook(state: State<AppState>, id: i64) -> CmdResult<()> {
     // Instruction files are rediscovered on the next scan, so only prompt
     // templates can be deleted.
@@ -246,7 +249,7 @@ pub fn delete_playbook(state: State<AppState>, id: i64) -> CmdResult<()> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_session_playbook(
     state: State<AppState>,
     session_id: String,
@@ -272,12 +275,12 @@ pub fn set_session_playbook(
 
 // ------------------------------------------------------------------- retro
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_retros(state: State<AppState>) -> CmdResult<Vec<RetroRow>> {
     with_db(&state, retro::list)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_retro(state: State<AppState>, days: i64) -> CmdResult<String> {
     with_db(&state, |c| Ok(retro::prepare(c, days)?.prompt))
 }
@@ -294,7 +297,7 @@ pub async fn generate_retro(
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_retro(state: State<AppState>, id: i64) -> CmdResult<()> {
     with_db(&state, |c| retro::delete(c, id))
 }
@@ -320,10 +323,11 @@ pub struct Settings {
     pub has_api_key: bool,
     pub keychain_error: Option<String>,
     pub data_dir: String,
+    pub db_path: String,
     pub default_api_model: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
     with_db(&state, |c| {
         let mut values = BTreeMap::new();
@@ -343,12 +347,13 @@ pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
             has_api_key,
             keychain_error,
             data_dir: state.data_dir.to_string_lossy().into_owned(),
+            db_path: state.db_path.to_string_lossy().into_owned(),
             default_api_model: retro::DEFAULT_API_MODEL.into(),
         })
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> CmdResult<()> {
     if !SETTING_KEYS.contains(&key.as_str()) {
         return Err(format!("Unknown setting {key}"));
@@ -356,12 +361,12 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> CmdRes
     with_db(&state, |c| db::set_setting(c, &key, &value))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_api_key(key: String) -> CmdResult<()> {
     retro::set_api_key(&key).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_api_key() -> CmdResult<()> {
     retro::clear_api_key().map_err(err)
 }

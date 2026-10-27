@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, GitCommitHorizontal, X } from "lucide-react";
-import { api, type Outcome } from "../api";
+import { api, currentVersion, type Outcome } from "../api";
 import { compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
 
@@ -167,9 +167,10 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                   >
                     <option value="">Mark a prompt template as used…</option>
                     {templates
-                      .filter((t) => !linkedVersions.has(t.versions[0].id))
-                      .map((t) => (
-                        <option key={t.id} value={t.versions[0].id}>{t.name}</option>
+                      .map((t) => ({ t, v: currentVersion(t)! }))
+                      .filter(({ v }) => !linkedVersions.has(v.id))
+                      .map(({ t, v }) => (
+                        <option key={t.id} value={v.id}>{t.name}</option>
                       ))}
                   </select>
                 </div>

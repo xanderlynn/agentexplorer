@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { api, type Playbook, type PlaybookVersion } from "../api";
+import { api, currentVersion, type Playbook, type PlaybookVersion } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, inputClass } from "../components/ui";
 import { date, pct, projectName } from "../format";
 
@@ -134,7 +134,7 @@ function VersionRow({ v }: { v: PlaybookVersion }) {
 function TemplateEditor({ existing, onDone }: { existing?: Playbook; onDone: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState(existing?.name ?? "");
-  const [content, setContent] = useState(existing?.versions[0]?.content ?? "");
+  const [content, setContent] = useState((existing && currentVersion(existing)?.content) ?? "");
   const save = useMutation({
     mutationFn: () => (existing ? api.updatePromptTemplate(existing.id, name, content) : api.createPromptTemplate(name, content).then(() => undefined)),
     onSuccess: () => {

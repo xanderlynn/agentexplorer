@@ -16,7 +16,8 @@ export default function Scorecard({ days, setDays }: { days: number; setDays: (d
   );
   if (q.isLoading) return <>{header}<Loading /></>;
   if (q.error) return <>{header}<ErrorNote error={q.error} /></>;
-  const s = q.data!;
+  if (!q.data) return header;
+  const s = q.data;
   if (s.sessions === 0) return <>{header}<Empty title="No sessions in this range" /></>;
 
   return (

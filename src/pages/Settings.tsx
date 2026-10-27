@@ -80,16 +80,16 @@ export default function Settings() {
                   Detected: <span className="font-mono">{settings.data?.detectedClaudePath ?? "not found"}</span>
                 </p>
                 <Field label="claude path override" hint="Leave empty to auto-detect.">
-                  <input className={inputClass} defaultValue={v["retro.claudePath"] ?? ""} onBlur={(e) => set.mutate({ key: "retro.claudePath", value: e.target.value.trim() })} placeholder="/Users/you/.local/bin/claude" />
+                  <SettingInput settingKey="retro.claudePath" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder="/Users/you/.local/bin/claude" />
                 </Field>
                 <Field label="Model" hint="Optional; passed as --model. Empty uses the CLI's default.">
-                  <input className={inputClass} defaultValue={v["retro.cliModel"] ?? ""} onBlur={(e) => set.mutate({ key: "retro.cliModel", value: e.target.value.trim() })} placeholder="opus" />
+                  <SettingInput settingKey="retro.cliModel" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder="opus" />
                 </Field>
               </>
             ) : (
               <>
                 <Field label="Model">
-                  <input className={inputClass} defaultValue={v["retro.apiModel"] ?? ""} onBlur={(e) => set.mutate({ key: "retro.apiModel", value: e.target.value.trim() })} placeholder={settings.data?.defaultApiModel} />
+                  <SettingInput settingKey="retro.apiModel" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder={settings.data?.defaultApiModel} />
                 </Field>
                 <Field label="API key" hint="Stored in your OS keychain (macOS Keychain / Windows Credential Manager), never in the database.">
                   {settings.data?.hasApiKey ? (
@@ -134,7 +134,7 @@ export default function Settings() {
           <p className="text-sm text-zinc-400">Everything lives in one SQLite database on this computer.</p>
           <div className="mt-2 flex items-center justify-between gap-3">
             <span className="truncate font-mono text-xs text-zinc-500">{settings.data?.dataDir}</span>
-            <Button size="sm" variant="ghost" onClick={() => settings.data && revealItemInDir(`${settings.data.dataDir}/ledger.sqlite3`).catch(() => {})}>
+            <Button size="sm" variant="ghost" onClick={() => settings.data && revealItemInDir(settings.data.dbPath).catch(() => {})}>
               <FolderOpen size={14} /> Show
             </Button>
           </div>
@@ -142,5 +142,36 @@ export default function Settings() {
       </div>
       <ErrorNote error={set.error ?? toggleSource.error} />
     </>
+  );
+}
+
+// A text setting saved on blur. It mounts only once settings have loaded, so
+// its initial value is the stored one, and an unchanged value is not re-saved.
+function SettingInput({
+  settingKey,
+  values,
+  ready,
+  onSave,
+  placeholder,
+}: {
+  settingKey: string;
+  values: Record<string, string>;
+  ready: boolean;
+  onSave: (key: string, value: string) => void;
+  placeholder?: string;
+}) {
+  const stored = values[settingKey] ?? "";
+  if (!ready) return <input className={inputClass} disabled placeholder={placeholder} />;
+  return (
+    <input
+      key={stored}
+      className={inputClass}
+      defaultValue={stored}
+      placeholder={placeholder}
+      onBlur={(e) => {
+        const value = e.target.value.trim();
+        if (value !== stored) onSave(settingKey, value);
+      }}
+    />
   );
 }

@@ -8,7 +8,9 @@ const queryClient = new QueryClient({
   defaultOptions: {
     // Data only changes when the Rust side ingests, which emits an event the
     // app listens for, so there is no need to refetch on focus.
-    queries: { refetchOnWindowFocus: false, staleTime: 30_000, retry: 1 },
+    // Commands are local IPC, so the OS's online/offline state is irrelevant.
+    queries: { refetchOnWindowFocus: false, staleTime: 30_000, retry: 1, networkMode: "always" },
+    mutations: { networkMode: "always" },
   },
 });
 

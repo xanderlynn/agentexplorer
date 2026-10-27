@@ -102,7 +102,7 @@ pub fn discover(root: &Root) -> Vec<Unit> {
         Source::CopilotVscode => {
             let mut push_chat_files = |dir: &Path| {
                 for f in read_files(dir) {
-                    if is_ext(&f, "json") || is_ext(&f, "jsonl") {
+                    if is_vscode_chat_file(&f) {
                         units.push(Unit {
                             source: Source::CopilotVscode,
                             paths: vec![f],
@@ -151,15 +151,18 @@ pub fn unit_for_path(root: &Root, changed: &Path) -> Option<Unit> {
                 .parent()
                 .and_then(|p| p.file_name())
                 .is_some_and(|n| n == "chatSessions" || n == "emptyWindowChatSessions");
-            (in_chat_dir
-                && (is_ext(changed, "json") || is_ext(changed, "jsonl"))
-                && changed.is_file())
-            .then(|| Unit {
+            (in_chat_dir && is_vscode_chat_file(changed) && changed.is_file()).then(|| Unit {
                 source: Source::CopilotVscode,
                 paths: vec![changed.to_path_buf()],
             })
         }
     }
+}
+
+/// VS Code moved from `<id>.json` snapshots to `<id>.jsonl` patch logs; when
+/// both exist for one session, the `.jsonl` is current.
+fn is_vscode_chat_file(f: &Path) -> bool {
+    is_ext(f, "jsonl") || (is_ext(f, "json") && !f.with_extension("jsonl").is_file())
 }
 
 fn claude_unit(main: PathBuf) -> Unit {

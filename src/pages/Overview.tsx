@@ -27,7 +27,8 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
   );
   if (ov.isLoading) return <>{header}<Loading /></>;
   if (ov.error) return <>{header}<ErrorNote error={ov.error} /></>;
-  const o = ov.data!;
+  if (!ov.data) return header;
+  const o = ov.data;
   const t = o.totals;
   const p = o.previous;
 

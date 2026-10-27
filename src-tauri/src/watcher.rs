@@ -37,8 +37,12 @@ fn run(app: &AppHandle, db_path: &Path, data_dir: &Path) -> anyhow::Result<()> {
     let mut conn = db::open(db_path)?;
     let ingestor = Ingestor::new(data_dir);
 
-    let report = ingestor.ingest_all(&mut conn, false)?;
-    emit(app, &report);
+    // A failed first scan (say, the database is busy) must not stop live
+    // updates; the periodic full scan retries it.
+    match ingestor.ingest_all(&mut conn, false) {
+        Ok(report) => emit(app, &report),
+        Err(e) => eprintln!("initial scan: {e:#}"),
+    }
 
     let (tx, rx) = channel();
     let mut watcher = notify::recommended_watcher(tx)?;

@@ -66,8 +66,9 @@ export default function App() {
   }, [qc]);
 
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const live = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, staleTime: 0 });
-  useWaitingNotifications(live.data?.sessions ?? [], settings.data?.values["notify.waiting"] !== "false");
+  // Keep polling while the window is hidden: that is when a notification matters.
+  const live = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, refetchIntervalInBackground: true, staleTime: 0 });
+  useWaitingNotifications(live.data?.sessions, settings.data?.values["notify.waiting"] !== "false");
 
   const waiting = live.data?.waitingOnYou ?? 0;
   const go = (p: Page) => setPage(p);
@@ -121,9 +122,10 @@ export default function App() {
 }
 
 // Sends a desktop notification when a session starts waiting on the human.
-function useWaitingNotifications(sessions: { id: string; state: LiveState; title: string | null; projectPath: string | null }[], enabled: boolean) {
+function useWaitingNotifications(sessions: { id: string; state: LiveState; title: string | null; projectPath: string | null }[] | undefined, enabled: boolean) {
   const previous = useRef<Map<string, LiveState> | null>(null);
   useEffect(() => {
+    if (!sessions) return;
     const now = new Map(sessions.map((s) => [s.id, s.state]));
     const before = previous.current;
     previous.current = now;

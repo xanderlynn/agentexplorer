@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, RotateCcw, Trash2 } from "lucide-react";
 import { api, type CalibrationRow, type Intent, type Outcome, type Source } from "../api";
-import { Button, Card, Empty, ErrorNote, Field, Loading, OutcomeBadge, OutcomePicker, PageHeader, RANGE_OPTIONS, Segmented, Stat, inputClass } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Field, Loading, OutcomeBadge, OutcomePicker, PageHeader, RANGE_OPTIONS, Segmented, Stat, inputBase, inputClass } from "../components/ui";
 import { SOURCE_LABEL, TASK_TYPES, dateTime, pct, projectName } from "../format";
 
 export default function Journal({ days, setDays, onOpen }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void }) {
@@ -75,7 +75,7 @@ function NewIntent() {
 
   const create = useMutation({
     mutationFn: () =>
-      api.createIntent({ goal, taskType, projectPath: projectPath || null, tool: tool || null, expectedMinutes: expected, confidence }),
+      api.createIntent({ goal, taskType, projectPath: projectPath || null, tool: tool || null, expectedMinutes: Math.max(1, Math.round(expected)), confidence }),
     onSuccess: () => {
       setGoal("");
       qc.invalidateQueries();
@@ -134,10 +134,12 @@ function OpenIntent({ intent: i, onOpen }: { intent: Intent; onOpen: (id: string
   const [actual, setActual] = useState<string>("");
   const [reflection, setReflection] = useState("");
   const close = useMutation({
-    mutationFn: () => api.closeIntent({ id: i.id, outcome: outcome!, actualMinutes: actual ? Number(actual) : null, reflection: reflection || null }),
+    mutationFn: () => api.closeIntent({ id: i.id, outcome: outcome!, actualMinutes: actual ? Math.max(1, Math.round(Number(actual))) : null, reflection: reflection || null }),
     onSuccess: () => qc.invalidateQueries(),
   });
   const del = useMutation({ mutationFn: () => api.deleteIntent(i.id), onSuccess: () => qc.invalidateQueries() });
+  const link = useMutation({ mutationFn: (sessionId: string | null) => api.linkIntent(i.id, sessionId), onSuccess: () => qc.invalidateQueries() });
+  const recent = useQuery({ queryKey: ["sessions", { days: 3 }], queryFn: () => api.sessions({ days: 3 }), enabled: !i.sessionId });
   const suggested = i.sessionActiveMinutes != null ? Math.round(i.sessionActiveMinutes) : null;
 
   return (
@@ -149,11 +151,22 @@ function OpenIntent({ intent: i, onOpen }: { intent: Intent; onOpen: (id: string
             {i.taskType} · expected {i.expectedMinutes} min · confidence {i.confidence}/5 · {projectName(i.projectPath)} · logged {dateTime(i.createdAt)}
           </div>
           {i.sessionId ? (
-            <button className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-400 hover:underline" onClick={() => onOpen(i.sessionId!)}>
-              <Link2 size={12} /> {i.sessionTitle ?? "Linked session"} {suggested != null && `(${suggested} min active)`}
-            </button>
+            <div className="mt-1 flex items-center gap-2 text-xs">
+              <button className="inline-flex items-center gap-1 text-emerald-400 hover:underline" onClick={() => onOpen(i.sessionId!)}>
+                <Link2 size={12} /> {i.sessionTitle ?? "Linked session"} {suggested != null && `(${suggested} min active)`}
+              </button>
+              <button className="text-zinc-500 hover:text-zinc-300" onClick={() => link.mutate(null)}>unlink</button>
+            </div>
           ) : (
-            <div className="mt-1 text-xs text-zinc-600">{i.projectPath ? "Waiting for a session in this project…" : "No project, so no automatic session link."}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+              <span>{i.projectPath ? "Waiting for a session in this project…" : "No project set."}</span>
+              <select className={`${inputBase} py-0.5 text-xs`} value="" onChange={(e) => e.target.value && link.mutate(e.target.value)}>
+                <option value="">Link a session…</option>
+                {recent.data?.slice(0, 30).map((s) => (
+                  <option key={s.id} value={s.id}>{dateTime(s.startedAt)} · {projectName(s.repoRoot ?? s.projectPath)} · {s.title ?? "Untitled"}</option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
         <Button size="sm" variant="ghost" onClick={() => del.mutate()} aria-label="Delete intent"><Trash2 size={14} /></Button>

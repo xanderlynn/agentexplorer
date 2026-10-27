@@ -6,7 +6,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 /// Each entry upgrades the schema by one version. Append only; never edit a
 /// migration that has shipped.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE sessions (
     id                  TEXT PRIMARY KEY,           -- "<source>:<external id>"
     source              TEXT NOT NULL,
@@ -137,7 +138,18 @@ CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-"#];
+"#,
+    // A version can be in effect more than once (A, then B, then A again),
+    // so record each time a version was seen rather than only the first.
+    r#"
+CREATE TABLE playbook_sightings (
+    version_id INTEGER NOT NULL REFERENCES playbook_versions(id) ON DELETE CASCADE,
+    seen_at    INTEGER NOT NULL,
+    PRIMARY KEY (version_id, seen_at)
+);
+INSERT INTO playbook_sightings (version_id, seen_at) SELECT id, first_seen FROM playbook_versions;
+"#,
+];
 
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;

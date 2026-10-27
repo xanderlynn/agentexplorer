@@ -38,6 +38,12 @@ pub fn applies_to(kind: &str, source: &str) -> bool {
     }
 }
 
+/// Git checks files out with CRLF on Windows (`core.autocrlf`) but `git show`
+/// returns LF; normalize so the same text is one version.
+fn normalize_eol(content: &str) -> String {
+    content.replace("\r\n", "\n")
+}
+
 fn hash(content: &str) -> String {
     let digest = Sha256::digest(content.as_bytes());
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
@@ -72,14 +78,22 @@ fn add_version(
     first_seen: i64,
     git_sha: Option<&str>,
 ) -> Result<()> {
-    // When the same content shows up again (a revert), keep the earliest sighting.
-    conn.execute(
+    let content = normalize_eol(content);
+    let version_id: i64 = conn.query_row(
         "INSERT INTO playbook_versions (playbook_id, hash, content, first_seen, git_sha)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(playbook_id, hash) DO UPDATE SET
            first_seen = MIN(first_seen, excluded.first_seen),
-           git_sha = COALESCE(git_sha, excluded.git_sha)",
-        params![playbook_id, hash(content), content, first_seen, git_sha],
+           git_sha = COALESCE(git_sha, excluded.git_sha)
+         RETURNING id",
+        params![playbook_id, hash(&content), content, first_seen, git_sha],
+        |r| r.get(0),
+    )?;
+    // Content that comes back (a revert) gets another sighting, so it is in
+    // effect again from that point.
+    conn.execute(
+        "INSERT OR IGNORE INTO playbook_sightings (version_id, seen_at) VALUES (?1, ?2)",
+        params![version_id, first_seen],
     )?;
     Ok(())
 }
@@ -87,7 +101,10 @@ fn add_version(
 /// Finds instruction files under each project root and records new versions,
 /// including past versions from git history.
 pub fn sync(conn: &Connection, roots: &BTreeSet<String>) -> Result<()> {
-    let global = home().join(".claude").join("CLAUDE.md");
+    let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home().join(".claude"));
+    let global = claude_home.join("CLAUDE.md");
     if let Ok(content) = std::fs::read_to_string(&global) {
         let path = global.to_string_lossy();
         let id = ensure_playbook(conn, "claude_md", "Global CLAUDE.md", &path, None)?;
@@ -193,9 +210,14 @@ type SessionLinkRow = (String, String, Option<i64>, Option<String>, Option<Strin
 /// id, kind, name, path, project_root
 type PlaybookRow = (i64, String, String, Option<String>, Option<String>);
 
-struct VersionInfo {
-    id: i64,
-    first_seen: i64,
+/// A point from which a version was in effect.
+struct Sighting {
+    version_id: i64,
+    seen_at: i64,
+}
+
+struct VersionHistory {
+    sightings: Vec<Sighting>,
     from_git: bool,
 }
 
@@ -206,29 +228,34 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?
     };
-    let mut versions_of = std::collections::HashMap::new();
+    let mut history = std::collections::HashMap::new();
     let mut snippets = std::collections::HashMap::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT id, first_seen, git_sha IS NOT NULL, content FROM playbook_versions
-             WHERE playbook_id = ?1 ORDER BY first_seen",
+            "SELECT s.version_id, s.seen_at, v.git_sha IS NOT NULL, v.content
+             FROM playbook_sightings s JOIN playbook_versions v ON v.id = s.version_id
+             WHERE v.playbook_id = ?1 ORDER BY s.seen_at, s.version_id",
         )?;
         for (pid, kind, _) in &playbooks {
-            let mut list = vec![];
+            let mut h = VersionHistory {
+                sightings: vec![],
+                from_git: false,
+            };
             let mut latest_content = String::new();
             for row in stmt.query_map([pid], |r| {
                 Ok((
-                    VersionInfo {
-                        id: r.get(0)?,
-                        first_seen: r.get(1)?,
-                        from_git: r.get(2)?,
+                    Sighting {
+                        version_id: r.get(0)?,
+                        seen_at: r.get(1)?,
                     },
+                    r.get::<_, bool>(2)?,
                     r.get::<_, String>(3)?,
                 ))
             })? {
-                let (v, content) = row?;
+                let (sighting, from_git, content) = row?;
+                h.from_git |= from_git;
                 latest_content = content;
-                list.push(v);
+                h.sightings.push(sighting);
             }
             if kind == "prompt" {
                 let snippet: String = normalize(&latest_content)
@@ -239,7 +266,7 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
                     snippets.insert(*pid, snippet);
                 }
             }
-            versions_of.insert(*pid, list);
+            history.insert(*pid, h);
         }
     }
 
@@ -283,7 +310,7 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
                 if !matches {
                     continue;
                 }
-                if let Some(v) = version_at(&versions_of[pid], started) {
+                if let Some(v) = version_at(&history[pid], started) {
                     insert.execute(params![sid, v])?;
                 }
             }
@@ -293,18 +320,23 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
     Ok(())
 }
 
-/// The version in effect at `t`. Without git history the first version we
-/// saw is the best guess for older sessions; with history, a session from
-/// before the file existed gets none.
-fn version_at(versions: &[VersionInfo], t: i64) -> Option<i64> {
-    let in_effect = versions
+/// The version in effect at `t`: the one sighted most recently before it.
+/// Without git history the first version we saw is the best guess for older
+/// sessions; with history, a session from before the file existed gets none.
+fn version_at(h: &VersionHistory, t: i64) -> Option<i64> {
+    let in_effect = h
+        .sightings
         .iter()
-        .filter(|v| v.first_seen <= t)
-        .max_by_key(|v| v.first_seen);
+        .filter(|s| s.seen_at <= t)
+        .max_by_key(|s| s.seen_at);
     match in_effect {
-        Some(v) => Some(v.id),
-        None if versions.iter().any(|v| v.from_git) => None,
-        None => versions.first().map(|v| v.id),
+        Some(s) => Some(s.version_id),
+        None if h.from_git => None,
+        None => h
+            .sightings
+            .iter()
+            .min_by_key(|s| s.seen_at)
+            .map(|s| s.version_id),
     }
 }
 
@@ -313,6 +345,8 @@ fn version_at(versions: &[VersionInfo], t: i64) -> Option<i64> {
 pub struct VersionStats {
     pub id: i64,
     pub first_seen: i64,
+    /// When this content was last put in effect; the newest is current.
+    pub last_seen: i64,
     pub git_sha: Option<String>,
     pub content: String,
     pub sessions: i64,
@@ -346,7 +380,9 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut vstmt = conn.prepare(
-        "SELECT v.id, v.first_seen, v.git_sha, v.content,
+        "SELECT v.id, v.first_seen,
+                (SELECT MAX(seen_at) FROM playbook_sightings ps WHERE ps.version_id = v.id),
+                v.git_sha, v.content,
                 COUNT(s.id),
                 SUM(s.outcome IS NOT NULL),
                 AVG(CASE s.outcome WHEN 'shipped' THEN 1.0 WHEN 'partial' THEN 0.5
@@ -355,13 +391,14 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                 AVG(s.user_turns),
                 AVG(s.interruptions),
                 CAST(SUM(s.tool_errors) AS REAL) / NULLIF(SUM(s.tool_calls), 0),
-                AVG((SELECT COUNT(*) FROM session_commits c WHERE c.session_id = s.id))
+                CASE WHEN COUNT(s.id) = 0 THEN NULL
+                     ELSE AVG((SELECT COUNT(*) FROM session_commits c WHERE c.session_id = s.id)) END
          FROM playbook_versions v
          LEFT JOIN session_playbooks sp ON sp.version_id = v.id
          LEFT JOIN sessions s ON s.id = sp.session_id
          WHERE v.playbook_id = ?1
          GROUP BY v.id
-         ORDER BY v.first_seen DESC",
+         ORDER BY 3 DESC, v.id DESC",
     )?;
     for (id, kind, name, path, project_root) in pbs {
         let versions = vstmt
@@ -369,16 +406,17 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                 Ok(VersionStats {
                     id: r.get(0)?,
                     first_seen: r.get(1)?,
-                    git_sha: r.get(2)?,
-                    content: r.get(3)?,
-                    sessions: r.get(4)?,
-                    rated: r.get::<_, Option<i64>>(5)?.unwrap_or(0),
-                    success_rate: r.get(6)?,
-                    avg_rating: r.get(7)?,
-                    avg_turns: r.get(8)?,
-                    avg_interruptions: r.get(9)?,
-                    tool_error_rate: r.get(10)?,
-                    commits_per_session: r.get(11)?,
+                    last_seen: r.get(2)?,
+                    git_sha: r.get(3)?,
+                    content: r.get(4)?,
+                    sessions: r.get(5)?,
+                    rated: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    success_rate: r.get(7)?,
+                    avg_rating: r.get(8)?,
+                    avg_turns: r.get(9)?,
+                    avg_interruptions: r.get(10)?,
+                    tool_error_rate: r.get(11)?,
+                    commits_per_session: r.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -398,22 +436,65 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
 mod tests {
     use super::*;
 
-    fn v(id: i64, first_seen: i64, from_git: bool) -> VersionInfo {
-        VersionInfo {
-            id,
-            first_seen,
+    fn history(sightings: &[(i64, i64)], from_git: bool) -> VersionHistory {
+        VersionHistory {
+            sightings: sightings
+                .iter()
+                .map(|&(version_id, seen_at)| Sighting {
+                    version_id,
+                    seen_at,
+                })
+                .collect(),
             from_git,
         }
     }
 
     #[test]
     fn picks_version_in_effect() {
-        let list = [v(1, 100, true), v(2, 200, true)];
-        assert_eq!(version_at(&list, 150), Some(1));
-        assert_eq!(version_at(&list, 250), Some(2));
-        assert_eq!(version_at(&list, 50), None);
+        let h = history(&[(1, 100), (2, 200)], true);
+        assert_eq!(version_at(&h, 150), Some(1));
+        assert_eq!(version_at(&h, 250), Some(2));
+        assert_eq!(version_at(&h, 50), None);
         // Without git history, older sessions fall back to the first version.
-        assert_eq!(version_at(&[v(3, 100, false)], 50), Some(3));
+        assert_eq!(version_at(&history(&[(3, 100)], false), 50), Some(3));
+    }
+
+    #[test]
+    fn reverted_content_is_in_effect_again() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let id =
+            create_prompt_template(&conn, "T", "version A of the prompt template text").unwrap();
+        conn.execute("UPDATE playbook_sightings SET seen_at = 100", [])
+            .unwrap();
+        add_version(
+            &conn,
+            id,
+            "version B of the prompt template text",
+            200,
+            None,
+        )
+        .unwrap();
+        add_version(
+            &conn,
+            id,
+            "version A of the prompt template text",
+            300,
+            None,
+        )
+        .unwrap();
+        let count = || -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM playbook_versions", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(), 2);
+        let listed = &list(&conn).unwrap()[0];
+        assert!(listed.versions[0].content.starts_with("version A"));
+        assert_eq!(listed.versions[0].last_seen, 300);
+
+        // CRLF content (a Windows checkout) is the same version as LF content.
+        add_version(&conn, id, "line one\nline two", 400, None).unwrap();
+        add_version(&conn, id, "line one\r\nline two", 400, None).unwrap();
+        assert_eq!(count(), 3);
     }
 
     #[test]

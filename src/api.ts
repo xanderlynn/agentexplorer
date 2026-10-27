@@ -213,6 +213,7 @@ export interface Calibration {
 export interface PlaybookVersion {
   id: number;
   firstSeen: number;
+  lastSeen: number;
   gitSha: string | null;
   content: string;
   sessions: number;
@@ -223,6 +224,12 @@ export interface PlaybookVersion {
   avgInterruptions: number | null;
   toolErrorRate: number | null;
   commitsPerSession: number | null;
+}
+
+// The current version is the one put in effect most recently. firstSeen can
+// be older when an edit restores earlier content.
+export function currentVersion(p: { versions: PlaybookVersion[] }): PlaybookVersion | undefined {
+  return p.versions.reduce<PlaybookVersion | undefined>((best, v) => (!best || v.lastSeen > best.lastSeen ? v : best), undefined);
 }
 
 export interface Playbook {
@@ -259,6 +266,7 @@ export interface Settings {
   hasApiKey: boolean;
   keychainError: string | null;
   dataDir: string;
+  dbPath: string;
   defaultApiModel: string;
 }
 

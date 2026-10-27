@@ -1,5 +1,6 @@
 //! Links sessions to the commits they produced, using the `git` CLI.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -125,31 +126,55 @@ fn parse_shortstat(s: &str) -> (i64, i64, i64) {
     (files, ins, del)
 }
 
-/// Recomputes commit links for every session in `repo`. Each commit by the
-/// repo's configured author goes to the most recent session that started
-/// before it and was active within `COMMIT_WINDOW_MS`.
-pub fn link_commits(conn: &Connection, repo: &str) -> Result<usize> {
-    let sessions: Vec<(String, i64, i64)> = {
+/// The repository's shared git directory. Worktrees of one repository have
+/// different top-levels but the same common dir.
+pub fn common_dir(repo: &str) -> Option<String> {
+    git(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
+/// Recomputes commit links for every session in `roots`, which must be the
+/// worktrees of one repository. Each commit by the configured author goes to
+/// the most recent session (in any of those worktrees) that started before it
+/// and was active within `COMMIT_WINDOW_MS`, so a commit is counted once.
+pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
+    let mut sessions: Vec<(String, i64, i64)> = vec![];
+    let mut root_of: HashMap<String, String> = HashMap::new();
+    {
         let mut stmt = conn.prepare(
             "SELECT id, started_at, ended_at FROM sessions
-             WHERE repo_root = ?1 AND started_at IS NOT NULL AND ended_at IS NOT NULL
-             ORDER BY started_at",
+             WHERE repo_root = ?1 AND started_at IS NOT NULL AND ended_at IS NOT NULL",
         )?;
-        stmt.query_map([repo], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?
-    };
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM session_commits WHERE repo_root = ?1", [repo])?;
-    let Some(since) = sessions.first().map(|s| s.1) else {
-        tx.commit()?;
-        return Ok(0);
-    };
+        for root in roots {
+            for row in stmt.query_map([root], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))? {
+                let row: (String, i64, i64) = row?;
+                root_of.insert(row.0.clone(), root.clone());
+                sessions.push(row);
+            }
+        }
+    }
+    sessions.sort_by_key(|s| s.1);
 
-    let email = git(repo, &["config", "user.email"])
+    // Run git before taking the write lock; it can take seconds on big repos.
+    let commits = match (roots.first(), sessions.first()) {
+        (Some(repo), Some(first)) => read_commits(repo, first.1)?,
+        _ => vec![],
+    };
+    let email = roots
+        .first()
+        .and_then(|r| git(r, &["config", "user.email"]).ok())
         .map(|s| s.trim().to_lowercase())
         .unwrap_or_default();
-    let commits = read_commits(repo, since)?;
 
+    let tx = conn.unchecked_transaction()?;
+    for root in roots {
+        tx.execute("DELETE FROM session_commits WHERE repo_root = ?1", [root])?;
+    }
     let mut linked = 0;
     {
         let mut insert = tx.prepare(
@@ -164,7 +189,7 @@ pub fn link_commits(conn: &Connection, repo: &str) -> Result<usize> {
             if let Some(owner) = owning_session(&sessions, c.committed_at) {
                 insert.execute(params![
                     owner,
-                    repo,
+                    root_of[owner],
                     c.sha,
                     c.committed_at,
                     c.subject,

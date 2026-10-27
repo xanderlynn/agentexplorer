@@ -1,7 +1,7 @@
 //! Turns source files into rows: detect changed units, parse them in
 //! parallel, write them in one transaction, then run the linkers.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -55,10 +55,21 @@ impl Ingestor {
             .iter()
             .flat_map(sources::discover)
             .collect();
-        let (report, _) = self.ingest_units(conn, units, force)?;
+        let (mut report, _) = self.ingest_units(conn, &units, force)?;
         // A full pass re-links every session so new commits, instruction-file
         // edits and intents reach sessions whose transcripts did not change.
         self.postprocess(conn, None)?;
+        // Archiving happens here rather than on every file event: copying a
+        // large transcript each time an agent appends a line is wasteful, and
+        // a few minutes' delay is harmless against a 30-day cleanup.
+        if db::setting_bool(conn, "archive.enabled", true) {
+            for unit in &units {
+                if let Err(e) = archive_unit(&self.data_dir, unit) {
+                    report.errors.push(format!("archive {}: {e}", unit.key()));
+                }
+            }
+        }
+        report.errors.truncate(50);
         Ok(report)
     }
 
@@ -68,15 +79,27 @@ impl Ingestor {
         changed_paths: &[PathBuf],
     ) -> Result<IngestReport> {
         let roots = self.enabled_roots(conn);
+        // FSEvents reports resolved paths, so a symlinked root (say ~/.claude)
+        // must also be matched in its canonical form.
+        let canonical: Vec<Option<PathBuf>> = roots
+            .iter()
+            .map(|r| std::fs::canonicalize(&r.path).ok())
+            .collect();
         let mut by_key: HashMap<String, Unit> = HashMap::new();
         for p in changed_paths {
-            for root in roots.iter().filter(|r| p.starts_with(&r.path)) {
-                if let Some(u) = sources::unit_for_path(root, p) {
+            for (root, canon) in roots.iter().zip(&canonical) {
+                let path = match canon.as_ref().and_then(|c| p.strip_prefix(c).ok()) {
+                    Some(rel) => root.path.join(rel),
+                    None if p.starts_with(&root.path) => p.clone(),
+                    None => continue,
+                };
+                if let Some(u) = sources::unit_for_path(root, &path) {
                     by_key.insert(u.key(), u);
                 }
             }
         }
-        let (report, changed) = self.ingest_units(conn, by_key.into_values().collect(), false)?;
+        let units: Vec<Unit> = by_key.into_values().collect();
+        let (report, changed) = self.ingest_units(conn, &units, false)?;
         if !changed.is_empty() {
             self.postprocess(conn, Some(&changed))?;
         }
@@ -86,7 +109,7 @@ impl Ingestor {
     fn ingest_units(
         &self,
         conn: &mut Connection,
-        units: Vec<Unit>,
+        units: &[Unit],
         force: bool,
     ) -> Result<(IngestReport, Vec<String>)> {
         let started = Instant::now();
@@ -100,8 +123,8 @@ impl Ingestor {
             ..Default::default()
         };
 
-        let todo: Vec<(Unit, String)> = units
-            .into_iter()
+        let todo: Vec<(&Unit, String)> = units
+            .iter()
             .filter_map(|u| {
                 let fp = u.fingerprint();
                 (force || known.get(&u.key()) != Some(&fp)).then_some((u, fp))
@@ -126,7 +149,6 @@ impl Ingestor {
             .collect();
 
         let retro_dir = self.retro_workdir().to_string_lossy().into_owned();
-        let archive = db::setting_bool(conn, "archive.enabled", true);
         let mut changed = vec![];
         let tx = conn.transaction()?;
         for (unit, fp, result) in parsed {
@@ -139,13 +161,7 @@ impl Ingestor {
                     None
                 }
                 Ok(Some((s, repo))) => {
-                    let id = upsert_session(&tx, unit.source, &unit, &s, repo.as_deref())?;
-                    if archive
-                        && let Err(e) =
-                            archive_unit(&self.data_dir, unit.source, &s.external_id, &unit)
-                    {
-                        report.errors.push(format!("archive {}: {e}", unit.key()));
-                    }
+                    let id = upsert_session(&tx, unit.source, unit, &s, repo.as_deref())?;
                     changed.push(id.clone());
                     report.updated += 1;
                     Some(id)
@@ -174,14 +190,19 @@ impl Ingestor {
         Ok((report, changed))
     }
 
-    /// Runs the git, playbook and intent linkers. `None` means every session.
+    /// Runs the linkers. A full pass (`None`) links commits, syncs
+    /// instruction files from git, and relinks every session. A watcher pass
+    /// only relinks the changed sessions: shelling out to git on every file
+    /// event is too slow, so commits appear with the next full scan.
     pub fn postprocess(&self, conn: &Connection, changed: Option<&[String]>) -> Result<()> {
-        let (repos, roots) = affected_roots(conn, changed)?;
-        for repo in &repos {
-            // A repo that moved or lost its .git should not stop the others.
-            let _ = git::link_commits(conn, repo);
+        if changed.is_none() {
+            let (repos, roots) = all_roots(conn)?;
+            for worktrees in group_worktrees(&repos) {
+                // A repo that moved or lost its .git should not stop the others.
+                let _ = git::link_commits(conn, &worktrees);
+            }
+            playbooks::sync(conn, &roots)?;
         }
-        playbooks::sync(conn, &roots)?;
         playbooks::relink(conn, changed)?;
         journal::auto_link(conn)?;
         Ok(())
@@ -207,39 +228,37 @@ fn cached_repo_root(
     root
 }
 
-fn affected_roots(
-    conn: &Connection,
-    changed: Option<&[String]>,
-) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+/// Distinct git roots and project roots across all sessions.
+fn all_roots(conn: &Connection) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
     let mut repos = BTreeSet::new();
     let mut roots = BTreeSet::new();
-    let mut add = |repo: Option<String>, project: Option<String>| {
+    let mut stmt = conn.prepare("SELECT DISTINCT repo_root, project_path FROM sessions")?;
+    for row in stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<String>>(1)?,
+        ))
+    })? {
+        let (repo, project) = row?;
         if let Some(r) = &repo {
             repos.insert(r.clone());
         }
         if let Some(root) = repo.or(project) {
             roots.insert(root);
         }
-    };
-    match changed {
-        None => {
-            let mut stmt = conn.prepare("SELECT DISTINCT repo_root, project_path FROM sessions")?;
-            for row in stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))? {
-                let (repo, project) = row?;
-                add(repo, project);
-            }
-        }
-        Some(ids) => {
-            let mut stmt =
-                conn.prepare("SELECT repo_root, project_path FROM sessions WHERE id = ?1")?;
-            for id in ids {
-                if let Ok((repo, project)) = stmt.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))) {
-                    add(repo, project);
-                }
-            }
-        }
     }
     Ok((repos, roots))
+}
+
+/// Groups worktrees of the same repository so their commits are read once.
+fn group_worktrees(repos: &BTreeSet<String>) -> Vec<Vec<String>> {
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for repo in repos {
+        if let Some(common) = git::common_dir(repo) {
+            groups.entry(common).or_default().push(repo.clone());
+        }
+    }
+    groups.into_values().collect()
 }
 
 fn upsert_session(
@@ -330,8 +349,17 @@ fn upsert_session(
 
 /// Copies the raw files so history survives the tools' own cleanup (Claude
 /// Code deletes transcripts after 30 days by default).
-fn archive_unit(data_dir: &Path, source: Source, external_id: &str, unit: &Unit) -> Result<()> {
-    let safe_id: String = external_id
+fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
+    let main = &unit.paths[0];
+    // The session's id as the tool names it: the transcript's file stem, or
+    // the session folder for Copilot CLI.
+    let id_source = match unit.source {
+        Source::CopilotCli => main.parent().and_then(|d| d.file_name()),
+        _ => main.file_stem(),
+    };
+    let safe_id: String = id_source
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -341,12 +369,14 @@ fn archive_unit(data_dir: &Path, source: Source, external_id: &str, unit: &Unit)
             }
         })
         .collect();
-    let dest = data_dir.join("archive").join(source.as_str()).join(safe_id);
-    std::fs::create_dir_all(&dest)?;
+    let dest = data_dir
+        .join("archive")
+        .join(unit.source.as_str())
+        .join(safe_id);
     for (i, p) in unit.paths.iter().enumerate() {
-        if !p.is_file() {
+        let Ok(meta) = std::fs::metadata(p) else {
             continue;
-        }
+        };
         let name = p
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -356,6 +386,10 @@ fn archive_unit(data_dir: &Path, source: Source, external_id: &str, unit: &Unit)
         } else {
             dest.join("sub").join(&name)
         };
+        // Transcripts only grow, so an equal size means nothing new to copy.
+        if std::fs::metadata(&target).is_ok_and(|t| t.len() == meta.len()) {
+            continue;
+        }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }

@@ -12,8 +12,14 @@ export default function Retro({ go }: { go: (p: Page) => void }) {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const retros = useQuery({ queryKey: ["retros"], queryFn: api.retros });
-  const [days, setDays] = useState(7);
+  const [chosenDays, setChosenDays] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const days = chosenDays ?? (Number(settings.data?.values["retro.days"]) || 7);
+  const setDays = (d: number) => {
+    setChosenDays(d);
+    setPreview(null);
+    api.setSetting("retro.days", String(d)).catch(() => {});
+  };
   const [selected, setSelected] = useState<number | null>(null);
 
   const engine = settings.data?.values["retro.engine"] ?? "claude_cli";

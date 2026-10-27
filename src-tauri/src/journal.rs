@@ -209,7 +209,7 @@ pub fn auto_link(conn: &Connection) -> Result<()> {
             .collect::<rusqlite::Result<_>>()?;
         let hit = candidates.into_iter().find(|(sid, source, sp)| {
             !taken.contains(sid)
-                && (path_within(sp, &project) || path_within(&project, sp))
+                && path_within(sp, &project)
                 && tool.as_deref().is_none_or(|t| t == source)
         });
         if let Some((sid, _, _)) = hit {

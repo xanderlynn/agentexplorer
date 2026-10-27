@@ -70,7 +70,7 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                 {
                     usage_by_msg.insert(id.to_string(), (model.to_string(), read_usage(u)));
                 }
-                if is_subagent {
+                if is_subagent || v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
                     continue;
                 }
                 s.note_time(ts);
@@ -134,7 +134,11 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
 
 fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
     s.note_time(ts);
-    if v.get("isMeta").and_then(Value::as_bool) == Some(true) {
+    // Sidechain lines are agent-to-agent traffic; older versions wrote them
+    // into the main transcript without an `origin` tag.
+    if v.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || v.get("isSidechain").and_then(Value::as_bool) == Some(true)
+    {
         return;
     }
     let msg = &v["message"];
@@ -143,7 +147,11 @@ fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
     for item in content_items(msg) {
         if item.get("type").and_then(Value::as_str) == Some("tool_result") {
             has_tool_result = true;
-            if item.get("is_error").and_then(Value::as_bool) == Some(true) {
+            // A tool call the user rejected or interrupted is also marked
+            // is_error, but it says nothing about the agent's setup.
+            if item.get("is_error").and_then(Value::as_bool) == Some(true)
+                && !is_user_rejection(&tool_result_text(item))
+            {
                 s.tool_errors += 1;
             }
         }
@@ -203,6 +211,22 @@ fn content_items(msg: &Value) -> impl Iterator<Item = &Value> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+}
+
+fn tool_result_text(item: &Value) -> String {
+    match item.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn is_user_rejection(text: &str) -> bool {
+    text.contains("doesn't want to proceed with this tool use") || text.contains(INTERRUPT_MARKER)
 }
 
 fn user_text(msg: &Value) -> String {
@@ -280,6 +304,8 @@ mod tests {
                 r#"{"type":"assistant","timestamp":"2026-01-01T10:00:05Z","message":{"id":"m1","model":"claude-opus-5-5","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1000,"cache_creation_input_tokens":10}}}"#,
                 r#"{"type":"assistant","timestamp":"2026-01-01T10:00:06Z","message":{"id":"m1","model":"claude-opus-5-5","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Edit"}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1000,"cache_creation_input_tokens":10}}}"#,
                 r#"{"type":"user","timestamp":"2026-01-01T10:00:07Z","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"boom"}]}}"#,
+                r#"{"type":"user","timestamp":"2026-01-01T10:00:07Z","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected."}]}}"#,
+                r#"{"type":"user","isSidechain":true,"timestamp":"2026-01-01T10:00:07Z","message":{"role":"user","content":"agent-to-agent message"}}"#,
                 r#"{"type":"user","timestamp":"2026-01-01T10:00:08Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
                 r#"{"type":"user","isMeta":true,"timestamp":"2026-01-01T10:00:09Z","message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}}"#,
                 r#"{"type":"user","origin":{"kind":"human"},"timestamp":"2026-01-01T10:01:00Z","message":{"role":"user","content":"<command-name>/review</command-name><command-args>auth</command-args>"}}"#,

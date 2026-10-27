@@ -281,7 +281,9 @@ fn run_cli(bin: &Path, workdir: &Path, model: Option<&str>, prompt: &str) -> Res
     let full_prompt = format!("{SYSTEM_PROMPT}\n\n---\n\n{prompt}");
     let mut cmd = quiet_command(bin);
     cmd.current_dir(workdir)
-        .args(["-p", "--output-format", "json"])
+        // The prompt contains transcript text, which is untrusted input, so
+        // the model gets no tools at all.
+        .args(["-p", "--output-format", "json", "--tools", ""])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -296,7 +298,7 @@ fn run_cli(bin: &Path, workdir: &Path, model: Option<&str>, prompt: &str) -> Res
         .take()
         .context("claude stdin")?
         .write_all(full_prompt.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = wait_with_timeout(child, CLI_TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: Option<Value> = serde_json::from_str(stdout.trim()).ok();
     match parsed {
@@ -316,6 +318,39 @@ fn run_cli(bin: &Path, workdir: &Path, model: Option<&str>, prompt: &str) -> Res
             truncate(String::from_utf8_lossy(&out.stderr).trim(), 500)
         ),
     }
+}
+
+/// A retro is one long completion; anything past this is a stuck CLI (an
+/// expired login, a stalled network).
+const CLI_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+fn wait_with_timeout(child: std::process::Child, limit: Duration) -> Result<std::process::Output> {
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(limit) {
+        Ok(out) => Ok(out?),
+        Err(_) => {
+            kill_process(pid);
+            bail!(
+                "claude did not finish within {} minutes",
+                limit.as_secs() / 60
+            )
+        }
+    }
+}
+
+fn kill_process(pid: u32) {
+    let pid = pid.to_string();
+    let _ = if cfg!(windows) {
+        quiet_command("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .status()
+    } else {
+        quiet_command("kill").args(["-9", &pid]).status()
+    };
 }
 
 /// Server-side refusal fallback is supported on these models only.

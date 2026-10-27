@@ -20,7 +20,8 @@ export default function Live({ onOpen }: { onOpen: (id: string) => void }) {
   const header = <PageHeader title="Live" subtitle="Sessions active in the last 3 hours. The bottleneck is often the human; this shows when it's you." />;
   if (q.isLoading) return <>{header}<Loading /></>;
   if (q.error) return <>{header}<ErrorNote error={q.error} /></>;
-  const d = q.data!;
+  if (!q.data) return header;
+  const d = q.data;
   const sorted = [...d.sessions].sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || a.ageMs - b.ageMs);
 
   return (
