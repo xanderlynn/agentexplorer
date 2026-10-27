@@ -44,6 +44,16 @@ impl Ingestor {
         self.data_dir.join("retro-runs")
     }
 
+    /// Retro runs from both the current data folder and the one used before
+    /// the rename, whose transcripts still carry the old path.
+    fn retro_workdirs(&self) -> [String; 2] {
+        let legacy = self
+            .data_dir
+            .with_file_name(crate::LEGACY_IDENTIFIER)
+            .join("retro-runs");
+        [self.retro_workdir(), legacy].map(|p| p.to_string_lossy().into_owned())
+    }
+
     pub fn enabled_roots(&self, conn: &Connection) -> Vec<Root> {
         sources::roots()
             .into_iter()
@@ -174,7 +184,7 @@ impl Ingestor {
             })
             .collect();
 
-        let retro_dir = self.retro_workdir().to_string_lossy().into_owned();
+        let retro_dirs = self.retro_workdirs();
         let mut changed = vec![];
         let tx = conn.transaction()?;
         for (unit, fp, result) in parsed {
@@ -182,7 +192,7 @@ impl Ingestor {
                 Ok(Some((s, _)))
                     if s.project_path
                         .as_deref()
-                        .is_some_and(|p| path_within(p, &retro_dir)) =>
+                        .is_some_and(|p| retro_dirs.iter().any(|d| path_within(p, d))) =>
                 {
                     None
                 }

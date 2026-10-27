@@ -31,6 +31,10 @@ pub struct AppState {
     pub data_dir: PathBuf,
 }
 
+/// The app's identifier before it was renamed from Execution Ledger. Its data
+/// folder is moved to the new one on first launch.
+pub const LEGACY_IDENTIFIER: &str = "com.xanderlynn.executionledger";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -38,6 +42,14 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            let legacy = data_dir.with_file_name(LEGACY_IDENTIFIER);
+            if !data_dir.exists() && legacy.is_dir() {
+                // Same parent folder, so this is a cheap rename. On failure
+                // the app starts fresh and the old folder is left untouched.
+                if let Err(e) = std::fs::rename(&legacy, &data_dir) {
+                    eprintln!("could not move {}: {e}", legacy.display());
+                }
+            }
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("ledger.sqlite3");
             let conn = db::open(&db_path)?;

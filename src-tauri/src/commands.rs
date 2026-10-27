@@ -129,7 +129,7 @@ pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResu
         let rows = analytics::filter_sessions(c, &filter)?;
         let dir = dirs::download_dir().unwrap_or_else(|| state.data_dir.clone());
         let path = dir.join(format!(
-            "execution-ledger-sessions-{}.csv",
+            "governess-sessions-{}.csv",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         ));
         std::fs::write(&path, analytics::sessions_csv(&rows))?;

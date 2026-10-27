@@ -5,6 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
 import { api, isWaiting, useLive, type LiveSession, type LiveState, type SessionFilter } from "./api";
 import { cx } from "./components/ui";
+import { Logo } from "./components/Logo";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Preflight } from "./components/Preflight";
 import { QuickReview } from "./components/QuickReview";
@@ -124,9 +125,12 @@ export default function App() {
   return (
     <div className="flex h-full">
       <aside className="flex w-52 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-950 px-3 py-4">
-        <div className="mb-6 px-2">
-          <div className="text-sm font-semibold tracking-tight text-zinc-50">Execution Ledger</div>
-          <div className="text-xs text-zinc-500">Get better at delegating to AI</div>
+        <div className="mb-6 flex items-center gap-2.5 px-2">
+          <Logo />
+          <div>
+            <div className="text-sm font-semibold tracking-tight text-zinc-50">Governess</div>
+            <div className="text-xs text-zinc-500">Keeps your agents in line</div>
+          </div>
         </div>
         <nav className="flex flex-col gap-0.5">
           {GROUPS.map(({ id, label, icon: Icon, tabs }) => (

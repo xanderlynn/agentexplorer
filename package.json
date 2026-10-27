@@ -1,5 +1,5 @@
 {
-  "name": "execution-ledger",
+  "name": "governess",
   "private": true,
   "version": "0.1.0",
   "type": "module",

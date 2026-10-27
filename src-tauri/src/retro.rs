@@ -20,7 +20,9 @@ use crate::analytics::{self, Range, project_name, source_label};
 use crate::util::{home, now_ms, quiet_command, truncate};
 use crate::{db, journal};
 
-pub const KEYRING_SERVICE: &str = "execution-ledger";
+pub const KEYRING_SERVICE: &str = "governess";
+/// Where the key was stored before the rename; moved on first read.
+const LEGACY_KEYRING_SERVICE: &str = "execution-ledger";
 pub const KEYRING_USER: &str = "anthropic-api-key";
 pub const DEFAULT_API_MODEL: &str = "claude-opus-5-5";
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -533,6 +535,19 @@ fn keyring_entry() -> Result<keyring::Entry> {
 pub fn api_key() -> Result<Option<String>> {
     match keyring_entry()?.get_password() {
         Ok(k) => Ok(Some(k)),
+        Err(keyring::Error::NoEntry) => migrate_legacy_key(),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn migrate_legacy_key() -> Result<Option<String>> {
+    let legacy = keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_USER)?;
+    match legacy.get_password() {
+        Ok(k) => {
+            keyring_entry()?.set_password(&k)?;
+            let _ = legacy.delete_credential();
+            Ok(Some(k))
+        }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.into()),
     }

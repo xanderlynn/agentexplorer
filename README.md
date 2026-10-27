@@ -1,4 +1,8 @@
-# Execution Ledger
+<p align="center"><img src="public/governess.svg" width="128" alt="Governess logo: a green umbrella with a small sparkle"></p>
+
+# Governess
+
+*Keeps your agents in line, and you improving.*
 
 A desktop app that tracks how you work with AI coding agents (Claude Code and GitHub Copilot) and helps you get better at it.
 
@@ -37,7 +41,7 @@ Copilot inline completions are not logged to disk, so they can't be tracked.
 
 ## Privacy
 
-- Everything lives in a single SQLite file in the app data folder (`~/Library/Application Support/com.xanderlynn.executionledger` on macOS, `%APPDATA%\com.xanderlynn.executionledger` on Windows).
+- Everything lives in a single SQLite file in the app data folder (`~/Library/Application Support/com.xanderlynn.governess` on macOS, `%APPDATA%\com.xanderlynn.governess` on Windows). Data from the app's earlier name, Execution Ledger, moves there on first launch.
 - Nothing leaves the machine unless you click **Generate retro**. That sends the period's metrics, session titles, opening prompts (truncated) and your notes to Claude. **Preview what's sent** shows the exact text first.
 - The retro uses your installed `claude` CLI and your existing subscription by default. If you choose the Anthropic API engine instead, the key is stored in the OS keychain, never in the database.
 
@@ -45,8 +49,8 @@ Copilot inline completions are not logged to disk, so they can't be tracked.
 
 Download the latest installer from the **Build installers** workflow run's artifacts, or from a release:
 
-- macOS: `Execution Ledger_<version>_universal.dmg`
-- Windows: `Execution Ledger_<version>_x64_en-US.msi` or `…_x64-setup.exe`
+- macOS: `Governess_<version>_universal.dmg`
+- Windows: `Governess_<version>_x64_en-US.msi` or `…_x64-setup.exe`
 
 The installers are not code-signed yet, so the OS warns on first launch. On macOS, right-click the app and choose **Open**. On Windows, choose **More info → Run anyway**.
 
@@ -97,9 +101,13 @@ src-tauri/src/
 
 To sign, add the Apple (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) and/or Windows signing secrets, then pass them to the `tauri-action` step as environment variables. See the [Tauri signing guides](https://tauri.app/distribute/sign/macos/).
 
+## Logo
+
+`public/governess.svg` is the source for the app icons. After editing it, run `npx tauri icon public/governess.svg` and delete the `android`, `ios` and `64x64.png` outputs, which the desktop builds don't use.
+
 ## License and dependencies
 
-Execution Ledger is MIT licensed, and the dependency tree is kept permissive and small:
+Governess is MIT licensed, and the dependency tree is kept permissive and small:
 
 - **Policy:** only permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode and similar). MPL-2.0 is allowed only for a few crates that come with Tauri and are used unmodified. `src-tauri/deny.toml` and `scripts/check-licenses.mjs` enforce this in CI, so a restrictive dependency fails the build.
 - **Notices:** `npm run build` generates `third-party-notices.txt` with every shipped package's license text. It's bundled with the app and viewable under Settings → About and licenses.

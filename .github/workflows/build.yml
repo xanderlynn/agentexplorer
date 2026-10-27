@@ -78,7 +78,7 @@ jobs:
           args: ${{ matrix.args }}
           # Only tag pushes create a (draft) release; branch pushes just build.
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: Execution Ledger ${{ github.ref_name }}
+          releaseName: Governess ${{ github.ref_name }}
           releaseBody: Download the .dmg for macOS or the .msi / -setup.exe for Windows.
           releaseDraft: true
           prerelease: false
@@ -86,7 +86,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: execution-ledger-${{ matrix.artifact }}
+          name: governess-${{ matrix.artifact }}
           if-no-files-found: error
           path: |
             ${{ matrix.bundle-dir }}/dmg/*.dmg
