@@ -339,6 +339,7 @@ const SETTING_KEYS: &[&str] = &[
     "retro.cliModel",
     "retro.apiModel",
     "retro.claudePath",
+    "budget.monthly",
 ];
 
 #[derive(Serialize)]

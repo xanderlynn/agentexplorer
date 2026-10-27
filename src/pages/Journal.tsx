@@ -158,7 +158,7 @@ function OpenIntent({ intent: i, onOpen }: { intent: Intent; onOpen: (id: string
               <button className="text-zinc-500 hover:text-zinc-300" onClick={() => link.mutate(null)}>unlink</button>
             </div>
           ) : (
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               <span>{i.projectPath ? "Waiting for a session in this project…" : "No project set."}</span>
               <select className={`${inputBase} py-0.5 text-xs`} value="" onChange={(e) => e.target.value && link.mutate(e.target.value)}>
                 <option value="">Link a session…</option>

@@ -1,16 +1,39 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Info } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type GroupStat, type Insight, type Source } from "../api";
-import type { Page } from "../App";
-import { Bar as Meter, Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
+import type { Drill, Page } from "../App";
+import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge, Stat } from "../components/ui";
 import { chart } from "../theme";
-import { SOURCE_COLOR, compact, delta, duration, hours, money, pct, projectName } from "../format";
+import { SOURCE_COLOR, SOURCE_LABEL, compact, delta, duration, hours, money, pct, projectName } from "../format";
+import { profile } from "../stats";
 
 export const tooltipStyle = chart.tooltip;
 
-export default function Overview({ days, setDays, onOpen, go }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void; go: (p: Page) => void }) {
+function usualPct(series: (number | null)[]) {
+  const p = profile(series);
+  return p ? `usually ${pct(p.low)}–${pct(p.high)}, best ${pct(p.best)}` : undefined;
+}
+
+function usualNum(series: (number | null)[], fmt: (x: number) => string, higherIsBetter = true) {
+  const p = profile(series, higherIsBetter);
+  return p ? `usually ${fmt(p.low)}–${fmt(p.high)}, best ${fmt(p.best)}` : undefined;
+}
+
+export default function Overview({
+  days,
+  setDays,
+  onOpen,
+  go,
+  drill,
+}: {
+  days: number;
+  setDays: (d: number) => void;
+  onOpen: (id: string) => void;
+  go: (p: Page) => void;
+  drill: (d: Drill) => void;
+}) {
   const ov = useQuery({ queryKey: ["overview", days], queryFn: () => api.overview(days) });
   const ins = useQuery({ queryKey: ["insights", days], queryFn: () => api.insights(days) });
   const unrated = useQuery({ queryKey: ["sessions", { days, outcome: "unrated" }], queryFn: () => api.sessions({ days, outcome: "unrated" }) });
@@ -28,6 +51,7 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
   const o = ov.data;
   const t = o.totals;
   const p = o.previous;
+  const tr = o.trend;
 
   if (t.sessions === 0) {
     return (
@@ -40,42 +64,71 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
     );
   }
 
+  const daily = o.daily.map((d) => ({ ...d, notShipped: d.sessions - d.shipped }));
+
   return (
     <>
       {header}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Sessions" value={t.sessions} change={delta(t.sessions, p?.sessions)} hint={`${hours(t.activeHours)} active`} />
         <Stat
           label="Success rate"
-          value={pct(t.successRate)}
+          value={t.rated ? pct(t.successRate) : "—"}
+          n={`${t.rated} rated`}
           change={t.successRate != null && p?.successRate != null ? t.successRate - p.successRate : null}
           points
-          hint={`${t.rated} of ${t.sessions} rated`}
+          spark={tr.successRate}
+          usual={usualPct(tr.successRate)}
+          onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}
+          hint={t.rated < t.sessions ? `${t.sessions - t.rated} unrated: click to rate` : undefined}
         />
-        <Stat label="Commits" value={t.commits} change={delta(t.commits, p?.commits)} hint={`${t.aiCommits} with AI trailers`} />
+        <Stat
+          label="Shipped"
+          value={t.shipped}
+          change={delta(t.shipped, p?.shipped)}
+          spark={tr.shipped}
+          usual={usualNum(tr.shipped, (x) => String(Math.round(x)))}
+          onClick={() => drill({ label: "shipped sessions", outcome: "shipped" })}
+        />
+        <Stat label="Commits" value={t.commits} change={delta(t.commits, p?.commits)} spark={tr.commits} hint={`${t.aiCommits} with AI trailers`} />
         <Stat
           label="Agents waited on you"
           value={hours(t.waitHours)}
           change={delta(t.waitHours, p?.waitHours)}
           goodWhenUp={false}
-          hint={t.avgWaitSeconds != null ? `${duration(t.avgWaitSeconds * 1000)} avg response` : "no hand-backs yet"}
+          spark={tr.waitHours}
+          hint={t.avgWaitSeconds != null ? `${duration(t.avgWaitSeconds * 1000)} typical response` : "no hand-backs yet"}
         />
-        <Stat label="Claude spend" value={money(o.bySource.find((g) => g.key === "claude_code")?.costUsd ?? 0)} hint="as recorded by Claude Code" />
-        <Stat label="Copilot premium requests" value={compact(t.premiumRequests)} hint="Copilot CLI" />
-        <Stat label="Interruptions" value={t.interruptions} change={delta(t.interruptions, p?.interruptions)} goodWhenUp={false} hint={`${(t.interruptions / Math.max(1, t.sessions)).toFixed(1)} per session`} />
-        <Stat label="Tool error rate" value={pct(t.toolCalls ? t.toolErrors / t.toolCalls : null, 1)} hint={`${compact(t.toolCalls)} tool calls`} />
+        <Stat label="Sessions" value={t.sessions} change={delta(t.sessions, p?.sessions)} spark={tr.sessions} hint={`${hours(t.activeHours)} active`} />
+        <Stat
+          label="Interruptions / session"
+          value={(t.interruptions / Math.max(1, t.sessions)).toFixed(1)}
+          spark={tr.interruptionsPerSession}
+          goodWhenUp={false}
+          usual={usualNum(tr.interruptionsPerSession, (x) => x.toFixed(1), false)}
+        />
+        <Stat
+          label="Tool error rate"
+          value={pct(t.toolCalls ? t.toolErrors / t.toolCalls : null, 1)}
+          spark={tr.toolErrorRate}
+          goodWhenUp={false}
+          hint={`${compact(t.toolCalls)} tool calls`}
+        />
+        <Stat label="Spend" value={money(t.costUsd, t.costHasEstimates)} spark={tr.costUsd} goodWhenUp={false} hint={`${compact(t.premiumRequests)} Copilot premium requests`} onClick={() => go("usage")} />
       </div>
+      <p className="mt-2 text-xs text-zinc-500">Sparklines show the last 12 weeks; "usually" is your middle half of weeks.</p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card title="Insights" className="xl:col-span-2" action={<button className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => go("retro")}>Get a full retro →</button>}>
+        <Card title="Insights" className="xl:col-span-2" action={<button className="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => go("retro")}>Get a full retro →</button>}>
           {ins.isLoading && <Loading />}
           {ins.data && ins.data.length === 0 && <p className="text-sm text-zinc-500">Not enough rated sessions to compare yet. Rate a few on the Sessions page.</p>}
-          <ul className="space-y-3">
-            {ins.data?.map((i) => <InsightItem key={i.id} insight={i} />)}
+          <ul className="space-y-2">
+            {ins.data?.map((i) => (
+              <InsightItem key={i.id} insight={i} onOpen={i.sessionIds.length ? () => drill({ label: i.title, ids: i.sessionIds }) : undefined} />
+            ))}
           </ul>
         </Card>
 
-        <Card title={`Unrated sessions (${unrated.data?.length ?? 0})`} action={<button className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => go("sessions")}>All sessions →</button>}>
+        <Card title={`Unrated sessions (${unrated.data?.length ?? 0})`} action={<button className="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}>All unrated →</button>}>
           {unrated.data?.length === 0 && <p className="text-sm text-zinc-500">Everything is rated. Nice.</p>}
           <ul className="divide-y divide-zinc-800/70">
             {unrated.data?.slice(0, 7).map((s) => (
@@ -93,6 +146,28 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card title="Sessions per day" action={<Legend items={[["Shipped", chart.accent], ["Other", chart.muted]]} />}>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={daily}
+                margin={{ left: -20, right: 8, top: 8 }}
+                onClick={(e) => {
+                  const date = e?.activeLabel as string | undefined;
+                  if (date) drill({ label: `sessions on ${date}`, date });
+                }}
+              >
+                <CartesianGrid stroke={chart.grid} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
+                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} />
+                <Bar dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
+                <Bar dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">Click a day to see its sessions.</p>
+        </Card>
         <Card title="Active time per day">
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -104,25 +179,11 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis tick={{ fill: chart.axis, fontSize: 11 }} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...tooltipStyle} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
                 <Area type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
               </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-        <Card title="Sessions and shipped per day">
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={o.daily} margin={{ left: -20, right: 8, top: 8 }}>
-                <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} />
-                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} />
-                <Bar dataKey="sessions" name="Sessions" fill={chart.muted} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="shipped" name="Shipped" fill={chart.accent} radius={[3, 3, 0, 0]} />
-              </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
@@ -130,44 +191,74 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="By tool">
-          <div className="mb-3 h-36">
+          <div className="mb-3 h-32">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={o.bySource} layout="vertical" margin={{ left: 10, right: 16 }}>
                 <XAxis type="number" hide />
-                <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => (k === "claude_code" ? "Claude Code" : k === "copilot_cli" ? "Copilot CLI" : "Copilot Chat")} />
+                <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => SOURCE_LABEL[k as Source] ?? k} />
                 <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
                 <Bar dataKey="activeHours" radius={[0, 4, 4, 0]}>
-                  {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? "#71717a"} />)}
+                  {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? chart.muted} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <GroupTable rows={o.bySource} label={(k) => <SourceBadge source={k} />} />
+          <GroupTable rows={o.bySource} label={(k) => <SourceBadge source={k} />} onRow={(k) => drill({ label: SOURCE_LABEL[k as Source] ?? k, source: k as Source })} />
         </Card>
         <Card title="By project">
-          <GroupTable rows={o.byProject} label={(k) => <span className="truncate text-zinc-200" title={k}>{projectName(k)}</span>} />
+          <GroupTable
+            rows={o.byProject}
+            label={(k) => <span className="truncate text-zinc-200" title={k}>{projectName(k)}</span>}
+            onRow={(k) => drill({ label: `project ${projectName(k)}`, project: k })}
+          />
         </Card>
       </div>
     </>
   );
 }
 
-export function InsightItem({ insight }: { insight: Insight }) {
+export function Legend({ items }: { items: [string, string][] }) {
+  return (
+    <span className="flex gap-3 text-xs text-zinc-400">
+      {items.map(([label, color]) => (
+        <span key={label} className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+          {label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function InsightItem({ insight, onOpen }: { insight: Insight; onOpen?: () => void }) {
   const Icon = insight.kind === "warning" ? AlertTriangle : insight.kind === "positive" ? CheckCircle2 : Info;
   const color = insight.kind === "warning" ? "text-amber-400" : insight.kind === "positive" ? "text-emerald-400" : "text-sky-400";
-  return (
-    <li className="flex gap-3">
-      <Icon size={18} className={`mt-0.5 shrink-0 ${color}`} />
-      <div>
+  const label = insight.kind === "warning" ? "Warning" : insight.kind === "positive" ? "Going well" : "Note";
+  const body = (
+    <>
+      <Icon size={18} className={`mt-0.5 shrink-0 ${color}`} aria-label={label} />
+      <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-zinc-100">{insight.title}</div>
         <div className="mt-0.5 text-sm text-zinc-400">{insight.detail}</div>
-        <div className="mt-1 text-xs text-zinc-600">{insight.evidence}</div>
+        <div className="mt-1 text-xs text-zinc-500">{insight.evidence}</div>
       </div>
+      {onOpen && <ChevronRight size={16} className="mt-1 shrink-0 text-zinc-500" aria-hidden />}
+    </>
+  );
+  return (
+    <li>
+      {onOpen ? (
+        <button onClick={onOpen} className="flex w-full gap-3 rounded-lg p-2 text-left transition-colors hover:bg-zinc-800/40" title={`Open the ${insight.sessionIds.length} sessions behind this`}>
+          {body}
+        </button>
+      ) : (
+        <div className="flex gap-3 p-2">{body}</div>
+      )}
     </li>
   );
 }
 
-export function GroupTable({ rows, label }: { rows: GroupStat[]; label: (key: string) => ReactNode }) {
+export function GroupTable({ rows, label, onRow }: { rows: GroupStat[]; label: (key: string) => ReactNode; onRow?: (key: string) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -177,21 +268,18 @@ export function GroupTable({ rows, label }: { rows: GroupStat[]; label: (key: st
             <th className="pb-2 text-right font-medium">Sessions</th>
             <th className="pb-2 text-right font-medium">Active</th>
             <th className="pb-2 text-right font-medium">Commits</th>
-            <th className="w-28 pb-2 pl-4 font-medium">Success</th>
+            <th className="w-40 pb-2 pl-4 font-medium">Success (rated)</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
           {rows.map((g) => (
-            <tr key={g.key}>
+            <tr key={g.key} className={onRow ? "cursor-pointer hover:bg-zinc-800/30" : undefined} onClick={onRow ? () => onRow(g.key) : undefined}>
               <td className="max-w-[14rem] py-1.5 pr-2">{label(g.key)}</td>
               <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.sessions}</td>
               <td className="py-1.5 text-right tabular-nums text-zinc-300">{hours(g.activeHours)}</td>
               <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.commits}</td>
               <td className="py-1.5 pl-4">
-                <div className="flex items-center gap-2">
-                  <Meter value={g.successRate} />
-                  <span className="w-9 text-right text-xs tabular-nums text-zinc-400">{g.rated ? pct(g.successRate) : "—"}</span>
-                </div>
+                <Rate rate={g.successRate} n={g.rated} />
               </td>
             </tr>
           ))}

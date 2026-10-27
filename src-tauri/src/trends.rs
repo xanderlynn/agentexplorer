@@ -85,6 +85,11 @@ pub struct Usage {
     pub cache_savings_usd: f64,
     pub month_to_date_usd: f64,
     pub projected_month_usd: f64,
+    /// Cumulative spend for each day of the current month so far.
+    pub month_cumulative: Vec<(String, f64)>,
+    pub days_in_month: i64,
+    /// Optional monthly budget from Settings.
+    pub budget_usd: Option<f64>,
     pub cost_per_session: Option<f64>,
 }
 
@@ -225,6 +230,31 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         next.map(|n| (n - month_start).num_days()).unwrap_or(30) as f64
     };
     let elapsed = (today - month_start).num_days() as f64 + 1.0;
+    let mut by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT started_at, COALESCE(cost_usd, 0) FROM sessions WHERE started_at >= ?1",
+        )?;
+        for row in stmt.query_map([month_start_ms], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+        })? {
+            let (t, c) = row?;
+            if let Some(d) = local_date(t) {
+                *by_day.entry(d).or_default() += c;
+            }
+        }
+    }
+    let mut month_cumulative = vec![];
+    let mut running = 0.0;
+    let mut d = month_start;
+    while d <= today {
+        running += by_day.get(&d).copied().unwrap_or(0.0);
+        month_cumulative.push((d.format("%Y-%m-%d").to_string(), running));
+        d += Duration::days(1);
+    }
+    let budget_usd = crate::db::get_setting(conn, "budget.monthly")?
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|b| *b > 0.0);
     let costed: Vec<f64> = tokens.values().filter_map(|t| t.cost).collect();
 
     Ok(Usage {
@@ -238,6 +268,9 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         cache_savings_usd: savings,
         month_to_date_usd: mtd,
         projected_month_usd: mtd / elapsed * days_in_month,
+        month_cumulative,
+        days_in_month: days_in_month as i64,
+        budget_usd,
         cost_per_session: (!costed.is_empty())
             .then(|| costed.iter().sum::<f64>() / costed.len() as f64),
     })

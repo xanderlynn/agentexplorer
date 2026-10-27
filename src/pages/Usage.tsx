@@ -1,13 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Source } from "../api";
-import { Bar as Meter, Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, Stat } from "../components/ui";
+import type { Drill } from "../App";
+import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
 import { SOURCE_COLOR, SOURCE_LABEL, compact, money, pct } from "../format";
 import { chart } from "../theme";
+import { Legend } from "./Overview";
 
 const SOURCES = Object.keys(SOURCE_LABEL) as Source[];
 
-export default function Usage({ days, setDays }: { days: number; setDays: (d: number) => void }) {
+export default function Usage({ days, setDays, drill }: { days: number; setDays: (d: number) => void; drill: (d: Drill) => void }) {
   const q = useQuery({ queryKey: ["usage", days], queryFn: () => api.usage(days) });
   const header = (
     <PageHeader
@@ -24,55 +26,109 @@ export default function Usage({ days, setDays }: { days: number; setDays: (d: nu
 
   const total = u.daily.reduce((n, d) => n + Object.values(d.cost).reduce((a, b) => a + b, 0), 0);
   const costRows = u.daily.map((d) => ({ date: d.date, ...d.cost }));
-  const tokens = u.input + u.output + u.cacheRead + u.cacheWrite;
+  const cacheRows = u.daily.map((d) => {
+    const prompt = d.input + d.cacheRead + d.cacheWrite;
+    return { date: d.date, hitRate: prompt ? d.cacheRead / prompt : null };
+  });
+  // Straight-line pace from today's cumulative spend to the month's end.
+  const pacePerDay = u.monthCumulative.length ? u.monthToDateUsd / u.monthCumulative.length : 0;
+  const monthRows = Array.from({ length: u.daysInMonth }, (_, i) => {
+    const actual = u.monthCumulative[i]?.[1];
+    return { day: i + 1, actual: actual ?? null, pace: (i + 1) * pacePerDay };
+  });
+  const overBudget = u.budgetUsd != null && u.projectedMonthUsd > u.budgetUsd;
 
   return (
     <>
       {header}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Spend in range" value={money(total, true)} hint={u.costPerSession != null ? `${money(u.costPerSession)} per session` : undefined} />
-        <Stat label="This month" value={money(u.monthToDateUsd, true)} hint={`on pace for ${money(u.projectedMonthUsd)}`} />
+        <Stat label="Spend in range" value={money(total, true)} hint={u.costPerSession != null ? `${money(u.costPerSession)} per session with a cost` : undefined} />
+        <Stat
+          label="This month"
+          value={money(u.monthToDateUsd, true)}
+          hint={
+            u.budgetUsd != null ? (
+              <span className={overBudget ? "text-amber-300" : undefined}>
+                on pace for {money(u.projectedMonthUsd)} of {money(u.budgetUsd)} budget
+              </span>
+            ) : (
+              `on pace for ${money(u.projectedMonthUsd)} · set a budget in Settings`
+            )
+          }
+        />
         <Stat label="Cache hit rate" value={pct(u.cacheHitRate)} hint="share of prompt tokens read from cache" />
         <Stat label="Saved by caching" value={money(u.cacheSavingsUsd, true)} hint="vs. full input price, Claude models" />
-        <Stat label="Tokens" value={compact(tokens)} hint={`${compact(u.output)} output`} />
-        <Stat label="Input" value={compact(u.input)} />
-        <Stat label="Cache reads" value={compact(u.cacheRead)} />
-        <Stat label="Cache writes" value={compact(u.cacheWrite)} />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card title="Spend per day by tool">
-          <div className="h-64">
+        <Card title="This month's spend" action={<Legend items={[["Actual", chart.accent], ["Pace", chart.axis]]} />}>
+          <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={costRows} margin={{ left: -10, right: 8, top: 8 }}>
+              <LineChart data={monthRows} margin={{ left: -6, right: 8, top: 8 }}>
                 <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(v: number) => `$${v}`} />
+                <XAxis dataKey="day" tick={{ fill: chart.axis, fontSize: 12 }} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => `$${Math.round(v)}`} />
+                <Tooltip {...chart.tooltip} labelFormatter={(d) => `Day ${d}`} formatter={(v, name) => [money(Number(v)), name === "pace" ? "Pace" : "Spent so far"]} />
+                {u.budgetUsd != null && (
+                  <ReferenceLine y={u.budgetUsd} stroke="var(--color-amber-500)" strokeDasharray="4 3" label={{ value: "budget", fill: "var(--color-amber-500)", fontSize: 12, position: "insideTopLeft" }} />
+                )}
+                <Line type="linear" dataKey="pace" stroke={chart.axis} strokeDasharray="4 3" dot={false} />
+                <Line type="monotone" dataKey="actual" stroke={chart.accent} strokeWidth={2} dot={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card title="Spend per day by tool" action={<Legend items={SOURCES.map((s) => [SOURCE_LABEL[s], SOURCE_COLOR[s]])} />}>
+          <div className="h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={costRows}
+                margin={{ left: -6, right: 8, top: 8 }}
+                onClick={(e) => {
+                  const date = e?.activeLabel as string | undefined;
+                  if (date) drill({ label: `sessions on ${date}`, date });
+                }}
+              >
+                <CartesianGrid stroke={chart.grid} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => `$${v}`} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v, name) => [money(Number(v)), SOURCE_LABEL[name as Source] ?? name]} />
-                <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v) => SOURCE_LABEL[v as Source] ?? v} />
                 {SOURCES.map((s) => (
-                  <Bar key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} />
+                  <Bar key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} className="cursor-pointer" />
                 ))}
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card title="Token mix per day">
-          <div className="h-64">
+        <Card title="Cache hit rate per day">
+          <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={u.daily} margin={{ left: -10, right: 8, top: 8 }}>
+              <LineChart data={cacheRows} margin={{ left: -6, right: 8, top: 8 }}>
                 <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(v: number) => compact(v)} />
-                <Tooltip {...chart.tooltip} formatter={(v) => compact(Number(v))} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Area type="monotone" dataKey="cacheRead" name="Cache read" stackId="t" stroke="var(--color-sky-500)" fill="var(--color-sky-500)" fillOpacity={0.25} />
-                <Area type="monotone" dataKey="cacheWrite" name="Cache write" stackId="t" stroke="var(--color-amber-500)" fill="var(--color-amber-500)" fillOpacity={0.25} />
-                <Area type="monotone" dataKey="input" name="Input" stackId="t" stroke={chart.axis} fill={chart.axis} fillOpacity={0.25} />
-                <Area type="monotone" dataKey="output" name="Output" stackId="t" stroke={chart.accent} fill={chart.accent} fillOpacity={0.35} />
-              </AreaChart>
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis domain={[0, 1]} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => `${Math.round(v * 100)}%`} />
+                <Tooltip {...chart.tooltip} formatter={(v) => [pct(Number(v)), "Hit rate"]} />
+                <Line type="monotone" dataKey="hitRate" stroke="var(--color-sky-500)" strokeWidth={2} dot={false} connectNulls />
+              </LineChart>
             </ResponsiveContainer>
           </div>
+          <p className="mt-1 text-xs text-zinc-500">Higher is cheaper. Long pauses let the prompt cache expire.</p>
+        </Card>
+        <Card title="Tokens per day (excluding cache reads)" action={<Legend items={[["Input", chart.axis], ["Cache write", "var(--color-amber-500)"], ["Output", chart.accent]]} />}>
+          <div className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={u.daily} margin={{ left: -6, right: 8, top: 8 }}>
+                <CartesianGrid stroke={chart.grid} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => compact(v)} />
+                <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => compact(Number(v))} />
+                <Bar dataKey="input" name="Input" stackId="t" fill={chart.axis} />
+                <Bar dataKey="cacheWrite" name="Cache write" stackId="t" fill="var(--color-amber-500)" />
+                <Bar dataKey="output" name="Output" stackId="t" fill={chart.accent} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">Cache reads ({compact(u.cacheRead)} in range) are cheap and would dwarf the rest, so they're shown as the hit rate instead.</p>
         </Card>
       </div>
 
@@ -87,32 +143,29 @@ export default function Usage({ days, setDays }: { days: number; setDays: (d: nu
                 <th className="pb-2 text-right font-medium">Per session</th>
                 <th className="pb-2 text-right font-medium">Prompts</th>
                 <th className="pb-2 text-right font-medium">Active min</th>
-                <th className="pb-2 text-right font-medium">Friction</th>
-                <th className="w-32 pb-2 pl-4 font-medium">Success</th>
+                <th className="pb-2 text-right font-medium">Flow ≈</th>
+                <th className="w-40 pb-2 pl-4 font-medium">Success (rated)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
               {u.byModel.map((m) => (
-                <tr key={m.model}>
+                <tr key={m.model} className="cursor-pointer hover:bg-zinc-800/30" onClick={() => drill({ label: `model ${m.model}`, model: m.model })}>
                   <td className="py-1.5 font-mono text-xs text-zinc-200">{m.model}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.sessions}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{money(m.costUsd)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{money(m.costPerSession)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.avgTurns.toFixed(1)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{Math.round(m.avgActiveMinutes)}</td>
-                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.avgFriction.toFixed(1)}/5</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.avgFriction.toFixed(1)}</td>
                   <td className="py-1.5 pl-4">
-                    <div className="flex items-center gap-2">
-                      <Meter value={m.successRate} />
-                      <span className="w-9 text-right text-xs tabular-nums text-zinc-400">{m.rated ? pct(m.successRate) : "—"}</span>
-                    </div>
+                    <Rate rate={m.successRate} n={m.rated} />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-xs text-zinc-500">A session is counted under the model it used most. Friction: 5 means a clear goal, little correction and a tight scope.</p>
+        <p className="mt-3 text-xs text-zinc-500">A session counts under the model it used most. Click a row for its sessions.</p>
       </Card>
     </>
   );

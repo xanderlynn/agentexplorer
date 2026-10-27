@@ -45,11 +45,11 @@ export default function Settings() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <SourceBadge source={s.source} />
-                    {s.found ? <CheckCircle2 size={14} className="text-emerald-400" /> : <XCircle size={14} className="text-zinc-600" />}
+                    {s.found ? <CheckCircle2 size={14} className="text-emerald-400" /> : <XCircle size={14} className="text-zinc-500" />}
                     <span className="text-xs text-zinc-500">{s.sessions} sessions</span>
                   </div>
                   <div className="mt-0.5 space-y-0.5">
-                    {s.paths.length ? s.paths.map((p) => <div key={p} className="truncate font-mono text-[11px] text-zinc-500">{p}</div>) : <div className="text-xs text-zinc-600">Not found on this computer</div>}
+                    {s.paths.length ? s.paths.map((p) => <div key={p} className="truncate font-mono text-xs text-zinc-500">{p}</div>) : <div className="text-xs text-zinc-500">Not found on this computer</div>}
                   </div>
                 </div>
                 <label className="flex shrink-0 items-center gap-2 text-xs text-zinc-400">
@@ -115,6 +115,9 @@ export default function Settings() {
 
         <Card title="Behaviour">
           <div className="space-y-3">
+            <Field label="Monthly AI budget (USD)" hint="Optional. Shown against your month-to-date pace on the Usage page.">
+              <SettingInput settingKey="budget.monthly" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder="e.g. 200" />
+            </Field>
             <label className="flex items-start gap-3 text-sm text-zinc-300">
               <input type="checkbox" className="mt-1 accent-emerald-500" checked={bool("notify.waiting")} onChange={(e) => set.mutate({ key: "notify.waiting", value: String(e.target.checked) })} />
               <span>
@@ -197,7 +200,7 @@ function Licenses() {
         {text == null ? (
           <Button size="sm" onClick={load}>Show third-party notices</Button>
         ) : (
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-[11px] text-zinc-400">{text}</pre>
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-zinc-400">{text}</pre>
         )}
         {error && <p className="mt-2 text-xs text-rose-400">Could not load notices: {error}</p>}
       </div>

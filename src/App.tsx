@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { BookOpenCheck, ChartColumn, Coins, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Trophy } from "lucide-react";
-import { api, type LiveState } from "./api";
+import { api, type LiveState, type SessionFilter } from "./api";
 import { cx } from "./components/ui";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { projectName } from "./format";
@@ -17,6 +17,9 @@ import Playbooks from "./pages/Playbooks";
 import Scorecard from "./pages/Scorecard";
 import Retro from "./pages/Retro";
 import Settings from "./pages/Settings";
+
+/** A drill-through into Sessions: filters plus a label for the chip. */
+export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
 export type Page = "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
@@ -57,6 +60,11 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => readStored("page", "overview"));
   const [days, setDays] = useState<number>(() => readStored("days", 30));
   const [openSession, setOpenSession] = useState<string | null>(null);
+  const [drill, setDrill] = useState<Drill | null>(null);
+  const openSessions = (d: Drill) => {
+    setDrill(d);
+    setPage("sessions");
+  };
 
   useEffect(() => store("page", page), [page]);
   useEffect(() => store("days", days), [days]);
@@ -75,7 +83,10 @@ export default function App() {
   useWaitingNotifications(live.data?.sessions, settings.data?.values["notify.waiting"] !== "false");
 
   const waiting = live.data?.waitingOnYou ?? 0;
-  const go = (p: Page) => setPage(p);
+  const go = (p: Page) => {
+    setDrill(null);
+    setPage(p);
+  };
 
   return (
     <div className="flex h-full">
@@ -102,21 +113,21 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="mt-auto px-2 text-[11px] leading-relaxed text-zinc-600">
+        <div className="mt-auto px-2 text-xs leading-relaxed text-zinc-500">
           All data stays on this computer, except a retro you choose to generate.
         </div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 lg:px-8">
-          {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} />}
+          {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
           {page === "live" && <Live onOpen={setOpenSession} />}
-          {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} />}
-          {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} />}
-          {page === "usage" && <Usage days={days} setDays={setDays} />}
+          {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
+          {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} drill={openSessions} />}
+          {page === "usage" && <Usage days={days} setDays={setDays} drill={openSessions} />}
           {page === "journal" && <Journal days={days} setDays={setDays} onOpen={setOpenSession} />}
           {page === "playbooks" && <Playbooks />}
-          {page === "scorecard" && <Scorecard days={days} setDays={setDays} />}
+          {page === "scorecard" && <Scorecard days={days} setDays={setDays} drill={openSessions} />}
           {page === "retro" && <Retro go={go} />}
           {page === "settings" && <Settings />}
         </div>

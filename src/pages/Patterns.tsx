@@ -1,13 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Benchmark, type Patterns as PatternsT } from "../api";
-import { Bar as Meter, Card, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge } from "../components/ui";
+import type { Drill } from "../App";
+import { Bar as Meter, Card, Empty, ErrorNote, Heuristic, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
 import { duration, pct } from "../format";
+import { quantile } from "../stats";
 import { chart, heat } from "../theme";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function Patterns({ days, setDays, onOpen }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void }) {
+const FLOW_HELP =
+  "Flow score: 5 means a clear opening prompt, little correction and a bounded session. It is a heuristic from the transcript, not a measurement of quality.";
+
+export default function Patterns({
+  days,
+  setDays,
+  onOpen,
+  drill,
+}: {
+  days: number;
+  setDays: (d: number) => void;
+  onOpen: (id: string) => void;
+  drill: (d: Drill) => void;
+}) {
   const q = useQuery({ queryKey: ["patterns", days], queryFn: () => api.patterns(days) });
   const header = (
     <PageHeader
@@ -24,26 +39,33 @@ export default function Patterns({ days, setDays, onOpen }: { days: number; setD
   return (
     <>
       {header}
-      <Card title="Activity over the last year">
-        <Calendar days={p.calendar} />
+      <Card title="Activity over the last year" action={<HeatLegend label="active minutes" />}>
+        <Calendar days={p.calendar} onDay={(date) => drill({ label: `sessions on ${date}`, date })} />
       </Card>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card title="When you start sessions">
-          <HourHeatmap grid={p.heatmap} />
+        <Card title="When you start sessions" action={<HeatLegend label="sessions" />}>
+          <HourHeatmap grid={p.heatmap} onCell={(weekday, hour) => drill({ label: `${WEEKDAYS[weekday]}s at ${hour}:00`, weekday, hour })} />
         </Card>
-        <Card title="Friction (heuristic, 5 = least)">
+        <Card
+          title={
+            <span>
+              Flow score <span className="font-normal text-zinc-500">(5 = smooth)</span>
+              <Heuristic title={FLOW_HELP} />
+            </span>
+          }
+        >
           {p.friction ? (
             <div className="space-y-3">
-              <FrictionBar label="Requirements" hint="clear goal in the opening prompt" value={p.friction.requirements} />
-              <FrictionBar label="Steering" hint="few corrections and interruptions" value={p.friction.steering} />
-              <FrictionBar label="Scope" hint="session kept to a bounded size" value={p.friction.scope} />
+              <FlowBar label="Clear ask" hint="goal, done-criteria and anchors in the opening prompt" value={p.friction.requirements} />
+              <FlowBar label="Steering" hint="few corrections and interruptions" value={p.friction.steering} />
+              <FlowBar label="Scope" hint="session kept to a bounded size" value={p.friction.scope} />
               <div className="border-t border-zinc-800 pt-3 text-sm text-zinc-300">
-                Overall <span className="font-semibold text-zinc-50">{p.friction.overall.toFixed(2)}</span> / 5
+                Overall <span className="font-semibold text-zinc-50">{p.friction.overall.toFixed(1)}</span> / 5
               </div>
             </div>
           ) : (
-            <p className="text-sm text-zinc-500">No sessions in range.</p>
+            <p className="text-sm text-zinc-500">No sessions with signals in range.</p>
           )}
         </Card>
       </div>
@@ -59,29 +81,26 @@ export default function Patterns({ days, setDays, onOpen }: { days: number; setD
                   <th className="pb-2 font-medium">Category</th>
                   <th className="pb-2 text-right font-medium">Sessions</th>
                   <th className="pb-2 text-right font-medium">Avg active</th>
-                  <th className="pb-2 text-right font-medium">Friction</th>
-                  <th className="w-32 pb-2 pl-4 font-medium">Success</th>
+                  <th className="pb-2 text-right font-medium">Flow</th>
+                  <th className="w-40 pb-2 pl-4 font-medium">Success (rated)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
                 {p.categories.map((c) => (
-                  <tr key={c.category}>
+                  <tr key={c.category} className="cursor-pointer hover:bg-zinc-800/30" onClick={() => drill({ label: `${c.category} sessions`, category: c.category })}>
                     <td className="py-1.5 capitalize text-zinc-200">{c.category}</td>
                     <td className="py-1.5 text-right tabular-nums text-zinc-300">{c.sessions}</td>
                     <td className="py-1.5 text-right tabular-nums text-zinc-300">{Math.round(c.avgActiveMinutes)}m</td>
                     <td className="py-1.5 text-right tabular-nums text-zinc-300">{c.avgFriction.toFixed(1)}</td>
                     <td className="py-1.5 pl-4">
-                      <div className="flex items-center gap-2">
-                        <Meter value={c.successRate} />
-                        <span className="w-9 text-right text-xs tabular-nums text-zinc-400">{c.rated ? pct(c.successRate) : "—"}</span>
-                      </div>
+                      <Rate rate={c.successRate} n={c.rated} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-          <p className="mt-2 text-xs text-zinc-500">Category is guessed from the opening prompt.</p>
+          <p className="mt-2 text-xs text-zinc-500">Category is guessed from the opening prompt. Click a row for its sessions.</p>
         </Card>
         <Card title="What the agents do">
           <ToolMix p={p} />
@@ -89,7 +108,7 @@ export default function Patterns({ days, setDays, onOpen }: { days: number; setD
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={p.tools} layout="vertical" margin={{ left: 10, right: 16 }}>
                 <XAxis type="number" hide />
-                <YAxis type="category" dataKey="tool" width={130} tick={{ fill: chart.axis, fontSize: 11 }} />
+                <YAxis type="category" dataKey="tool" width={130} tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
                 <Bar dataKey="count" name="Calls" fill={chart.accent} radius={[0, 3, 3, 0]} />
               </BarChart>
@@ -102,29 +121,16 @@ export default function Patterns({ days, setDays, onOpen }: { days: number; setD
         {p.qualityWeekly.length < 2 ? (
           <p className="text-sm text-zinc-500">Needs at least two weeks of sessions.</p>
         ) : (
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={p.qualityWeekly} margin={{ left: -10, right: 8, top: 8 }}>
-                <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} />
-                <YAxis yAxisId="rate" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v * 100)}%`} domain={[0, 1]} />
-                <YAxis yAxisId="score" orientation="right" tick={{ fill: chart.axis, fontSize: 11 }} domain={[0, 5]} />
-                <Tooltip
-                  {...chart.tooltip}
-                  formatter={(v, name) => (String(name).includes("rate") || String(name).includes("Success") ? pct(Number(v)) : Number(v).toFixed(2))}
-                />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line yAxisId="rate" type="monotone" dataKey="successRate" name="Success" stroke={chart.accent} strokeWidth={2} dot={false} connectNulls />
-                <Line yAxisId="rate" type="monotone" dataKey="reEditRate" name="Re-edit rate" stroke="var(--color-amber-500)" strokeWidth={2} dot={false} connectNulls />
-                <Line yAxisId="rate" type="monotone" dataKey="editsWithoutReadRate" name="Blind-edit rate" stroke="var(--color-rose-500)" strokeWidth={2} dot={false} connectNulls />
-                <Line yAxisId="score" type="monotone" dataKey="avgFriction" name="Friction score" stroke="var(--color-sky-500)" strokeWidth={2} dot={false} />
-                <Line yAxisId="score" type="monotone" dataKey="correctionsPerSession" name="Corrections / session" stroke={chart.axis} strokeDasharray="4 3" dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <Multiple title="Success" better="higher" data={p.qualityWeekly} k="successRate" fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Re-edit rate" better="lower" data={p.qualityWeekly} k="reEditRate" fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Blind-edit rate" better="lower" data={p.qualityWeekly} k="editsWithoutReadRate" fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Corrections / session" better="lower" data={p.qualityWeekly} k="correctionsPerSession" fmt={(v) => v.toFixed(1)} />
+            <Multiple title="Flow score" better="higher" data={p.qualityWeekly} k="avgFriction" fmt={(v) => v.toFixed(1)} domain={[1, 5]} heuristic />
           </div>
         )}
-        <p className="mt-2 text-xs text-zinc-500">
-          Re-edit rate: edits to a file already changed in the same session. Blind-edit rate: edits to files the agent never read. Lower is better for both.
+        <p className="mt-3 text-xs text-zinc-500">
+          Each panel has its own scale; the dashed line is the median week. Re-edit: edits to a file already changed in the same session. Blind edit: editing a file the agent never read.
         </p>
       </Card>
 
@@ -160,7 +166,67 @@ export default function Patterns({ days, setDays, onOpen }: { days: number; setD
   );
 }
 
-function Calendar({ days }: { days: PatternsT["calendar"] }) {
+type Week = PatternsT["qualityWeekly"][number];
+
+/** One small chart per metric, so series with different units never share an axis. */
+function Multiple({
+  title,
+  better,
+  data,
+  k,
+  fmt,
+  domain,
+  heuristic,
+}: {
+  title: string;
+  better: "higher" | "lower";
+  data: Week[];
+  k: keyof Week;
+  fmt: (v: number) => string;
+  domain?: [number, number];
+  heuristic?: boolean;
+}) {
+  const values = data.map((w) => w[k]).filter((v): v is number => typeof v === "number");
+  const median = quantile(values, 0.5);
+  const last = values[values.length - 1];
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <span className="text-sm text-zinc-200">
+          {title}
+          {heuristic && <Heuristic title={FLOW_HELP} />}
+        </span>
+        <span className="text-sm font-semibold tabular-nums text-zinc-100">{last != null ? fmt(last) : "—"}</span>
+      </div>
+      <div className="text-xs text-zinc-500">{better} is better</div>
+      <div className="mt-1 h-24">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ left: 0, right: 4, top: 6, bottom: 0 }}>
+            <XAxis dataKey="weekStart" hide />
+            <YAxis hide domain={domain ?? ["auto", "auto"]} />
+            <Tooltip {...chart.tooltip} labelFormatter={(l) => `Week of ${l}`} formatter={(v) => [fmt(Number(v)), title]} />
+            {median != null && <ReferenceLine y={median} stroke={chart.axis} strokeDasharray="3 3" />}
+            <Line type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function HeatLegend({ label }: { label: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+      less
+      {[0, 0.25, 0.5, 0.75, 1].map((x) => (
+        <span key={x} className="h-3 w-3 rounded-sm" style={{ background: heat(x) }} />
+      ))}
+      more {label}
+    </span>
+  );
+}
+
+function Calendar({ days, onDay }: { days: PatternsT["calendar"]; onDay: (date: string) => void }) {
   if (days.length === 0) return null;
   const max = Math.max(1, ...days.map((d) => d.activeMinutes));
   // Pad the start so columns are Monday-first weeks.
@@ -178,40 +244,49 @@ function Calendar({ days }: { days: PatternsT["calendar"] }) {
           <div key={i} className="flex flex-col gap-[3px]">
             {w.map((d, j) =>
               d ? (
-                <div
+                <button
                   key={j}
-                  className="h-[11px] w-[11px] rounded-[2px]"
+                  className="h-3 w-3 rounded-sm outline-offset-1 hover:outline hover:outline-1 hover:outline-zinc-400"
                   style={{ background: heat(d.activeMinutes / max) }}
                   title={`${d.date}: ${d.sessions} sessions, ${Math.round(d.activeMinutes)} active min`}
+                  aria-label={`${d.date}: ${d.sessions} sessions`}
+                  onClick={() => d.sessions && onDay(d.date)}
                 />
               ) : (
-                <div key={j} className="h-[11px] w-[11px]" />
+                <div key={j} className="h-3 w-3" />
               ),
             )}
           </div>
         ))}
       </div>
       <div className="mt-2 text-xs text-zinc-500">
-        {total} sessions on {activeDays} days in the last year · colour = active minutes
+        {total} sessions on {activeDays} days in the last year. Click a day to open its sessions.
       </div>
     </div>
   );
 }
 
-function HourHeatmap({ grid }: { grid: number[][] }) {
+function HourHeatmap({ grid, onCell }: { grid: number[][]; onCell: (weekday: number, hour: number) => void }) {
   const max = Math.max(1, ...grid.flat());
   return (
     <div className="overflow-x-auto">
-      <div className="inline-grid gap-[3px]" style={{ gridTemplateColumns: `2.5rem repeat(24, minmax(14px, 1fr))` }}>
+      <div className="inline-grid gap-[3px]" style={{ gridTemplateColumns: `2.5rem repeat(24, minmax(15px, 1fr))` }}>
         <div />
         {Array.from({ length: 24 }, (_, h) => (
-          <div key={h} className="text-center text-[10px] text-zinc-500">{h % 3 === 0 ? h : ""}</div>
+          <div key={h} className="text-center text-xs text-zinc-500">{h % 3 === 0 ? h : ""}</div>
         ))}
         {grid.map((row, d) => (
           <div key={d} className="contents">
-            <div className="text-[11px] leading-[14px] text-zinc-500">{WEEKDAYS[d]}</div>
+            <div className="text-xs leading-[15px] text-zinc-500">{WEEKDAYS[d]}</div>
             {row.map((n, h) => (
-              <div key={h} className="h-[14px] rounded-[2px]" style={{ background: heat(n / max) }} title={`${WEEKDAYS[d]} ${h}:00 — ${n} sessions`} />
+              <button
+                key={h}
+                className="h-[15px] rounded-sm hover:outline hover:outline-1 hover:outline-zinc-400"
+                style={{ background: heat(n / max) }}
+                title={`${WEEKDAYS[d]} ${h}:00: ${n} sessions`}
+                aria-label={`${WEEKDAYS[d]} ${h}:00, ${n} sessions`}
+                onClick={() => n && onCell(d, h)}
+              />
             ))}
           </div>
         ))}
@@ -220,7 +295,7 @@ function HourHeatmap({ grid }: { grid: number[][] }) {
   );
 }
 
-function FrictionBar({ label, hint, value }: { label: string; hint: string; value: number }) {
+function FlowBar({ label, hint, value }: { label: string; hint: string; value: number }) {
   return (
     <div>
       <div className="flex items-baseline justify-between text-sm">
@@ -267,7 +342,7 @@ function BenchTable({ rows }: { rows: Benchmark[] }) {
     <tr key={label}>
       <td className="py-1.5 text-zinc-400">{label}</td>
       {rows.map((b) => (
-        <td key={b.label} className="py-1.5 text-right tabular-nums text-zinc-200">{f(b)}</td>
+        <td key={b.label} className={`py-1.5 text-right tabular-nums ${b.sessions < 5 ? "text-zinc-500" : "text-zinc-200"}`}>{f(b)}</td>
       ))}
     </tr>
   );
@@ -278,19 +353,21 @@ function BenchTable({ rows }: { rows: Benchmark[] }) {
         <tr className="text-xs text-zinc-500">
           <th />
           {rows.map((b) => (
-            <th key={b.label} className="pb-2 text-right font-medium">{b.label}</th>
+            <th key={b.label} className="pb-2 text-right font-medium">
+              {b.label}
+              <div className="font-normal">n={b.sessions}</div>
+            </th>
           ))}
         </tr>
       </thead>
       <tbody className="divide-y divide-zinc-800/60">
-        {metric("Sessions", (b) => String(b.sessions))}
         {metric("Success", (b) => pct(b.successRate))}
         {metric("Prompts / session", (b) => num(b.avgTurns))}
         {metric("Corrections / session", (b) => num(b.correctionsPerSession, 2))}
         {metric("Interruptions / session", (b) => num(b.interruptionsPerSession, 2))}
         {metric("Active minutes", (b) => num(b.avgActiveMinutes, 0))}
         {metric("Re-edit rate", (b) => pct(b.reEditRate))}
-        {metric("Friction score", (b) => num(b.avgFriction, 2))}
+        {metric("Flow score ≈", (b) => num(b.avgFriction, 1))}
       </tbody>
     </table>
   );

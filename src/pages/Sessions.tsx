@@ -1,14 +1,27 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Download, Search } from "lucide-react";
+import { Download, Search, X } from "lucide-react";
+import type { Drill } from "../App";
 import { api, OUTCOMES, type Outcome, type Source } from "../api";
 import { Button, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
 import { OUTCOME_LABEL, SOURCE_LABEL, TASK_TYPES, dateTime, duration, money, projectName } from "../format";
 
 type SortKey = "startedAt" | "activeMs" | "userTurns" | "interruptions" | "costUsd" | "commits";
 
-export default function Sessions({ days, setDays, onOpen }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void }) {
+export default function Sessions({
+  days,
+  setDays,
+  onOpen,
+  drill,
+  clearDrill,
+}: {
+  days: number;
+  setDays: (d: number) => void;
+  onOpen: (id: string) => void;
+  drill: Drill | null;
+  clearDrill: () => void;
+}) {
   const [source, setSource] = useState<Source | "">("");
   const [outcome, setOutcome] = useState<Outcome | "unrated" | "">("");
   const [search, setSearch] = useState("");
@@ -16,7 +29,18 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
   const [exported, setExported] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "startedAt", desc: true });
 
-  const filter = { days, source: source || undefined, outcome: outcome || undefined, search: search || undefined, category: category || undefined };
+  // A drill-through from a chart narrows the list on top of the controls; a
+  // specific day or session set ignores the range picker.
+  const { label: _label, ...drillFilter } = drill ?? { label: "" };
+  const pinned = drill?.date != null || drill?.ids != null;
+  const filter = {
+    days: pinned ? 0 : days,
+    source: source || undefined,
+    outcome: outcome || undefined,
+    search: search || undefined,
+    category: category || undefined,
+    ...drillFilter,
+  };
   const exportCsv = useMutation({ mutationFn: () => api.exportSessions(filter), onSuccess: setExported });
   const q = useQuery({ queryKey: ["sessions", filter], queryFn: () => api.sessions(filter), placeholderData: (prev) => prev });
 
@@ -40,6 +64,17 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
   return (
     <>
       <PageHeader title="Sessions" subtitle="Every tracked session. Open one to rate it; ratings are what make the insights work." actions={<Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />} />
+      {drill && (
+        <div className="mb-3 flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
+            Showing: {drill.label}
+            <button aria-label="Clear filter" className="text-emerald-300 hover:text-zinc-50" onClick={clearDrill}>
+              <X size={13} />
+            </button>
+          </span>
+          {pinned && <span className="text-xs text-zinc-500">(any date range)</span>}
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[16rem] flex-1">
           <Search size={14} className="absolute left-2.5 top-2.5 text-zinc-500" />

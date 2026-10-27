@@ -194,6 +194,14 @@ pub struct SessionFilter {
     pub search: Option<String>,
     pub project: Option<String>,
     pub category: Option<String>,
+    pub model: Option<String>,
+    /// Local calendar date, YYYY-MM-DD.
+    pub date: Option<String>,
+    /// 0 = Monday.
+    pub weekday: Option<u32>,
+    pub hour: Option<u32>,
+    /// Exactly these sessions (from an insight).
+    pub ids: Option<Vec<String>>,
 }
 
 /// Rows shown in the Sessions table; exports are not capped.
@@ -235,6 +243,29 @@ pub fn filter_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<Sessi
             f.category
                 .as_deref()
                 .is_none_or(|c| c.is_empty() || s.category.as_deref() == Some(c))
+        })
+        .filter(|s| {
+            f.model
+                .as_deref()
+                .is_none_or(|m| s.model.as_deref() == Some(m))
+        })
+        .filter(|s| f.ids.as_ref().is_none_or(|ids| ids.contains(&s.id)))
+        .filter(|s| {
+            if f.date.is_none() && f.weekday.is_none() && f.hour.is_none() {
+                return true;
+            }
+            let Some(t) = s
+                .started_at
+                .and_then(|t| Local.timestamp_millis_opt(t).single())
+            else {
+                return false;
+            };
+            f.date
+                .as_deref()
+                .is_none_or(|d| t.format("%Y-%m-%d").to_string() == d)
+                && f.weekday
+                    .is_none_or(|w| t.weekday().num_days_from_monday() == w)
+                && f.hour.is_none_or(|h| t.hour() == h)
         })
         .filter(|s| f.source.as_deref().is_none_or(|src| src == s.source))
         .filter(|s| match f.outcome.as_deref() {
@@ -627,6 +658,77 @@ pub struct Overview {
     pub by_model: Vec<GroupStat>,
     pub daily: Vec<DayStat>,
     pub outcomes: BTreeMap<String, usize>,
+    /// The last 12 weeks, independent of the selected range, so every KPI
+    /// can show its trend, usual range and personal best.
+    pub trend: Trend,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Trend {
+    /// Monday of each week, oldest first.
+    pub weeks: Vec<String>,
+    pub sessions: Vec<f64>,
+    pub active_hours: Vec<f64>,
+    pub success_rate: Vec<Option<f64>>,
+    pub rated: Vec<f64>,
+    pub commits: Vec<f64>,
+    pub shipped: Vec<f64>,
+    pub wait_hours: Vec<f64>,
+    pub interruptions_per_session: Vec<Option<f64>>,
+    pub tool_error_rate: Vec<Option<f64>>,
+    pub cost_usd: Vec<f64>,
+}
+
+pub const TREND_WEEKS: i64 = 12;
+
+fn trend(conn: &Connection) -> Result<Trend> {
+    let today = Local::now().date_naive();
+    let this_monday = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    let first = this_monday - Duration::weeks(TREND_WEEKS - 1);
+    let since = first
+        .and_hms_opt(0, 0, 0)
+        .and_then(|d| d.and_local_timezone(Local).earliest())
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0);
+    let rows = load_sessions(
+        conn,
+        Range {
+            since,
+            until: now_ms() + 1,
+        },
+    )?;
+    let mut weeks: Vec<Vec<&SessionRow>> = vec![vec![]; TREND_WEEKS as usize];
+    for s in &rows {
+        if let Some(d) = s.started_at.and_then(local_date) {
+            let i = (d - first).num_days() / 7;
+            if (0..TREND_WEEKS).contains(&i) {
+                weeks[i as usize].push(s);
+            }
+        }
+    }
+    let mut t = Trend::default();
+    for (i, w) in weeks.iter().enumerate() {
+        let tt = totals(&w.iter().map(|s| (*s).clone()).collect::<Vec<_>>());
+        t.weeks.push(
+            (first + Duration::weeks(i as i64))
+                .format("%Y-%m-%d")
+                .to_string(),
+        );
+        t.sessions.push(tt.sessions as f64);
+        t.active_hours.push(tt.active_hours);
+        t.success_rate.push(tt.success_rate);
+        t.rated.push(tt.rated as f64);
+        t.commits.push(tt.commits as f64);
+        t.shipped.push(tt.shipped as f64);
+        t.wait_hours.push(tt.wait_hours);
+        t.interruptions_per_session
+            .push((tt.sessions > 0).then(|| tt.interruptions as f64 / tt.sessions as f64));
+        t.tool_error_rate
+            .push((tt.tool_calls > 0).then(|| tt.tool_errors as f64 / tt.tool_calls as f64));
+        t.cost_usd.push(tt.cost_usd);
+    }
+    Ok(t)
 }
 
 fn local_date(ms: i64) -> Option<NaiveDate> {
@@ -711,6 +813,7 @@ pub fn overview(conn: &Connection, days: i64) -> Result<Overview> {
         by_model: group_by(&rows, |s| s.model.clone()),
         daily: daily.into_values().collect(),
         outcomes,
+        trend: trend(conn)?,
     })
 }
 
@@ -818,6 +921,8 @@ pub struct Insight {
     pub title: String,
     pub detail: String,
     pub evidence: String,
+    /// The sessions the insight is about, so the UI can open them.
+    pub session_ids: Vec<String>,
 }
 
 fn insight(id: &str, kind: &str, title: String, detail: String, evidence: String) -> Insight {
@@ -827,6 +932,14 @@ fn insight(id: &str, kind: &str, title: String, detail: String, evidence: String
         title,
         detail,
         evidence,
+        session_ids: vec![],
+    }
+}
+
+/// Attaches the sessions behind the most recently added insight.
+fn attach<'a>(out: &mut [Insight], rows: impl IntoIterator<Item = &'a SessionRow>) {
+    if let Some(last) = out.last_mut() {
+        last.session_ids = rows.into_iter().map(|s| s.id.clone()).collect();
     }
 }
 
@@ -902,6 +1015,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             "Most comparisons need outcomes. Mark sessions shipped, partial, abandoned or redo on the Sessions page; it takes a few seconds each.".into(),
             format!("{rated} of {} sessions rated", rows.len()),
         ));
+        attach(&mut out, rows.iter().filter(|s| s.outcome.is_none()));
     }
 
     // Opening prompt length.
@@ -927,6 +1041,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             ),
             format!("{} vs {} rated sessions", best.rated(), worst.rated()),
         ));
+        attach(&mut out, worst.rows.iter().copied());
     }
     let (short, long) = (&by_len[0], &by_len[2]);
     if short.rows.len() >= MIN_SAMPLE && long.rows.len() >= MIN_SAMPLE {
@@ -942,6 +1057,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
                 format!("Sessions with a short first prompt took {st:.1} prompts on average, against {lt:.1} for detailed ones. The follow-ups are often context you could have given up front."),
                 format!("{} short, {} detailed sessions", short.rows.len(), long.rows.len()),
             ));
+            attach(&mut out, short.rows.iter().copied());
         }
     }
 
@@ -966,6 +1082,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
                 ),
                 format!("{} vs {} rated sessions", by_int[0].rated(), by_int[2].rated()),
             ));
+        attach(&mut out, by_int[2].rows.iter().copied());
     }
 
     // Session length.
@@ -991,6 +1108,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             ),
             format!("{} vs {} rated sessions", best.rated(), worst.rated()),
         ));
+        attach(&mut out, worst.rows.iter().copied());
     }
 
     // Time of day.
@@ -1020,6 +1138,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             format!("Success is {} in the {} versus {} in the {}. Schedule hard delegation for your strong hours.", pct(br), best.label, pct(wr), worst.label),
             format!("{} vs {} rated sessions", best.rated(), worst.rated()),
         ));
+        attach(&mut out, worst.rows.iter().copied());
     }
 
     // Tools compared.
@@ -1088,6 +1207,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
                 "Frequent failures usually mean missing setup: commands that don't exist, wrong paths, absent env vars or tests that can't run. Put the right commands in CLAUDE.md / AGENTS.md so agents stop guessing.".into(),
                 format!("{} errors in {} tool calls", t.tool_errors, t.tool_calls),
             ));
+            attach(&mut out, rows.iter().filter(|s| s.tool_errors > 0));
         }
     }
 
@@ -1116,6 +1236,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             ),
             format!("{} vs {} rated sessions", by_corr[0].rated(), by_corr[2].rated()),
         ));
+        attach(&mut out, by_corr[2].rows.iter().copied());
     }
 
     // Context compaction: the session outgrew its context window.
@@ -1138,6 +1259,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             ),
             format!("{} vs {} rated sessions", by_compact[0].rated(), by_compact[1].rated()),
         ));
+        attach(&mut out, by_compact[1].rows.iter().copied());
     }
 
     // Agent edit hygiene.
@@ -1154,6 +1276,10 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
                 "Edits made without reading the file first are more likely to be wrong. Point the agent at the relevant files in your prompt, or add \"read before editing\" to your instructions file.".into(),
                 format!("{edits} edits"),
             ));
+            attach(
+                &mut out,
+                measured.iter().filter(|s| s.edits_without_read > 0),
+            );
         }
         if re >= 0.35 {
             out.push(insight(
@@ -1163,6 +1289,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
                 "Repeated edits to the same file usually mean a fix-try-fix loop. Ask for a plan before code, or give the agent a test to run so it can check itself.".into(),
                 format!("{edits} edits"),
             ));
+            attach(&mut out, measured.iter().filter(|s| s.re_edits > 0));
         }
     }
 
@@ -1200,6 +1327,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
             ),
             format!("{} vs {} rated sessions", best.1, worst.1),
         ));
+        attach(&mut out, cats[&worst.0].iter().copied());
     }
 
     // Journal calibration.

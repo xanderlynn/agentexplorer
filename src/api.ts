@@ -135,6 +135,21 @@ export interface Overview {
   byModel: GroupStat[];
   daily: { date: string; sessions: number; activeMinutes: number; costUsd: number; shipped: number; commits: number }[];
   outcomes: Record<string, number>;
+  trend: Trend;
+}
+
+export interface Trend {
+  weeks: string[];
+  sessions: number[];
+  activeHours: number[];
+  successRate: (number | null)[];
+  rated: number[];
+  commits: number[];
+  shipped: number[];
+  waitHours: number[];
+  interruptionsPerSession: (number | null)[];
+  toolErrorRate: (number | null)[];
+  costUsd: number[];
 }
 
 export interface Insight {
@@ -143,6 +158,7 @@ export interface Insight {
   title: string;
   detail: string;
   evidence: string;
+  sessionIds: string[];
 }
 
 export interface Scorecard {
@@ -307,6 +323,13 @@ export interface SessionFilter {
   search?: string;
   project?: string;
   category?: string;
+  model?: string;
+  /** Local date, YYYY-MM-DD. */
+  date?: string;
+  /** 0 = Monday. */
+  weekday?: number;
+  hour?: number;
+  ids?: string[];
 }
 
 export interface Usage {
@@ -331,6 +354,9 @@ export interface Usage {
   cacheSavingsUsd: number;
   monthToDateUsd: number;
   projectedMonthUsd: number;
+  monthCumulative: [string, number][];
+  daysInMonth: number;
+  budgetUsd: number | null;
   costPerSession: number | null;
 }
 

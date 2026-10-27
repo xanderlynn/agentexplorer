@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api } from "../api";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { api, type Source } from "../api";
 import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
 import { compact, duration, money, pct, projectName } from "../format";
-import { GroupTable, tooltipStyle } from "./Overview";
+import type { Drill } from "../App";
+import { GroupTable, Legend, tooltipStyle } from "./Overview";
 import { chart } from "../theme";
 
-export default function Scorecard({ days, setDays }: { days: number; setDays: (d: number) => void }) {
+export default function Scorecard({ days, setDays, drill }: { days: number; setDays: (d: number) => void; drill: (d: Drill) => void }) {
   const q = useQuery({ queryKey: ["scorecard", days], queryFn: () => api.scorecard(days) });
   const header = (
     <PageHeader
@@ -35,36 +36,43 @@ export default function Scorecard({ days, setDays }: { days: number; setDays: (d
         <Stat label="Sessions" value={s.sessions} />
       </div>
 
-      <Card title="Weekly output" className="mt-6">
+      <Card title="Weekly output" className="mt-6" action={<Legend items={[["Shipped", chart.accent], ["Committed, not shipped", "var(--color-sky-500)"], ["Other", chart.muted]]} />}>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={s.weekly} margin={{ left: -20, right: 8, top: 8 }}>
+            <BarChart
+              data={s.weekly.map((w) => ({
+                ...w,
+                committedNotShipped: Math.max(0, w.sessionsWithCommits - w.shipped),
+                rest: Math.max(0, w.sessions - Math.max(w.sessionsWithCommits, w.shipped)),
+              }))}
+              margin={{ left: -20, right: 8, top: 8 }}
+            >
               <CartesianGrid stroke={chart.grid} vertical={false} />
-              <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} />
-              <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} />
+              <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} />
+              <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
               <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} />
-              <Legend wrapperStyle={{ fontSize: 12, color: "var(--color-zinc-400)" }} />
-              <Bar dataKey="sessions" name="Sessions" fill={chart.muted} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="sessionsWithCommits" name="Sessions with commits" fill="#5b9df5" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="shipped" name="Shipped" fill={chart.accent} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="shipped" name="Shipped" stackId="w" fill={chart.accent} />
+              <Bar dataKey="committedNotShipped" name="Committed, not shipped" stackId="w" fill="var(--color-sky-500)" />
+              <Bar dataKey="rest" name="Other sessions" stackId="w" fill={chart.muted} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className="mt-1 text-xs text-zinc-500">Each bar is a week's sessions, split by how far they got.</p>
       </Card>
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="By tool">
-          <GroupTable rows={s.bySource} label={(k) => <SourceBadge source={k} />} />
+          <GroupTable rows={s.bySource} label={(k) => <SourceBadge source={k} />} onRow={(k) => drill({ label: k, source: k as Source })} />
         </Card>
         <Card title="By repository">
           {s.byProject.length === 0 ? (
             <p className="text-sm text-zinc-500">No sessions ran inside a git repository.</p>
           ) : (
-            <GroupTable rows={s.byProject} label={(k) => <span className="text-zinc-200" title={k}>{projectName(k)}</span>} />
+            <GroupTable rows={s.byProject} label={(k) => <span className="text-zinc-200" title={k}>{projectName(k)}</span>} onRow={(k) => drill({ label: `project ${projectName(k)}`, project: k })} />
           )}
         </Card>
       </div>
-      <p className="mt-4 text-xs text-zinc-600">
+      <p className="mt-4 text-xs text-zinc-500">
         A commit is linked to a session when you authored it in the same repository while the session was active or within 30 minutes after.
       </p>
     </>

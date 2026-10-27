@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowUpRight, Loader2 } from "lucide-react";
 import type { Outcome, Source } from "../api";
 import { OUTCOMES } from "../api";
 import { OUTCOME_CLASS, OUTCOME_LABEL, SOURCE_COLOR, SOURCE_LABEL, pct } from "../format";
+import { MIN_N, wilson } from "../stats";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
@@ -41,6 +42,10 @@ export function Stat({
   change,
   goodWhenUp = true,
   points = false,
+  spark,
+  usual,
+  n,
+  onClick,
 }: {
   label: string;
   value: ReactNode;
@@ -49,23 +54,103 @@ export function Stat({
   goodWhenUp?: boolean;
   /** Show the change as percentage points rather than a relative change. */
   points?: boolean;
+  /** Weekly values, oldest first, drawn as a sparkline. */
+  spark?: (number | null)[];
+  /** Your usual range and best, e.g. "usually 40–60%, best 71%". */
+  usual?: ReactNode;
+  /** Sample size behind the value. */
+  n?: ReactNode;
+  onClick?: () => void;
 }) {
   const showChange = change != null && Number.isFinite(change) && Math.abs(change) >= 0.005;
-  const good = showChange && (change! > 0) === goodWhenUp;
+  const good = showChange && change! > 0 === goodWhenUp;
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-4 py-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
+    <Tag
+      onClick={onClick}
+      className={cx(
+        "rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-left",
+        onClick && "transition-colors hover:border-zinc-700 hover:bg-zinc-800/40",
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</span>
+        {n != null && <span className="text-xs tabular-nums text-zinc-500">n={n}</span>}
+      </div>
       <div className="mt-1 flex items-baseline gap-2">
         <span className="text-2xl font-semibold tabular-nums text-zinc-50">{value}</span>
         {showChange && (
           <span className={cx("inline-flex items-center text-xs tabular-nums", good ? "text-emerald-400" : "text-rose-400")}>
-            {change! > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+            {change! > 0 ? <ArrowUpRight size={12} aria-hidden /> : <ArrowDownRight size={12} aria-hidden />}
+            <span className="sr-only">{change! > 0 ? "up" : "down"}</span>
             {points ? `${Math.round(Math.abs(change!) * 100)} pts` : pct(Math.abs(change!))}
           </span>
         )}
+        {spark && <Sparkline values={spark} className="ml-auto" />}
       </div>
+      {usual && <div className="mt-0.5 text-xs text-zinc-400">{usual}</div>}
       {hint && <div className="mt-0.5 text-xs text-zinc-500">{hint}</div>}
-    </div>
+    </Tag>
+  );
+}
+
+export function Sparkline({ values, className }: { values: (number | null)[]; className?: string }) {
+  const pts = values.map((v, i) => [i, v] as const).filter((p): p is readonly [number, number] => p[1] != null);
+  if (pts.length < 2) return null;
+  const w = 72;
+  const h = 22;
+  const max = Math.max(...pts.map((p) => p[1]));
+  const min = Math.min(...pts.map((p) => p[1]));
+  const span = max - min || 1;
+  const x = (i: number) => (i / (values.length - 1)) * w;
+  const y = (v: number) => h - 2 - ((v - min) / span) * (h - 4);
+  const d = pts.map(([i, v], k) => `${k ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
+  return (
+    <svg width={w} height={h} className={className} aria-hidden>
+      <path d={d} fill="none" stroke="var(--color-emerald-500)" strokeWidth={1.5} strokeLinejoin="round" />
+      <circle cx={x(last[0])} cy={y(last[1])} r={2} fill="var(--color-emerald-500)" />
+    </svg>
+  );
+}
+
+/**
+ * A success rate that is honest about its sample: "k/n" in grey below
+ * MIN_N, otherwise a percentage with a 95% interval in the tooltip and a
+ * whisker on the bar.
+ */
+export function Rate({ rate, n, bar = true }: { rate: number | null; n: number; bar?: boolean }) {
+  if (rate == null || n === 0) return <span className="text-xs text-zinc-500">—</span>;
+  const ci = wilson(rate * n, n);
+  if (n < MIN_N) {
+    return (
+      <span className="text-xs tabular-nums text-zinc-500" title={`Only ${n} rated; too few to compare`}>
+        {Number.isInteger(rate * n) ? rate * n : (rate * n).toFixed(1)}/{n} rated
+      </span>
+    );
+  }
+  const title = ci ? `${pct(rate)} (95% range ${pct(ci[0])}–${pct(ci[1])}, n=${n})` : undefined;
+  return (
+    <span className="flex items-center gap-2" title={title}>
+      {bar && (
+        <span className="relative h-1.5 w-full min-w-12 overflow-hidden rounded-full bg-zinc-800">
+          {ci && <span className="absolute h-full bg-zinc-600" style={{ left: `${ci[0] * 100}%`, width: `${(ci[1] - ci[0]) * 100}%` }} />}
+          <span className="absolute h-full rounded-full bg-emerald-500" style={{ width: `${rate * 100}%`, opacity: 0.9 }} />
+        </span>
+      )}
+      <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-300">
+        {pct(rate)} <span className="text-zinc-500">({n})</span>
+      </span>
+    </span>
+  );
+}
+
+/** Marks a number derived from heuristics rather than measured directly. */
+export function Heuristic({ title }: { title: string }) {
+  return (
+    <span className="ml-1 cursor-help rounded border border-zinc-700 px-1 text-[0.7rem] font-normal normal-case tracking-normal text-zinc-400" title={title}>
+      ≈ heuristic
+    </span>
   );
 }
 
@@ -97,7 +182,7 @@ export function Button({ variant = "secondary", size = "md", busy, className, ch
 }
 
 export const inputBase =
-  "rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/70 focus:outline-none";
+  "rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500/70 focus:outline-none";
 export const inputClass = `${inputBase} w-full`;
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
@@ -121,7 +206,7 @@ export function SourceBadge({ source }: { source: Source | string }) {
 }
 
 export function OutcomeBadge({ outcome }: { outcome: Outcome | null }) {
-  if (!outcome) return <span className="text-xs text-zinc-600">Unrated</span>;
+  if (!outcome) return <span className="text-xs text-zinc-500">Unrated</span>;
   return (
     <span className={cx("inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset", OUTCOME_CLASS[outcome])}>
       {OUTCOME_LABEL[outcome]}
