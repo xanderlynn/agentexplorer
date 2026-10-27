@@ -132,6 +132,8 @@ export default function Settings() {
           </div>
         </Card>
 
+        <Licenses />
+
         <Card title="Data">
           <p className="text-sm text-zinc-400">Everything lives in one SQLite database on this computer.</p>
           <div className="mt-2 flex items-center justify-between gap-3">
@@ -175,5 +177,30 @@ function SettingInput({
         if (value !== stored) onSave(settingKey, value);
       }}
     />
+  );
+}
+
+// MIT, Apache-2.0, BSD and ISC require shipping these notices with the app.
+// The file is generated at build time by scripts/notices.mjs.
+function Licenses() {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () =>
+    fetch("/third-party-notices.txt")
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setText)
+      .catch((e) => setError(String(e)));
+  return (
+    <Card title="About and licenses">
+      <p className="text-sm text-zinc-400">Execution Ledger is MIT licensed. It is built on open-source software under permissive licenses (MIT, Apache-2.0, BSD, ISC and similar).</p>
+      <div className="mt-3">
+        {text == null ? (
+          <Button size="sm" onClick={load}>Show third-party notices</Button>
+        ) : (
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-[11px] text-zinc-400">{text}</pre>
+        )}
+        {error && <p className="mt-2 text-xs text-rose-400">Could not load notices: {error}</p>}
+      </div>
+    </Card>
   );
 }

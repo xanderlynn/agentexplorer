@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Eye, Sparkles, Trash2 } from "lucide-react";
 import { api, type Retro as RetroT } from "../api";
 import type { Page } from "../App";
+import { Markdown } from "../components/Markdown";
 import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, inputClass } from "../components/ui";
 import { date, dateTime } from "../format";
 
@@ -86,7 +85,7 @@ export default function Retro({ go }: { go: (p: Page) => void }) {
               <Button size="sm" variant="ghost" onClick={() => del.mutate(current.id)} aria-label="Delete retro"><Trash2 size={14} /></Button>
             </div>
             <div className="prose-retro">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{current.contentMd}</ReactMarkdown>
+              <Markdown source={current.contentMd} />
             </div>
           </Card>
           <Card title="History">

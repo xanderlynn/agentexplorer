@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/notices.mjs && tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check:licenses": "node scripts/check-licenses.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.0",
@@ -17,9 +18,7 @@
     "lucide-react": "^1.61.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-markdown": "^10.1.0",
-    "recharts": "^3.10.1",
-    "remark-gfm": "^4.0.1"
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
