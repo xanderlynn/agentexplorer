@@ -184,7 +184,7 @@ ALTER TABLE retros ADD COLUMN experiments_json TEXT;
 ALTER TABLE session_commits ADD COLUMN reworked INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE session_commits ADD COLUMN rework_sha TEXT;
 
-CREATE TABLE experiments (
+CREATE TABLE IF NOT EXISTS experiments (
     id             INTEGER PRIMARY KEY,
     created_at     INTEGER NOT NULL,
     title          TEXT NOT NULL,
@@ -201,7 +201,7 @@ CREATE TABLE experiments (
     retro_id       INTEGER REFERENCES retros(id) ON DELETE SET NULL
 );
 
-CREATE TABLE goals (
+CREATE TABLE IF NOT EXISTS goals (
     id             INTEGER PRIMARY KEY,
     created_at     INTEGER NOT NULL,
     metric         TEXT NOT NULL,
@@ -268,7 +268,11 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "last_message", "TEXT"),
     ("sessions", "signals_version", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "ask_score", "INTEGER NOT NULL DEFAULT 0"),
-    ("sessions", "vs_manual", "TEXT"),
+    (
+        "sessions",
+        "vs_manual",
+        "TEXT CHECK (vs_manual IN ('faster','slower','same','unsure'))",
+    ),
     ("sessions", "tool_errors_by", "TEXT NOT NULL DEFAULT '{}'"),
     ("sessions", "tool_vetoes", "TEXT NOT NULL DEFAULT '{}'"),
     ("sessions", "agent_ms", "INTEGER NOT NULL DEFAULT 0"),
@@ -284,12 +288,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
 fn repair(conn: &Connection) -> Result<()> {
     let mut added = false;
     for (table, column, decl) in ADDED_COLUMNS {
-        let exists: bool = conn.query_row(
-            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
-            [column],
-            |r| r.get(0),
-        )?;
-        if !exists {
+        if !has_column(conn, table, column)? {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
             added = true;
         }
@@ -301,15 +300,53 @@ fn repair(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Runs pending migrations statement by statement. An `ALTER TABLE … ADD
+/// COLUMN` whose column already exists is skipped, so a database that ran
+/// an earlier draft of a migration (as a development build can) upgrades
+/// instead of failing with "duplicate column".
 fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
         let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(sql)?;
+        for stmt in sql.split(";\n").map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some((table, column)) = added_column(stmt)
+                && has_column(&tx, table, column)?
+            {
+                continue;
+            }
+            tx.execute_batch(stmt)?;
+        }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
     repair(conn)
+}
+
+/// `ALTER TABLE <table> ADD COLUMN <column> …` → (table, column).
+fn added_column(stmt: &str) -> Option<(&str, &str)> {
+    let mut words = stmt.split_whitespace();
+    let pattern = ["ALTER", "TABLE"];
+    if !pattern
+        .iter()
+        .all(|p| words.next().is_some_and(|w| w.eq_ignore_ascii_case(p)))
+    {
+        return None;
+    }
+    let table = words.next()?;
+    let add = words.next()?;
+    let col_kw = words.next()?;
+    if !add.eq_ignore_ascii_case("ADD") || !col_kw.eq_ignore_ascii_case("COLUMN") {
+        return None;
+    }
+    Some((table, words.next()?))
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
+        [column],
+        |r| r.get(0),
+    )?)
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
@@ -359,6 +396,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn upgrades_a_database_that_ran_a_draft_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        // Apply migrations up to 5, then add a column migration 6 also adds,
+        // as a draft of migration 5 might have.
+        for sql in &MIGRATIONS[..5] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+        conn.execute_batch("ALTER TABLE sessions ADD COLUMN agent_ms INTEGER NOT NULL DEFAULT 0;")
+            .unwrap();
+        migrate(&conn).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        assert!(has_column(&conn, "sessions", "timeline").unwrap());
     }
 
     #[test]

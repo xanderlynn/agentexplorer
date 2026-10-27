@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Download, Flag, Search, X } from "lucide-react";
 import type { Drill } from "../App";
-import { api, OUTCOMES, type Outcome, type Source } from "../api";
+import { api, OUTCOMES, type Outcome, type SessionFilter, type Source } from "../api";
 import { Button, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
 import { OUTCOME_LABEL, SOURCE_LABEL, TASK_TYPES, dateTime, duration, money, projectName } from "../format";
 
@@ -33,14 +33,11 @@ export default function Sessions({
   // specific day or session set ignores the range picker.
   const { label: _label, ...drillFilter } = drill ?? { label: "" };
   const pinned = drill?.date != null || drill?.ids != null;
-  const filter = {
-    days: pinned ? 0 : days,
-    source: source || undefined,
-    outcome: outcome || undefined,
-    search: search || undefined,
-    category: category || undefined,
-    ...drillFilter,
-  };
+  // Controls you set override the drill; unset ones leave it in place.
+  const controls = Object.fromEntries(
+    Object.entries({ source, outcome, search, category }).filter(([, v]) => v),
+  ) as Partial<SessionFilter>;
+  const filter: SessionFilter = { ...drillFilter, ...controls, days: pinned ? 0 : days };
   const unusual = useQuery({ queryKey: ["anomalies", filter.days], queryFn: () => api.anomalies(filter.days) });
   const flagged = new Map((unusual.data ?? []).map((a) => [a.id, a.reasons.join("; ")]));
   const exportCsv = useMutation({ mutationFn: () => api.exportSessions(filter), onSuccess: setExported });

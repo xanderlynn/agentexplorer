@@ -255,10 +255,11 @@ pub fn filter_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<Sessi
                 .as_deref()
                 .is_none_or(|c| c.is_empty() || s.category.as_deref() == Some(c))
         })
-        .filter(|s| {
-            f.model
-                .as_deref()
-                .is_none_or(|m| s.model.as_deref() == Some(m))
+        .filter(|s| match f.model.as_deref() {
+            None => true,
+            // Usage groups sessions without a recorded model as "unknown".
+            Some("unknown") => s.model.is_none(),
+            Some(m) => s.model.as_deref() == Some(m),
         })
         .filter(|s| f.ids.as_ref().is_none_or(|ids| ids.contains(&s.id)))
         .filter(|s| {
@@ -567,12 +568,26 @@ pub fn save_review(conn: &Connection, r: &Review) -> Result<()> {
     if r.rating.is_some_and(|x| !(1..=5).contains(&x)) {
         bail!("Rating must be 1–5");
     }
-    let tags: Vec<String> = r
+    // Experiment tags ("exp-N") are owned by the experiment toggles; keep
+    // whatever is stored rather than trusting a possibly stale form.
+    let stored: String = conn
+        .query_row("SELECT tags FROM sessions WHERE id = ?1", [&r.id], |row| {
+            row.get(0)
+        })
+        .optional()?
+        .unwrap_or_else(|| "[]".into());
+    let mut tags: Vec<String> = r
         .tags
         .iter()
         .map(|t| t.trim().to_lowercase())
-        .filter(|t| !t.is_empty())
+        .filter(|t| !t.is_empty() && !t.starts_with("exp-"))
         .collect();
+    tags.extend(
+        serde_json::from_str::<Vec<String>>(&stored)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| t.starts_with("exp-")),
+    );
     conn.execute(
         "UPDATE sessions SET outcome = ?1, rating = ?2, notes = ?3, tags = ?4, reviewed_at = ?5,
                 vs_manual = ?7 WHERE id = ?6",

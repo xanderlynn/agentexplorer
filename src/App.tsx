@@ -292,7 +292,7 @@ function ReviewPrompt({ sessions, onOpen }: { sessions: LiveSession[] | undefine
           <X size={15} />
         </button>
       </div>
-      <QuickReview id={current.id} onDone={dismiss} compact />
+      <QuickReview key={current.id} id={current.id} onDone={dismiss} compact />
     </div>
   );
 }

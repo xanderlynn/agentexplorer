@@ -77,14 +77,14 @@ pub fn split_reply(reply: &str) -> (String, Vec<Suggestion>) {
         .find("```")
         .map(|e| body_start + e)
         .unwrap_or(reply.len());
-    #[derive(Deserialize)]
-    struct Block {
-        experiments: Vec<Suggestion>,
-    }
-    let suggestions = serde_json::from_str::<Block>(reply[body_start..end].trim())
-        .map(|b| b.experiments)
+    // Parse each suggestion on its own so one malformed entry doesn't
+    // drop the others.
+    let suggestions = serde_json::from_str::<Value>(reply[body_start..end].trim())
+        .ok()
+        .and_then(|v| v.get("experiments").and_then(Value::as_array).cloned())
         .unwrap_or_default()
         .into_iter()
+        .filter_map(|v| serde_json::from_value::<Suggestion>(v).ok())
         .filter(|s| crate::experiments::metric(&s.metric).is_ok() && !s.title.trim().is_empty())
         .take(3)
         .collect();
@@ -586,7 +586,7 @@ mod split_tests {
 
     #[test]
     fn splits_markdown_from_suggestions() {
-        let reply = "## Summary\nGood week.\n\n```json\n{\"experiments\": [{\"title\": \"Test first\", \"metric\": \"success_rate\", \"category\": \"bugfix\"}, {\"title\": \"Bad\", \"metric\": \"sessions\"}]}\n```\n";
+        let reply = "## Summary\nGood week.\n\n```json\n{\"experiments\": [{\"title\": \"Test first\", \"metric\": \"success_rate\", \"category\": \"bugfix\"}, {\"title\": \"Bad\", \"metric\": \"sessions\"}, {\"title\": \"No metric\"}]}\n```\n";
         let (md, s) = split_reply(reply);
         assert_eq!(md, "## Summary\nGood week.");
         assert_eq!(s.len(), 1);

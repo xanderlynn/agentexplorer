@@ -1035,7 +1035,7 @@ pub struct Lane {
 pub fn timelines(conn: &Connection, since: i64) -> Result<Vec<Lane>> {
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, timeline FROM sessions
-         WHERE ended_at >= ?1 AND timeline != '[]' ORDER BY started_at LIMIT 40",
+         WHERE ended_at >= ?1 AND timeline != '[]' ORDER BY started_at DESC LIMIT 40",
     )?;
     let lanes = stmt
         .query_map([since], |r| {
@@ -1053,7 +1053,12 @@ pub fn timelines(conn: &Connection, since: i64) -> Result<Vec<Lane>> {
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(lanes.into_iter().filter(|l| !l.spans.is_empty()).collect())
+    // Keep the 40 newest, shown oldest first.
+    Ok(lanes
+        .into_iter()
+        .rev()
+        .filter(|l| !l.spans.is_empty())
+        .collect())
 }
 
 #[cfg(test)]

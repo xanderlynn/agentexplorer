@@ -97,7 +97,7 @@ fn parse_log(out: &str) -> Vec<Commit> {
                 };
                 insertions += a.trim().parse::<i64>().unwrap_or(0);
                 deletions += d.trim().parse::<i64>().unwrap_or(0);
-                paths.push(p.trim().to_string());
+                paths.push(numstat_path(p.trim()));
             }
             let reverts = body
                 .split("this reverts commit ")
@@ -122,6 +122,44 @@ fn parse_log(out: &str) -> Vec<Commit> {
             })
         })
         .collect()
+}
+
+/// numstat writes renames as "old => new" or "dir/{old => new}/file"; the
+/// new path is what later commits will touch.
+fn numstat_path(p: &str) -> String {
+    if let (Some(open), Some(close)) = (p.find('{'), p.find('}'))
+        && let Some((_, new)) = p[open + 1..close].split_once(" => ")
+    {
+        let joined = format!("{}{}{}", &p[..open], new, &p[close + 1..]);
+        return joined.replace("//", "/");
+    }
+    match p.split_once(" => ") {
+        Some((_, new)) => new.to_string(),
+        None => p.to_string(),
+    }
+}
+
+/// Files most commits touch; sharing one says nothing about rework.
+fn is_incidental(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "cargo.lock"
+            | "cargo.toml"
+            | "package.json"
+            | "package-lock.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "go.sum"
+            | "go.mod"
+            | "poetry.lock"
+            | "gemfile.lock"
+            | "composer.lock"
+            | "changelog.md"
+            | "changelog"
+            | "uv.lock"
+            | "bun.lockb"
+    )
 }
 
 fn is_ai_commit(body_lower: &str) -> bool {
@@ -181,7 +219,10 @@ pub fn find_rework<'a>(
                     .reverts
                     .as_deref()
                     .is_some_and(|r| c.sha.starts_with(r) || r.starts_with(&c.sha))
-                    || (is_fix_subject(&l.subject) && l.paths.iter().any(|p| c.paths.contains(p))))
+                    || (is_fix_subject(&l.subject)
+                        && l.paths
+                            .iter()
+                            .any(|p| !is_incidental(p) && c.paths.contains(p))))
         });
         if let Some(l) = hit {
             out.insert(c.sha.clone(), l.sha.clone());
@@ -361,6 +402,23 @@ mod tests {
         assert_eq!(rework.get("a1").map(String::as_str), Some("b1"));
         // c2 is outside the 7-day window.
         assert!(!rework.contains_key("c1"));
+
+        // Sharing only a lockfile isn't rework.
+        let lock = vec![
+            commit("d1", 0, "Add dep", &["Cargo.lock", "src/x.rs"]),
+            commit("d2", day, "Fix unrelated bug", &["Cargo.lock", "src/y.rs"]),
+        ];
+        let owner =
+            |sha: &str| -> Option<&str> { if sha == "d1" { Some("s1") } else { Some("s2") } };
+        assert!(find_rework(&lock, &owner).is_empty());
+    }
+
+    #[test]
+    fn follows_renames_in_numstat() {
+        assert_eq!(numstat_path("src/{old => new}/a.rs"), "src/new/a.rs");
+        assert_eq!(numstat_path("src/{ => sub}/a.rs"), "src/sub/a.rs");
+        assert_eq!(numstat_path("a.rs => b.rs"), "b.rs");
+        assert_eq!(numstat_path("plain.rs"), "plain.rs");
     }
 
     #[test]

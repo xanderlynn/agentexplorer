@@ -253,7 +253,17 @@ function NewGoal({ metrics }: { metrics: MetricDef[] }) {
   return (
     <Card title="Add a goal">
       <div className="space-y-2">
-        <select className={inputClass} value={metric} onChange={(e) => setMetric(e.target.value)} aria-label="Metric">
+        <select
+          className={inputClass}
+          value={metric}
+          onChange={(e) => {
+            const m = e.target.value;
+            setMetric(m);
+            // The guard must be a different metric.
+            if (counter === m) setCounter(metrics.find((x) => x.key !== m)?.key ?? counter);
+          }}
+          aria-label="Metric"
+        >
           {metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
         <div className="flex items-center gap-2">

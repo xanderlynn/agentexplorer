@@ -48,11 +48,8 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
         outcome,
         rating,
         notes: notes.trim() || null,
-        // Experiment tags are managed by the toggles below, not the text box.
-        tags: [
-          ...tags.split(",").map((t) => t.trim()).filter(Boolean),
-          ...(q.data?.session.tags.filter((t) => t.startsWith("exp-")) ?? []),
-        ],
+        // Experiment tags are managed by the toggles; the server keeps them.
+        tags: tags.split(",").map((t) => t.trim()).filter((t) => t && !t.startsWith("exp-")),
         vsManual,
       }),
     onSuccess: () => qc.invalidateQueries(),

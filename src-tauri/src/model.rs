@@ -232,7 +232,8 @@ impl ParsedSession {
                 self.push_span(end, t, 0);
             }
         }
-        if ts.is_some() {
+        // A prompt queued while the agent is still working joins that turn.
+        if self.turn_start.is_none() {
             self.turn_start = ts;
         }
     }
@@ -307,6 +308,17 @@ impl ParsedSession {
             .entry(model.to_string())
             .or_default()
             .add(usage);
+    }
+
+    /// Closes a turn still in progress at the end of the transcript, so
+    /// the timeline shows current work. Call once, after parsing.
+    pub fn close_open_turn(&mut self) {
+        let last = self.event_times.iter().copied().max();
+        if let (Some(start), Some(end)) = (self.turn_start, last)
+            && end > start
+        {
+            self.push_span(start, end, 1);
+        }
     }
 
     pub fn derive(&self) -> Derived {

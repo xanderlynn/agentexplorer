@@ -59,7 +59,7 @@ export function CommandPalette({
     return [...matched, ...found];
   }, [q, debounced, sessions.data, pages, go, openSession, plan, onClose]);
 
-  useEffect(() => setSel(0), [q]);
+  useEffect(() => setSel(0), [q, items.length]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") onClose();

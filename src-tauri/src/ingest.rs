@@ -157,7 +157,8 @@ impl Ingestor {
             .into_par_iter()
             .map(|(unit, fp)| {
                 let result = parsers::parse(unit.source, &unit.paths).map(|opt| {
-                    opt.map(|s| {
+                    opt.map(|mut s| {
+                        s.close_open_turn();
                         let repo = s
                             .project_path
                             .as_deref()

@@ -200,8 +200,12 @@ pub struct Experiment {
     pub end_at: i64,
     pub baseline_value: Option<f64>,
     pub baseline_n: i64,
+    /// The metric over every session in scope during the window, measured
+    /// the same way as the baseline.
     pub current_value: Option<f64>,
     pub current_n: usize,
+    /// The metric over only the sessions you tagged as applying the habit.
+    pub applied_value: Option<f64>,
     /// Sessions in the window you tagged as applying the experiment.
     pub applied: usize,
     pub eligible: usize,
@@ -253,11 +257,17 @@ pub fn create(conn: &Connection, e: &NewExperiment) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-fn reading(def: &MetricDef, baseline: Option<f64>, current: Option<f64>, n: usize) -> &'static str {
+fn reading(
+    def: &MetricDef,
+    baseline: Option<f64>,
+    baseline_n: usize,
+    current: Option<f64>,
+    n: usize,
+) -> &'static str {
     let (Some(b), Some(c)) = (baseline, current) else {
         return "too_early";
     };
-    if n < MIN_N {
+    if n < MIN_N || baseline_n < MIN_N {
         return "too_early";
     }
     // Ignore changes smaller than 10% of the baseline (or 0.05 on a rate).
@@ -334,14 +344,10 @@ pub fn list(conn: &Connection) -> Result<Vec<Experiment>> {
             .copied()
             .filter(|s| s.tags.contains(&tag))
             .collect();
-        // Measure the sessions where the habit was applied when you've
-        // tagged any; otherwise everything in scope.
-        let measured = if applied.is_empty() {
-            eligible.clone()
-        } else {
-            applied.clone()
-        };
-        let (current, n) = measure(&e.metric, &measured);
+        // Like-for-like with the baseline (all sessions in scope); the
+        // tagged subset is reported separately.
+        let (current, n) = measure(&e.metric, &eligible);
+        let (applied_value, _) = measure(&e.metric, &applied);
         out.push(Experiment {
             id: e.id,
             created_at: e.created_at,
@@ -356,9 +362,10 @@ pub fn list(conn: &Connection) -> Result<Vec<Experiment>> {
             baseline_n: e.baseline_n,
             current_value: current,
             current_n: n,
+            applied_value,
             applied: applied.len(),
             eligible: eligible.len(),
-            reading: reading(def, e.baseline_value, current, n).into(),
+            reading: reading(def, e.baseline_value, e.baseline_n as usize, current, n).into(),
             status: e.status,
             verdict_note: e.verdict_note,
         });
@@ -512,25 +519,27 @@ pub fn goals(conn: &Connection) -> Result<Vec<GoalStatus>> {
         let (current, n) = measure(&m, &week_rows);
         let (counter_current, _) = measure(&c, &week_rows);
         let (counter_baseline, _) = measure(&c, &before_rows);
-        let met = current.map(|v| {
+        // Below MIN_N sessions a week, "met" would be noise.
+        let met = current.filter(|_| n >= MIN_N).map(|v| {
             if def.higher_is_better {
                 v >= target
             } else {
                 v <= target
             }
         });
-        let counter_slipping = match (counter_current, counter_baseline) {
-            (Some(now), Some(base)) => {
-                let margin =
-                    (base.abs() * 0.1).max(if counter.unit == "rate" { 0.05 } else { 0.1 });
-                if counter.higher_is_better {
-                    now < base - margin
-                } else {
-                    now > base + margin
+        let counter_slipping = n >= MIN_N
+            && match (counter_current, counter_baseline) {
+                (Some(now), Some(base)) => {
+                    let margin =
+                        (base.abs() * 0.1).max(if counter.unit == "rate" { 0.05 } else { 0.1 });
+                    if counter.higher_is_better {
+                        now < base - margin
+                    } else {
+                        now > base + margin
+                    }
                 }
-            }
-            _ => false,
-        };
+                _ => false,
+            };
         out.push(GoalStatus {
             id,
             metric: *def,
@@ -668,7 +677,9 @@ mod tests {
         assert_eq!(e.baseline_value, Some(0.0));
         assert_eq!(e.baseline_n, 6);
         assert_eq!((e.applied, e.eligible), (5, 6));
-        assert_eq!(e.current_value, Some(1.0));
+        // All six in scope (five shipped, one abandoned) vs a baseline of 0.
+        assert!((e.current_value.unwrap() - 5.0 / 6.0).abs() < 1e-9);
+        assert_eq!(e.applied_value, Some(1.0));
         assert_eq!(e.reading, "better");
     }
 

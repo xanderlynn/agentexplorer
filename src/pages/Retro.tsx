@@ -84,6 +84,7 @@ export default function Retro({ go }: { go: (p: Page) => void }) {
       {adopting && metrics.data && (
         <div className="mt-6">
           <NewExperiment
+            key={`${adopting.retroId}-${adopting.s.title}`}
             metrics={metrics.data}
             initial={{ ...adopting.s, retroId: adopting.retroId }}
             onDone={() => {
