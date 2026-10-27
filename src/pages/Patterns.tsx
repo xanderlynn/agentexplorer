@@ -5,6 +5,7 @@ import type { Drill } from "../App";
 import { Bar as Meter, Card, Empty, ErrorNote, Heuristic, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
 import { duration, pct } from "../format";
 import { quantile } from "../stats";
+import { ToolHealthCard } from "../components/Reality";
 import { chart, heat } from "../theme";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -24,6 +25,7 @@ export default function Patterns({
   drill: (d: Drill) => void;
 }) {
   const q = useQuery({ queryKey: ["patterns", days], queryFn: () => api.patterns(days) });
+  const playbooks = useQuery({ queryKey: ["playbooks"], queryFn: api.playbooks });
   const header = (
     <PageHeader
       title="Patterns"
@@ -35,6 +37,7 @@ export default function Patterns({
   if (q.error) return <>{header}<ErrorNote error={q.error} /></>;
   if (!q.data) return header;
   const p = q.data;
+  const marks = playbookMarks(playbooks.data ?? [], p.qualityWeekly.map((w) => w.weekStart));
 
   return (
     <>
@@ -122,15 +125,15 @@ export default function Patterns({
           <p className="text-sm text-zinc-500">Needs at least two weeks of sessions.</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <Multiple title="Success" better="higher" data={p.qualityWeekly} k="successRate" fmt={(v) => pct(v)} domain={[0, 1]} />
-            <Multiple title="Re-edit rate" better="lower" data={p.qualityWeekly} k="reEditRate" fmt={(v) => pct(v)} domain={[0, 1]} />
-            <Multiple title="Blind-edit rate" better="lower" data={p.qualityWeekly} k="editsWithoutReadRate" fmt={(v) => pct(v)} domain={[0, 1]} />
-            <Multiple title="Corrections / session" better="lower" data={p.qualityWeekly} k="correctionsPerSession" fmt={(v) => v.toFixed(1)} />
-            <Multiple title="Flow score" better="higher" data={p.qualityWeekly} k="avgFriction" fmt={(v) => v.toFixed(1)} domain={[1, 5]} heuristic />
+            <Multiple title="Success" better="higher" data={p.qualityWeekly} k="successRate" marks={marks} fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Re-edit rate" better="lower" data={p.qualityWeekly} k="reEditRate" marks={marks} fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Blind-edit rate" better="lower" data={p.qualityWeekly} k="editsWithoutReadRate" marks={marks} fmt={(v) => pct(v)} domain={[0, 1]} />
+            <Multiple title="Corrections / session" better="lower" data={p.qualityWeekly} k="correctionsPerSession" marks={marks} fmt={(v) => v.toFixed(1)} />
+            <Multiple title="Flow score" better="higher" data={p.qualityWeekly} k="avgFriction" marks={marks} fmt={(v) => v.toFixed(1)} domain={[1, 5]} heuristic />
           </div>
         )}
         <p className="mt-3 text-xs text-zinc-500">
-          Each panel has its own scale; the dashed line is the median week. Re-edit: edits to a file already changed in the same session. Blind edit: editing a file the agent never read.
+          Each panel has its own scale; the dashed line is the median week; dotted verticals mark weeks you changed an instruction file or prompt template. Re-edit: edits to a file already changed in the same session. Blind edit: editing a file the agent never read.
         </p>
       </Card>
 
@@ -145,6 +148,10 @@ export default function Patterns({
         <Card title="Context and delegation">
           <BenchTable rows={[p.withoutCompaction, p.withCompaction, p.withSubagents]} />
         </Card>
+      </div>
+
+      <div className="mt-4">
+        <ToolHealthCard days={days} />
       </div>
 
       <Card title="Longest sessions" className="mt-4">
@@ -177,6 +184,7 @@ function Multiple({
   fmt,
   domain,
   heuristic,
+  marks = [],
 }: {
   title: string;
   better: "higher" | "lower";
@@ -185,6 +193,7 @@ function Multiple({
   fmt: (v: number) => string;
   domain?: [number, number];
   heuristic?: boolean;
+  marks?: { week: string; label: string }[];
 }) {
   const values = data.map((w) => w[k]).filter((v): v is number => typeof v === "number");
   const median = quantile(values, 0.5);
@@ -206,12 +215,35 @@ function Multiple({
             <YAxis hide domain={domain ?? ["auto", "auto"]} />
             <Tooltip {...chart.tooltip} labelFormatter={(l) => `Week of ${l}`} formatter={(v) => [fmt(Number(v)), title]} />
             {median != null && <ReferenceLine y={median} stroke={chart.axis} strokeDasharray="3 3" />}
+            {marks.map((m) => (
+              <ReferenceLine key={m.week + m.label} x={m.week} stroke="var(--color-sky-500)" strokeDasharray="1 3" />
+            ))}
             <Line type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </div>
     </div>
   );
+}
+
+/** Weeks (as Monday dates present in the chart) where a playbook changed. */
+function playbookMarks(playbooks: import("../api").Playbook[], weeks: string[]) {
+  const set = new Set(weeks);
+  const monday = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const out: { week: string; label: string }[] = [];
+  for (const p of playbooks) {
+    // The oldest version is the starting point, not a change.
+    for (const v of p.versions.slice(0, -1)) {
+      const w = monday(v.lastSeen);
+      if (set.has(w)) out.push({ week: w, label: p.name });
+    }
+  }
+  return out;
 }
 
 function HeatLegend({ label }: { label: string }) {

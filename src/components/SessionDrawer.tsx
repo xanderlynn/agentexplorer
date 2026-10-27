@@ -180,7 +180,23 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                 <Metric label="Blind edits" value={s.editsWithoutRead} hint="edited without reading" />
                 <Metric label="Re-edits" value={s.reEdits} hint="same file again" />
                 <Metric label="Compactions · agents" value={`${s.compactions} · ${s.subagents}`} />
+                <Metric label="Agent time" value={duration(s.agentMs)} hint="working on your prompts" />
+                <Metric label="Reworked later" value={s.commits ? (s.reworked ? "Yes" : "No") : "—"} hint="revert or fix within 7 days" />
               </div>
+              {(Object.keys(d.toolErrorsBy).length > 0 || Object.keys(d.toolVetoes).length > 0) && (
+                <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+                  {Object.entries(d.toolErrorsBy).map(([tool, n]) => (
+                    <span key={`e-${tool}`} className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-amber-200">
+                      {tool} failed {n}×
+                    </span>
+                  ))}
+                  {Object.entries(d.toolVetoes).map(([tool, n]) => (
+                    <span key={`v-${tool}`} className="rounded-md bg-rose-500/10 px-1.5 py-0.5 text-rose-200">
+                      you rejected {tool} {n}×
+                    </span>
+                  ))}
+                </div>
+              )}
               {Object.keys(d.toolCounts).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {Object.entries(d.toolCounts)

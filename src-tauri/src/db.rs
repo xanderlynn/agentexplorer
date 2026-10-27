@@ -212,6 +212,15 @@ CREATE TABLE goals (
 
 DELETE FROM source_files;
 "#,
+    // Reality checks: per-tool errors and vetoes, agent working time, and
+    // the working / waiting timeline. Needs a re-parse.
+    r#"
+ALTER TABLE sessions ADD COLUMN tool_errors_by TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE sessions ADD COLUMN tool_vetoes TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE sessions ADD COLUMN agent_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN timeline TEXT NOT NULL DEFAULT '[]';
+DELETE FROM source_files;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -237,6 +246,61 @@ fn configure(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Columns added by migrations after the first, with their definitions.
+/// `repair` adds any that are missing, so a database that ran an earlier
+/// draft of a migration (as a development build can) still gets every
+/// column. Keep in step with MIGRATIONS.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("sessions", "tool_counts", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "reads", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "edits", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "shell_calls", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "sessions",
+        "edits_without_read",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("sessions", "re_edits", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "compactions", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "subagents", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "corrections", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "category", "TEXT"),
+    ("sessions", "last_message", "TEXT"),
+    ("sessions", "signals_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "ask_score", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "vs_manual", "TEXT"),
+    ("sessions", "tool_errors_by", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "tool_vetoes", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "agent_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "timeline", "TEXT NOT NULL DEFAULT '[]'"),
+    ("intents", "done_when", "TEXT"),
+    ("intents", "context", "TEXT"),
+    ("retros", "reflection", "TEXT"),
+    ("retros", "experiments_json", "TEXT"),
+    ("session_commits", "reworked", "INTEGER NOT NULL DEFAULT 0"),
+    ("session_commits", "rework_sha", "TEXT"),
+];
+
+fn repair(conn: &Connection) -> Result<()> {
+    let mut added = false;
+    for (table, column, decl) in ADDED_COLUMNS {
+        let exists: bool = conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
+            [column],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+            added = true;
+        }
+    }
+    if added {
+        // New columns are filled by re-parsing the transcripts.
+        conn.execute_batch("DELETE FROM source_files;")?;
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
@@ -245,7 +309,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
-    Ok(())
+    repair(conn)
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
@@ -275,6 +339,27 @@ pub fn setting_bool(conn: &Connection, key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repair_adds_columns_a_draft_migration_missed() {
+        let conn = open_in_memory().unwrap();
+        // Simulate a database that ran a draft migration without this column.
+        conn.execute_batch("ALTER TABLE session_commits DROP COLUMN rework_sha;")
+            .unwrap();
+        repair(&conn).unwrap();
+        conn.query_row("SELECT rework_sha FROM session_commits LIMIT 1", [], |_| {
+            Ok(())
+        })
+        .ok();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_commits') WHERE name = 'rework_sha'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+    }
 
     #[test]
     fn migrations_are_idempotent() {

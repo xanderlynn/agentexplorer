@@ -81,6 +81,9 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                         Some("tool_use") => {
                             tool_uses += 1;
                             let name = item.get("name").and_then(Value::as_str).unwrap_or("tool");
+                            if let Some(tid) = item.get("id").and_then(Value::as_str) {
+                                s.tool_names.insert(tid.to_string(), name.to_string());
+                            }
                             let input = &item["input"];
                             let path = ["file_path", "path", "notebook_path"]
                                 .iter()
@@ -172,10 +175,19 @@ fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
             has_tool_result = true;
             // A tool call the user rejected or interrupted is also marked
             // is_error, but it says nothing about the agent's setup.
-            if item.get("is_error").and_then(Value::as_bool) == Some(true)
-                && !is_user_rejection(&tool_result_text(item))
-            {
-                s.tool_errors += 1;
+            if item.get("is_error").and_then(Value::as_bool) == Some(true) {
+                let name = item
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| s.tool_names.get(id))
+                    .cloned()
+                    .unwrap_or_else(|| "tool".into());
+                if is_user_rejection(&tool_result_text(item)) {
+                    s.note_veto(&name);
+                } else {
+                    s.tool_errors += 1;
+                    s.note_tool_error(&name);
+                }
             }
         }
     }

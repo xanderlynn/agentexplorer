@@ -233,7 +233,7 @@ impl Ingestor {
 /// Bump when the parsers start recording new per-session signals; rows with
 /// a lower version are re-parsed and left out of signal-based statistics
 /// until they are.
-pub const SIGNALS_VERSION: i64 = 2;
+pub const SIGNALS_VERSION: i64 = 3;
 
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())
@@ -307,10 +307,11 @@ fn upsert_session(
             cost_is_estimate, premium_requests, lines_added, lines_removed, last_event,
             wait_ms_total, wait_count, ingested_at, tool_counts, reads, edits, shell_calls,
             edits_without_read, re_edits, compactions, subagents, corrections, category,
-            last_message, signals_version, ask_score
+            last_message, signals_version, ask_score, tool_errors_by, tool_vetoes, agent_ms,
+            timeline
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
                    ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
-                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46)
+                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50)
          ON CONFLICT(id) DO UPDATE SET
             file_path = excluded.file_path,
             project_path = COALESCE(excluded.project_path, project_path),
@@ -336,7 +337,9 @@ fn upsert_session(
             compactions = excluded.compactions, subagents = excluded.subagents,
             corrections = excluded.corrections, category = excluded.category,
             last_message = excluded.last_message, signals_version = excluded.signals_version,
-            ask_score = excluded.ask_score",
+            ask_score = excluded.ask_score, tool_errors_by = excluded.tool_errors_by,
+            tool_vetoes = excluded.tool_vetoes, agent_ms = excluded.agent_ms,
+            timeline = excluded.timeline",
         params![
             id,
             source.as_str(),
@@ -388,6 +391,10 @@ fn upsert_session(
             SIGNALS_VERSION,
             signals::check_ask(s.prompts.first().map(|p| p.text.as_str()).unwrap_or("")).score
                 as i64,
+            serde_json::to_string(&s.tool_errors_by)?,
+            serde_json::to_string(&s.tool_vetoes)?,
+            s.agent_ms,
+            serde_json::to_string(&s.timeline)?,
         ],
     )?;
 

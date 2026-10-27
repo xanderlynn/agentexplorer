@@ -52,6 +52,7 @@ export interface SessionRow {
   hasSignals: boolean;
   vsManual: VsManual | null;
   reworked: boolean;
+  agentMs: number;
 }
 
 export type VsManual = "faster" | "slower" | "same" | "unsure";
@@ -76,6 +77,10 @@ export interface SessionDetail {
   linesRemoved: number | null;
   notes: string | null;
   toolCounts: Record<string, number>;
+  toolErrorsBy: Record<string, number>;
+  toolVetoes: Record<string, number>;
+  /** [start, end, kind]: 1 = agent working, 0 = waiting on you. */
+  timeline: [number, number, number][];
   lastMessage: string | null;
   resumeCommand: string | null;
   prompts: { idx: number; ts: number | null; text: string }[];
@@ -268,6 +273,7 @@ export interface PlaybookVersion {
   avgInterruptions: number | null;
   toolErrorRate: number | null;
   commitsPerSession: number | null;
+  reworkRate: number | null;
 }
 
 // The current version is the one put in effect most recently. firstSeen can
@@ -302,6 +308,45 @@ export interface Suggestion {
   hypothesis: string | null;
   metric: string;
   category: string | null;
+}
+
+export interface Reality {
+  shippedWithCommits: number;
+  shippedReworked: number;
+  reworkRate: number | null;
+  byAnswer: {
+    answer: VsManual | "unanswered";
+    sessions: number;
+    rated: number;
+    successRate: number | null;
+    avgActiveMinutes: number | null;
+    withCommits: number;
+    reworkRate: number | null;
+  }[];
+  timeRatio: number | null;
+  timeRatioN: number;
+  leverage: number | null;
+  agentHours: number;
+  waitHours: number;
+}
+
+export interface FitCell {
+  category: string;
+  source: Source;
+  sessions: number;
+  rated: number;
+  successRate: number | null;
+  reworkRate: number | null;
+  verdict: "delegate" | "structure" | "yourself" | "unknown";
+  ids: string[];
+}
+
+export interface ToolHealth {
+  tool: string;
+  calls: number;
+  errors: number;
+  errorRate: number | null;
+  vetoes: number;
 }
 
 export interface MetricDef {
@@ -491,6 +536,9 @@ export const api = {
   sessions: (filter: SessionFilter) => invoke<SessionRow[]>("list_sessions", { filter }),
   exportSessions: (filter: SessionFilter) => invoke<string>("export_sessions", { filter }),
   usage: (days: number) => invoke<Usage>("get_usage", { days }),
+  reality: (days: number) => invoke<Reality>("get_reality", { days }),
+  fit: (days: number) => invoke<FitCell[]>("get_fit", { days }),
+  toolHealth: (days: number) => invoke<ToolHealth[]>("get_tool_health", { days }),
   patterns: (days: number) => invoke<Patterns>("get_patterns", { days }),
   session: (id: string) => invoke<SessionDetail>("get_session", { id }),
   saveReview: (review: { id: string; outcome: Outcome | null; rating: number | null; notes: string | null; tags: string[]; vsManual: VsManual | null }) =>

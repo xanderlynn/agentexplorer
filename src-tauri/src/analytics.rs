@@ -91,6 +91,8 @@ pub struct SessionRow {
     pub vs_manual: Option<String>,
     /// A commit from this session was reverted or fixed within 7 days.
     pub reworked: bool,
+    /// Time the agent spent working on your prompts.
+    pub agent_ms: i64,
 }
 
 impl SessionRow {
@@ -109,7 +111,7 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
        s.last_event, s.tags, s.category, s.reads, s.edits, s.shell_calls,
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
-       s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0
+       s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai, SUM(reworked) AS rw
@@ -178,6 +180,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         has_signals: r.get(41)?,
         vs_manual: r.get(43)?,
         reworked: r.get(44)?,
+        agent_ms: r.get(45)?,
     })
 }
 
@@ -358,6 +361,10 @@ pub struct SessionDetail {
     pub lines_removed: Option<i64>,
     pub notes: Option<String>,
     pub tool_counts: BTreeMap<String, i64>,
+    pub tool_errors_by: BTreeMap<String, i64>,
+    pub tool_vetoes: BTreeMap<String, i64>,
+    /// (start, end, kind): 1 = agent working, 0 = waiting on you.
+    pub timeline: Vec<(i64, i64, u8)>,
     pub last_message: Option<String>,
     /// A command that reopens the session in its tool, when it has one.
     pub resume_command: Option<String>,
@@ -381,11 +388,14 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         tool_counts: String,
         last_message: Option<String>,
         external_id: String,
+        tool_errors_by: String,
+        tool_vetoes: String,
+        timeline: String,
     }
     let x = conn.query_row(
         "SELECT file_path, entrypoint, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, lines_added, lines_removed, notes, tool_counts,
-                last_message, external_id
+                last_message, external_id, tool_errors_by, tool_vetoes, timeline
          FROM sessions WHERE id = ?1",
         [id],
         |r| {
@@ -398,6 +408,9 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
                 tool_counts: r.get(9)?,
                 last_message: r.get(10)?,
                 external_id: r.get(11)?,
+                tool_errors_by: r.get(12)?,
+                tool_vetoes: r.get(13)?,
+                timeline: r.get(14)?,
             })
         },
     )?;
@@ -476,6 +489,9 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         lines_removed: x.lines.1,
         notes: x.notes,
         tool_counts: serde_json::from_str(&x.tool_counts).unwrap_or_default(),
+        tool_errors_by: serde_json::from_str(&x.tool_errors_by).unwrap_or_default(),
+        tool_vetoes: serde_json::from_str(&x.tool_vetoes).unwrap_or_default(),
+        timeline: serde_json::from_str(&x.timeline).unwrap_or_default(),
         last_message: x.last_message,
         resume_command,
         prompts,

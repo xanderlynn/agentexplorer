@@ -128,6 +128,17 @@ pub struct ParsedSession {
     pub subagents: u64,
     /// The agent's most recent text reply, for "what is it asking me?".
     pub last_message: Option<String>,
+    /// Failed calls per tool name (excluding calls the user rejected).
+    pub tool_errors_by: BTreeMap<String, u64>,
+    /// Calls the user rejected or denied, per tool or permission kind.
+    pub tool_vetoes: BTreeMap<String, u64>,
+    /// Tool name per call id, to attribute results and errors.
+    pub tool_names: HashMap<String, String>,
+    /// Time the agent spent working on your prompts (prompt to turn end).
+    pub agent_ms: i64,
+    /// Working (1) and waiting-on-you (0) spans: (start, end, kind).
+    pub timeline: Vec<(i64, i64, u8)>,
+    pub turn_start: Option<i64>,
     pub read_paths: HashSet<String>,
     /// Files changed with Edit-type tools in this session.
     pub edited_paths: HashSet<String>,
@@ -203,8 +214,13 @@ impl ParsedSession {
     }
 
     pub fn note_turn_end(&mut self, ts: Option<i64>) {
-        if ts.is_some() {
-            self.last_turn_end = ts;
+        let Some(t) = ts else { return };
+        self.last_turn_end = Some(t);
+        if let Some(start) = self.turn_start.take()
+            && t >= start
+        {
+            self.agent_ms += t - start;
+            self.push_span(start, t, 1);
         }
     }
 
@@ -213,8 +229,29 @@ impl ParsedSession {
             let gap = t - end;
             if (0..=WAIT_SAMPLE_CAP_MS).contains(&gap) {
                 self.wait_samples.push(gap);
+                self.push_span(end, t, 0);
             }
         }
+        if ts.is_some() {
+            self.turn_start = ts;
+        }
+    }
+
+    /// Spans beyond this are dropped; the timeline is a sketch, not a log.
+    const MAX_SPANS: usize = 400;
+
+    fn push_span(&mut self, start: i64, end: i64, kind: u8) {
+        if self.timeline.len() < Self::MAX_SPANS && end > start {
+            self.timeline.push((start, end, kind));
+        }
+    }
+
+    pub fn note_tool_error(&mut self, name: &str) {
+        *self.tool_errors_by.entry(name.to_string()).or_default() += 1;
+    }
+
+    pub fn note_veto(&mut self, name: &str) {
+        *self.tool_vetoes.entry(name.to_string()).or_default() += 1;
     }
 
     /// Records one tool call. `path` is the file it touched, when known.

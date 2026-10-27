@@ -632,3 +632,210 @@ mod tests {
         assert_eq!(p.heatmap.iter().flatten().sum::<usize>(), 4);
     }
 }
+
+// ----------------------------------------------------------- reality check
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerRow {
+    /// faster, same, slower, unsure or unanswered.
+    pub answer: String,
+    pub sessions: usize,
+    pub rated: usize,
+    pub success_rate: Option<f64>,
+    pub avg_active_minutes: Option<f64>,
+    pub with_commits: usize,
+    pub rework_rate: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reality {
+    /// Sessions you rated shipped that produced commits.
+    pub shipped_with_commits: usize,
+    /// …and how many of those were reverted or fixed within 7 days.
+    pub shipped_reworked: usize,
+    pub rework_rate: Option<f64>,
+    pub by_answer: Vec<AnswerRow>,
+    /// Journal: actual ÷ expected time, and how many intents it rests on.
+    pub time_ratio: Option<f64>,
+    pub time_ratio_n: i64,
+    /// Agent working minutes per minute the agent spent waiting on you.
+    pub leverage: Option<f64>,
+    pub agent_hours: f64,
+    pub wait_hours: f64,
+}
+
+pub fn reality(conn: &Connection, days: i64) -> Result<Reality> {
+    let range = Range::last_days(days);
+    let rows = load_sessions(conn, range)?;
+    let shipped: Vec<&SessionRow> = rows
+        .iter()
+        .filter(|s| s.outcome.as_deref() == Some("shipped") && s.commits > 0)
+        .collect();
+    let shipped_reworked = shipped.iter().filter(|s| s.reworked).count();
+
+    let mut groups: BTreeMap<String, Vec<&SessionRow>> = BTreeMap::new();
+    for s in rows.iter().filter(|s| s.outcome.is_some()) {
+        groups
+            .entry(s.vs_manual.clone().unwrap_or_else(|| "unanswered".into()))
+            .or_default()
+            .push(s);
+    }
+    let order = ["faster", "same", "slower", "unsure", "unanswered"];
+    let mut by_answer: Vec<AnswerRow> = groups
+        .into_iter()
+        .map(|(answer, g)| {
+            let (rated, success_rate) = success(&g);
+            let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
+            AnswerRow {
+                answer,
+                sessions: g.len(),
+                rated,
+                success_rate,
+                avg_active_minutes: mean(g.iter().map(|s| s.active_ms as f64 / 60_000.0)),
+                with_commits: with.len(),
+                rework_rate: ratio(
+                    with.iter().filter(|s| s.reworked).count() as i64,
+                    with.len() as i64,
+                ),
+            }
+        })
+        .collect();
+    by_answer.sort_by_key(|r| order.iter().position(|o| *o == r.answer).unwrap_or(9));
+
+    let cal = crate::journal::calibration(conn, range.since)?;
+    let agent_ms: i64 = rows
+        .iter()
+        .filter(|s| s.has_signals)
+        .map(|s| s.agent_ms)
+        .sum();
+    let wait_ms: i64 = rows
+        .iter()
+        .filter(|s| s.has_signals)
+        .map(|s| s.wait_ms_total)
+        .sum();
+    Ok(Reality {
+        shipped_with_commits: shipped.len(),
+        shipped_reworked,
+        rework_rate: ratio(shipped_reworked as i64, shipped.len() as i64),
+        by_answer,
+        time_ratio: cal.overall.as_ref().and_then(|o| o.time_ratio),
+        time_ratio_n: cal.overall.as_ref().map(|o| o.n).unwrap_or(0),
+        leverage: ratio(agent_ms, wait_ms),
+        agent_hours: agent_ms as f64 / 3_600_000.0,
+        wait_hours: wait_ms as f64 / 3_600_000.0,
+    })
+}
+
+// ------------------------------------------------------- delegation fit
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FitCell {
+    pub category: String,
+    pub source: String,
+    pub sessions: usize,
+    pub rated: usize,
+    pub success_rate: Option<f64>,
+    pub rework_rate: Option<f64>,
+    /// delegate | structure | yourself | unknown
+    pub verdict: String,
+    pub ids: Vec<String>,
+}
+
+/// Task type × tool: where delegating has worked for you, where it needs
+/// more structure, and where you may be better off doing it yourself.
+pub fn fit(conn: &Connection, days: i64) -> Result<Vec<FitCell>> {
+    let rows = load_sessions(conn, Range::last_days(days))?;
+    let mut cells: BTreeMap<(String, String), Vec<&SessionRow>> = BTreeMap::new();
+    for s in rows.iter().filter(|s| s.has_signals) {
+        let cat = s.category.clone().unwrap_or_else(|| "other".into());
+        cells.entry((cat, s.source.clone())).or_default().push(s);
+    }
+    Ok(cells
+        .into_iter()
+        .map(|((category, source), g)| {
+            let (rated, success_rate) = success(&g);
+            let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
+            let rework_rate = ratio(
+                with.iter().filter(|s| s.reworked).count() as i64,
+                with.len() as i64,
+            );
+            let verdict = match (rated, success_rate) {
+                (n, _) if n < crate::analytics::MIN_SAMPLE => "unknown",
+                (_, Some(r)) if r >= 0.7 && rework_rate.is_none_or(|w| w <= 0.2) => "delegate",
+                (_, Some(r)) if r >= 0.45 => "structure",
+                _ => "yourself",
+            };
+            FitCell {
+                category,
+                source,
+                sessions: g.len(),
+                rated,
+                success_rate,
+                rework_rate,
+                verdict: verdict.into(),
+                ids: g.iter().map(|s| s.id.clone()).collect(),
+            }
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------- tool health
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolHealth {
+    pub tool: String,
+    pub calls: i64,
+    pub errors: i64,
+    pub error_rate: Option<f64>,
+    /// Calls you rejected or denied.
+    pub vetoes: i64,
+}
+
+/// Per-tool failures and vetoes. Failures point at environment problems
+/// (missing commands, flaky tests); vetoes point at rules worth writing
+/// into CLAUDE.md or AGENTS.md.
+pub fn tool_health(conn: &Connection, days: i64) -> Result<Vec<ToolHealth>> {
+    let range = Range::last_days(days);
+    let mut stmt = conn.prepare(
+        "SELECT tool_counts, tool_errors_by, tool_vetoes FROM sessions
+         WHERE started_at >= ?1 AND started_at < ?2 AND signals_version >= 3",
+    )?;
+    let mut acc: BTreeMap<String, (i64, i64, i64)> = BTreeMap::new();
+    for row in stmt.query_map(params![range.since, range.until], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })? {
+        let (calls, errors, vetoes) = row?;
+        let parse = |j: &str| serde_json::from_str::<BTreeMap<String, i64>>(j).unwrap_or_default();
+        for (k, v) in parse(&calls) {
+            acc.entry(k).or_default().0 += v;
+        }
+        for (k, v) in parse(&errors) {
+            acc.entry(k).or_default().1 += v;
+        }
+        for (k, v) in parse(&vetoes) {
+            acc.entry(k).or_default().2 += v;
+        }
+    }
+    let mut out: Vec<ToolHealth> = acc
+        .into_iter()
+        .filter(|(_, (_, e, v))| *e > 0 || *v > 0)
+        .map(|(tool, (calls, errors, vetoes))| ToolHealth {
+            error_rate: ratio(errors, calls),
+            tool,
+            calls,
+            errors,
+            vetoes,
+        })
+        .collect();
+    out.sort_by_key(|t| std::cmp::Reverse(t.errors + t.vetoes));
+    out.truncate(15);
+    Ok(out)
+}

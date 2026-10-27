@@ -79,6 +79,21 @@ pub fn get_usage(state: State<AppState>, days: i64) -> CmdResult<trends::Usage> 
 }
 
 #[tauri::command(async)]
+pub fn get_reality(state: State<AppState>, days: i64) -> CmdResult<trends::Reality> {
+    with_db(&state, |c| trends::reality(c, days))
+}
+
+#[tauri::command(async)]
+pub fn get_fit(state: State<AppState>, days: i64) -> CmdResult<Vec<trends::FitCell>> {
+    with_db(&state, |c| trends::fit(c, days))
+}
+
+#[tauri::command(async)]
+pub fn get_tool_health(state: State<AppState>, days: i64) -> CmdResult<Vec<trends::ToolHealth>> {
+    with_db(&state, |c| trends::tool_health(c, days))
+}
+
+#[tauri::command(async)]
 pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patterns> {
     with_db(&state, |c| trends::patterns(c, days))
 }

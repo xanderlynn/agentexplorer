@@ -357,6 +357,8 @@ pub struct VersionStats {
     pub avg_interruptions: Option<f64>,
     pub tool_error_rate: Option<f64>,
     pub commits_per_session: Option<f64>,
+    /// Of sessions with commits, the share later reverted or fixed.
+    pub rework_rate: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -392,7 +394,9 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                 AVG(s.interruptions),
                 CAST(SUM(s.tool_errors) AS REAL) / NULLIF(SUM(s.tool_calls), 0),
                 CASE WHEN COUNT(s.id) = 0 THEN NULL
-                     ELSE AVG((SELECT COUNT(*) FROM session_commits c WHERE c.session_id = s.id)) END
+                     ELSE AVG((SELECT COUNT(*) FROM session_commits c WHERE c.session_id = s.id)) END,
+                AVG(CASE WHEN EXISTS (SELECT 1 FROM session_commits c WHERE c.session_id = s.id)
+                         THEN (SELECT MAX(reworked) FROM session_commits c WHERE c.session_id = s.id) END)
          FROM playbook_versions v
          LEFT JOIN session_playbooks sp ON sp.version_id = v.id
          LEFT JOIN sessions s ON s.id = sp.session_id
@@ -417,6 +421,7 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                     avg_interruptions: r.get(10)?,
                     tool_error_rate: r.get(11)?,
                     commits_per_session: r.get(12)?,
+                    rework_rate: r.get(13)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;

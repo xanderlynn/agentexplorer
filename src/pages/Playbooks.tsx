@@ -92,10 +92,11 @@ function PlaybookCard({ p }: { p: Playbook }) {
                 <th className="pb-2 text-right font-medium">Interrupts</th>
                 <th className="pb-2 text-right font-medium">Tool errors</th>
                 <th className="pb-2 text-right font-medium">Commits/session</th>
+                <th className="pb-2 text-right font-medium">Reworked</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {p.versions.map((v) => <VersionRow key={v.id} v={v} />)}
+              {p.versions.map((v, i) => <VersionRow key={v.id} v={v} prev={p.versions[i + 1]} />)}
             </tbody>
           </table>
         </div>
@@ -104,7 +105,15 @@ function PlaybookCard({ p }: { p: Playbook }) {
   );
 }
 
-function VersionRow({ v }: { v: PlaybookVersion }) {
+/** Change in success rate from the previous version, when both have enough ratings. */
+function SuccessDelta({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion }) {
+  if (!prev || v.successRate == null || prev.successRate == null || v.rated < 5 || prev.rated < 5) return null;
+  const d = v.successRate - prev.successRate;
+  if (Math.abs(d) < 0.05) return <span className="ml-1 text-xs text-zinc-500">≈</span>;
+  return <span className={`ml-1 text-xs ${d > 0 ? "text-emerald-400" : "text-rose-400"}`}>{d > 0 ? "▲" : "▼"}{Math.round(Math.abs(d) * 100)}</span>;
+}
+
+function VersionRow({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion }) {
   const [show, setShow] = useState(false);
   const n = (x: number | null, d = 1) => (x == null ? "—" : x.toFixed(d));
   return (
@@ -114,15 +123,19 @@ function VersionRow({ v }: { v: PlaybookVersion }) {
           {date(v.firstSeen)} {v.gitSha && <span className="font-mono text-xs text-zinc-500">{v.gitSha.slice(0, 7)}</span>}
         </td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{v.sessions}</td>
-        <td className="py-1.5 text-right tabular-nums text-zinc-300">{v.rated ? `${pct(v.successRate)} (${v.rated})` : "—"}</td>
+        <td className={`py-1.5 text-right tabular-nums ${v.rated && v.rated < 5 ? "text-zinc-500" : "text-zinc-300"}`}>
+          {v.rated ? `${pct(v.successRate)} (${v.rated})` : "—"}
+          <SuccessDelta v={v} prev={prev} />
+        </td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.avgTurns)}</td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.avgInterruptions)}</td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{pct(v.toolErrorRate, 1)}</td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.commitsPerSession)}</td>
+        <td className="py-1.5 text-right tabular-nums text-zinc-300">{pct(v.reworkRate)}</td>
       </tr>
       {show && (
         <tr>
-          <td colSpan={7} className="pb-3">
+          <td colSpan={8} className="pb-3">
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs text-zinc-300">{v.content}</pre>
           </td>
         </tr>

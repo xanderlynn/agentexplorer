@@ -47,11 +47,18 @@ pub struct Commit {
     pub deletions: i64,
     pub files: i64,
     pub ai_trailer: bool,
+    /// Paths the commit touched.
+    pub paths: Vec<String>,
+    /// The sha this commit reverts, from git's "This reverts commit …".
+    pub reverts: Option<String>,
 }
 
 const RECORD: char = '\u{1e}';
 const FIELD: char = '\u{1f}';
 const END: char = '\u{1d}';
+
+/// A later commit counts as rework of an earlier one within this window.
+pub const REWORK_WINDOW_MS: i64 = 7 * 24 * 3_600_000;
 
 fn read_commits(repo: &str, since_ms: i64) -> Result<Vec<Commit>> {
     let since = format!("--since=@{}", since_ms / 1000);
@@ -63,7 +70,7 @@ fn read_commits(repo: &str, since_ms: i64) -> Result<Vec<Commit>> {
             "--no-merges",
             &since,
             "--format=%x1e%H%x1f%ct%x1f%ae%x1f%s%x1f%b%x1d",
-            "--shortstat",
+            "--numstat",
         ],
     )?;
     Ok(parse_log(&out))
@@ -80,7 +87,27 @@ fn parse_log(out: &str) -> Vec<Commit> {
             let author_email = f.next()?.trim().to_lowercase();
             let subject = f.next()?.trim().to_string();
             let body = f.next().unwrap_or("").to_lowercase();
-            let (files, insertions, deletions) = parse_shortstat(stats);
+            // --numstat: "<added>\t<deleted>\t<path>"; binary files show "-".
+            let (mut insertions, mut deletions) = (0, 0);
+            let mut paths = vec![];
+            for line in stats.lines() {
+                let mut cols = line.splitn(3, '\t');
+                let (Some(a), Some(d), Some(p)) = (cols.next(), cols.next(), cols.next()) else {
+                    continue;
+                };
+                insertions += a.trim().parse::<i64>().unwrap_or(0);
+                deletions += d.trim().parse::<i64>().unwrap_or(0);
+                paths.push(p.trim().to_string());
+            }
+            let reverts = body
+                .split("this reverts commit ")
+                .nth(1)
+                .map(|rest| {
+                    rest.chars()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .collect::<String>()
+                })
+                .filter(|s| s.len() >= 7);
             Some(Commit {
                 sha,
                 committed_at,
@@ -88,8 +115,10 @@ fn parse_log(out: &str) -> Vec<Commit> {
                 subject,
                 insertions,
                 deletions,
-                files,
+                files: paths.len() as i64,
                 ai_trailer: is_ai_commit(&body),
+                paths,
+                reverts,
             })
         })
         .collect()
@@ -105,25 +134,60 @@ fn is_ai_commit(body_lower: &str) -> bool {
     .any(|m| body_lower.contains(m))
 }
 
-/// " 3 files changed, 10 insertions(+), 2 deletions(-)"
-fn parse_shortstat(s: &str) -> (i64, i64, i64) {
-    let (mut files, mut ins, mut del) = (0, 0, 0);
-    for part in s.split(',') {
-        let part = part.trim();
-        let n = part
-            .split_whitespace()
-            .next()
-            .and_then(|x| x.parse::<i64>().ok())
-            .unwrap_or(0);
-        if part.contains("file") {
-            files = n;
-        } else if part.contains("insertion") {
-            ins = n;
-        } else if part.contains("deletion") {
-            del = n;
+/// Subjects that mark a follow-up correction rather than new work.
+fn is_fix_subject(subject: &str) -> bool {
+    let words: Vec<String> = subject
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    words.iter().any(|w| {
+        matches!(
+            w.as_str(),
+            "fix"
+                | "fixes"
+                | "fixed"
+                | "hotfix"
+                | "revert"
+                | "oops"
+                | "typo"
+                | "regression"
+                | "broken"
+                | "followup"
+        )
+    }) || subject.to_lowercase().contains("follow-up")
+}
+
+/// For each commit, the later commit that reworked it: a revert of it, or a
+/// fix-like commit touching one of its files within `REWORK_WINDOW_MS`, made
+/// outside the session that produced it (iterating inside a session is not
+/// rework). `owner` maps a sha to its session.
+pub fn find_rework<'a>(
+    commits: &'a [Commit],
+    owner: &dyn Fn(&str) -> Option<&'a str>,
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for c in commits {
+        let Some(c_session) = owner(&c.sha) else {
+            continue;
+        };
+        let hit = commits.iter().find(|l| {
+            l.sha != c.sha
+                && l.committed_at > c.committed_at
+                && l.committed_at <= c.committed_at + REWORK_WINDOW_MS
+                && owner(&l.sha) != Some(c_session)
+                && (l
+                    .reverts
+                    .as_deref()
+                    .is_some_and(|r| c.sha.starts_with(r) || r.starts_with(&c.sha))
+                    || (is_fix_subject(&l.subject) && l.paths.iter().any(|p| c.paths.contains(p))))
+        });
+        if let Some(l) = hit {
+            out.insert(c.sha.clone(), l.sha.clone());
         }
     }
-    (files, ins, del)
+    out
 }
 
 /// The repository's shared git directory. Worktrees of one repository have
@@ -171,6 +235,16 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
         .map(|s| s.trim().to_lowercase())
         .unwrap_or_default();
 
+    // Decide ownership first so rework can look across all commits.
+    let owners: HashMap<String, String> = commits
+        .iter()
+        .filter(|c| email.is_empty() || c.author_email == email)
+        .filter_map(|c| {
+            owning_session(&sessions, c.committed_at).map(|o| (c.sha.clone(), o.to_string()))
+        })
+        .collect();
+    let rework = find_rework(&commits, &|sha| owners.get(sha).map(String::as_str));
+
     let tx = conn.unchecked_transaction()?;
     for root in roots {
         tx.execute("DELETE FROM session_commits WHERE repo_root = ?1", [root])?;
@@ -179,14 +253,12 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
     {
         let mut insert = tx.prepare(
             "INSERT OR IGNORE INTO session_commits
-             (session_id, repo_root, sha, committed_at, subject, insertions, deletions, files, ai_trailer)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (session_id, repo_root, sha, committed_at, subject, insertions, deletions, files, ai_trailer,
+              reworked, rework_sha)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
         for c in &commits {
-            if !email.is_empty() && c.author_email != email {
-                continue;
-            }
-            if let Some(owner) = owning_session(&sessions, c.committed_at) {
+            if let Some(owner) = owners.get(&c.sha).map(String::as_str) {
                 insert.execute(params![
                     owner,
                     root_of[owner],
@@ -196,7 +268,9 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
                     c.insertions,
                     c.deletions,
                     c.files,
-                    c.ai_trailer
+                    c.ai_trailer,
+                    rework.contains_key(&c.sha),
+                    rework.get(&c.sha)
                 ])?;
                 linked += 1;
             }
@@ -222,8 +296,8 @@ mod tests {
     #[test]
     fn parses_git_log_records() {
         let out = format!(
-            "{RECORD}abc{FIELD}1700000000{FIELD}Me@X.com{FIELD}Add login{FIELD}body\n\nCo-Authored-By: Claude Opus <x>\n{END}\n\n 2 files changed, 10 insertions(+), 1 deletion(-)\n\
-             {RECORD}def{FIELD}1700000100{FIELD}me@x.com{FIELD}Docs{FIELD}{END}\n\n 1 file changed, 3 insertions(+)\n"
+            "{RECORD}abc{FIELD}1700000000{FIELD}Me@X.com{FIELD}Add login{FIELD}body\n\nCo-Authored-By: Claude Opus <x>\n{END}\n\n7\t1\tsrc/a.rs\n3\t0\tsrc/b.rs\n-\t-\tlogo.png\n\
+             {RECORD}def{FIELD}1700000100{FIELD}me@x.com{FIELD}Revert \"Add login\"{FIELD}This reverts commit abc1234.{END}\n\n0\t7\tsrc/a.rs\n"
         );
         let commits = parse_log(&out);
         assert_eq!(commits.len(), 2);
@@ -236,11 +310,57 @@ mod tests {
                 commits[0].insertions,
                 commits[0].deletions
             ),
-            (2, 10, 1)
+            (3, 10, 1)
         );
         assert!(commits[0].ai_trailer);
-        assert!(!commits[1].ai_trailer);
-        assert_eq!(commits[1].insertions, 3);
+        assert_eq!(commits[0].paths, ["src/a.rs", "src/b.rs", "logo.png"]);
+        assert_eq!(commits[1].reverts.as_deref(), Some("abc1234"));
+    }
+
+    fn commit(sha: &str, t: i64, subject: &str, paths: &[&str]) -> Commit {
+        Commit {
+            sha: sha.into(),
+            committed_at: t,
+            author_email: "me@x.com".into(),
+            subject: subject.into(),
+            insertions: 1,
+            deletions: 0,
+            files: paths.len() as i64,
+            ai_trailer: false,
+            paths: paths.iter().map(|p| p.to_string()).collect(),
+            reverts: None,
+        }
+    }
+
+    #[test]
+    fn finds_rework_outside_the_session() {
+        let day = 86_400_000;
+        let commits = vec![
+            commit("a1", 0, "Add export", &["src/export.rs"]),
+            commit("a2", 1000, "Fix export header", &["src/export.rs"]),
+            commit(
+                "b1",
+                2 * day,
+                "Fix export for empty reports",
+                &["src/export.rs"],
+            ),
+            commit("c1", 3 * day, "Add docs", &["README.md"]),
+            commit("c2", 20 * day, "Fix docs typo", &["README.md"]),
+        ];
+        let owner = |sha: &str| -> Option<&str> {
+            match sha {
+                "a1" | "a2" => Some("s1"),
+                "b1" => Some("s2"),
+                "c1" => Some("s3"),
+                _ => None,
+            }
+        };
+        let rework = find_rework(&commits, &owner);
+        // a2 is iteration inside s1, but b1 (another session, 2 days later)
+        // fixes the same file.
+        assert_eq!(rework.get("a1").map(String::as_str), Some("b1"));
+        // c2 is outside the 7-day window.
+        assert!(!rework.contains_key("c1"));
     }
 
     #[test]

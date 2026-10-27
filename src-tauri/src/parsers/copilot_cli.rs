@@ -136,12 +136,22 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     }
                 }
                 let path = d.pointer("/arguments/path").and_then(Value::as_str);
+                if let Some(id) = d.get("toolCallId").and_then(Value::as_str) {
+                    s.tool_names.insert(id.to_string(), name.to_string());
+                }
                 s.note_tool(name, path);
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
                 if d.get("success").and_then(Value::as_bool) == Some(false) {
                     s.tool_errors += 1;
+                    let name = d
+                        .get("toolCallId")
+                        .and_then(Value::as_str)
+                        .and_then(|id| s.tool_names.get(id))
+                        .cloned()
+                        .unwrap_or_else(|| "tool".into());
+                    s.note_tool_error(&name);
                 }
             }
             "session.error" => s.tool_errors += 1,
@@ -154,9 +164,32 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             }
             "permission.requested" => {
                 s.permission_requests += 1;
+                if let (Some(id), Some(kind)) = (
+                    d.pointer("/permissionRequest/toolCallId")
+                        .and_then(Value::as_str),
+                    d.pointer("/permissionRequest/kind").and_then(Value::as_str),
+                ) {
+                    s.tool_names
+                        .entry(id.to_string())
+                        .or_insert_with(|| kind.to_string());
+                }
                 s.last_event = Some(LastEvent::NeedsPermission);
             }
-            "permission.completed" => s.last_event = Some(LastEvent::Working),
+            "permission.completed" => {
+                s.last_event = Some(LastEvent::Working);
+                if d.pointer("/result/kind")
+                    .and_then(Value::as_str)
+                    .is_some_and(|k| k.starts_with("denied"))
+                {
+                    let name = d
+                        .get("toolCallId")
+                        .and_then(Value::as_str)
+                        .and_then(|id| s.tool_names.get(id))
+                        .cloned()
+                        .unwrap_or_else(|| "permission".into());
+                    s.note_veto(&name);
+                }
+            }
             "session.shutdown" => {
                 // Each process run reports its own totals, so a resumed session
                 // has several shutdowns to add up.

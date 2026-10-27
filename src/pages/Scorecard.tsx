@@ -5,6 +5,7 @@ import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, 
 import { compact, duration, money, pct, projectName } from "../format";
 import type { Drill } from "../App";
 import { GroupTable, Legend, tooltipStyle } from "./Overview";
+import { FitMatrix, RealityCheck } from "../components/Reality";
 import { chart } from "../theme";
 
 export default function Scorecard({ days, setDays, drill }: { days: number; setDays: (d: number) => void; drill: (d: Drill) => void }) {
@@ -72,6 +73,8 @@ export default function Scorecard({ days, setDays, drill }: { days: number; setD
           )}
         </Card>
       </div>
+      <RealityCheck days={days} drill={drill} />
+      <FitMatrix days={days} drill={drill} />
       <p className="mt-4 text-xs text-zinc-500">
         A commit is linked to a session when you authored it in the same repository while the session was active or within 30 minutes after.
       </p>
