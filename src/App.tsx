@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
-import { api, type LiveSession, type LiveState, type SessionFilter } from "./api";
+import { api, isWaiting, useLive, type LiveSession, type LiveState, type SessionFilter } from "./api";
 import { cx } from "./components/ui";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Preflight } from "./components/Preflight";
@@ -55,7 +55,6 @@ const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Pag
 
 const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p));
 
-const NEEDS_YOU: LiveState[] = ["waiting", "needs_you"];
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -113,7 +112,7 @@ export default function App() {
 
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   // Keep polling while the window is hidden: that is when a notification matters.
-  const live = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, refetchIntervalInBackground: true, staleTime: 0 });
+  const live = useLive();
   useWaitingNotifications(live.data?.sessions, settings.data?.values["notify.waiting"] !== "false");
 
   const waiting = live.data?.waitingOnYou ?? 0;
@@ -234,7 +233,7 @@ function useWaitingNotifications(sessions: { id: string; state: LiveState; title
     previous.current = now;
     // The first poll establishes a baseline; don't notify for old sessions.
     if (!before || !enabled) return;
-    const fresh = sessions.filter((s) => NEEDS_YOU.includes(s.state) && !NEEDS_YOU.includes(before.get(s.id) ?? "idle"));
+    const fresh = sessions.filter((s) => isWaiting(s.state) && !isWaiting(before.get(s.id) ?? "idle"));
     if (fresh.length === 0) return;
     (async () => {
       let ok = await isPermissionGranted();
@@ -267,7 +266,7 @@ function ReviewPrompt({ sessions, onOpen }: { sessions: LiveSession[] | undefine
     if (!before) return;
     const finished = sessions.filter((s) => {
       const was = before.get(s.id);
-      const active = was === "working" || was === "quiet" || was === "waiting" || was === "needs_you";
+      const active = was === "working" || was === "quiet" || (was != null && isWaiting(was));
       return active && (s.state === "ended" || s.state === "idle") && !s.outcome;
     });
     if (!finished.length) return;

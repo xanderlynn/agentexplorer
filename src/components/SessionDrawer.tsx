@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
-import { api, currentVersion, type Mode, type Outcome, type VsManual } from "../api";
+import { api, type Mode, type Outcome, type VsManual } from "../api";
 import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money, projectName } from "../format";
-import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
+import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, SourceBadge } from "./ui";
 
 export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -282,8 +282,8 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                   >
                     <option value="">Mark a prompt template as used…</option>
                     {templates
-                      .map((t) => ({ t, v: currentVersion(t)! }))
-                      .filter(({ v }) => !linkedVersions.has(v.id))
+                      .map((t) => ({ t, v: t.versions[0] }))
+                      .filter(({ v }) => v && !linkedVersions.has(v.id))
                       .map(({ t, v }) => (
                         <option key={t.id} value={v.id}>{t.name}</option>
                       ))}
@@ -357,12 +357,3 @@ function ResumeCommand({ command }: { command: string }) {
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-      <div className="text-xs uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">{value}</div>
-      {hint && <div className="text-xs text-zinc-500">{hint}</div>}
-    </div>
-  );
-}

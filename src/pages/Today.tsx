@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
-import { api } from "../api";
+import { api, isWaiting, useLive } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { Swimlanes } from "../components/Swimlanes";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
-import { InsightItem } from "./Overview";
+import { InsightItem } from "../components/InsightItem";
 
 /**
  * The landing page: what needs you now, yesterday's sessions to rate in a
@@ -25,7 +25,7 @@ export default function Today({
   drill: (d: Drill) => void;
   plan: () => void;
 }) {
-  const live = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, staleTime: 0 });
+  const live = useLive();
   const toRate = useQuery({ queryKey: ["sessions", { days: 3, outcome: "unrated" }], queryFn: () => api.sessions({ days: 3, outcome: "unrated" }) });
   const exps = useQuery({ queryKey: ["experiments"], queryFn: api.experiments });
   const goals = useQuery({ queryKey: ["goals"], queryFn: api.goals });
@@ -37,7 +37,7 @@ export default function Today({
   const lanes = useQuery({ queryKey: ["timelines", since], queryFn: () => api.timelines(since), refetchInterval: 30_000 });
   const unusual = useQuery({ queryKey: ["anomalies", 14], queryFn: () => api.anomalies(14) });
 
-  const waiting = live.data?.sessions.filter((s) => s.state === "waiting" || s.state === "needs_you") ?? [];
+  const waiting = live.data?.sessions.filter((s) => isWaiting(s.state)) ?? [];
   const active = exps.data?.filter((e) => e.status === "active") ?? [];
   const open = intents.data?.filter((i) => i.closedAt == null) ?? [];
   const now = new Date();

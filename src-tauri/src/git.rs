@@ -8,6 +8,21 @@ use rusqlite::{Connection, params};
 
 use crate::util::quiet_command;
 
+/// One `session_commits` row, in column order.
+type CommitLink = (
+    String,
+    String,
+    String,
+    i64,
+    String,
+    i64,
+    i64,
+    i64,
+    bool,
+    bool,
+    Option<String>,
+);
+
 /// Commits this long after a session's last event still count toward it.
 pub const COMMIT_WINDOW_MS: i64 = 30 * 60 * 1000;
 
@@ -286,11 +301,65 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
         .collect();
     let rework = find_rework(&commits, &|sha| owners.get(sha).map(String::as_str));
 
+    let mut links: Vec<CommitLink> = commits
+        .iter()
+        .filter_map(|c| {
+            let owner = owners.get(&c.sha)?;
+            Some((
+                owner.clone(),
+                root_of[owner.as_str()].to_string(),
+                c.sha.clone(),
+                c.committed_at,
+                c.subject.clone(),
+                c.insertions,
+                c.deletions,
+                c.files,
+                c.ai_trailer,
+                rework.contains_key(&c.sha),
+                rework.get(&c.sha).cloned(),
+            ))
+        })
+        .collect();
+    links.sort();
+    let linked = links.len();
+
+    // Rewriting identical rows would make every idle scan look like a change.
     let tx = conn.unchecked_transaction()?;
+    let mut existing: Vec<CommitLink> = vec![];
+    {
+        let mut stmt = tx.prepare(
+            "SELECT session_id, repo_root, sha, committed_at, subject, insertions, deletions, files,
+                    ai_trailer, reworked, rework_sha
+             FROM session_commits WHERE repo_root = ?1",
+        )?;
+        for root in roots {
+            existing.extend(
+                stmt.query_map([root], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                        r.get(9)?,
+                        r.get(10)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
+        }
+    }
+    existing.sort();
+    if existing == links {
+        return Ok(linked);
+    }
     for root in roots {
         tx.execute("DELETE FROM session_commits WHERE repo_root = ?1", [root])?;
     }
-    let mut linked = 0;
     {
         let mut insert = tx.prepare(
             "INSERT OR IGNORE INTO session_commits
@@ -298,23 +367,10 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
               reworked, rework_sha)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
-        for c in &commits {
-            if let Some(owner) = owners.get(&c.sha).map(String::as_str) {
-                insert.execute(params![
-                    owner,
-                    root_of[owner],
-                    c.sha,
-                    c.committed_at,
-                    c.subject,
-                    c.insertions,
-                    c.deletions,
-                    c.files,
-                    c.ai_trailer,
-                    rework.contains_key(&c.sha),
-                    rework.get(&c.sha)
-                ])?;
-                linked += 1;
-            }
+        for l in &links {
+            insert.execute(params![
+                l.0, l.1, l.2, l.3, l.4, l.5, l.6, l.7, l.8, l.9, l.10
+            ])?;
         }
     }
     tx.commit()?;

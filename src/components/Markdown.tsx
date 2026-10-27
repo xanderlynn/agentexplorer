@@ -25,7 +25,7 @@ function splitRow(line: string): string[] {
     .map((c) => c.trim());
 }
 
-export function parseBlocks(md: string): Block[] {
+function parseBlocks(md: string): Block[] {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
   let i = 0;

@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Source } from "../api";
-import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
+import { Card, Empty, ErrorNote, GroupTable, Legend, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
 import { compact, duration, money, pct, projectName } from "../format";
 import type { Drill } from "../App";
-import { GroupTable, Legend, tooltipStyle } from "./Overview";
 import { FitMatrix, RealityCheck } from "../components/Reality";
 import { chart } from "../theme";
 
@@ -51,7 +50,7 @@ export default function Scorecard({ days, setDays, drill }: { days: number; setD
               <CartesianGrid stroke={chart.grid} vertical={false} />
               <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} />
               <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
-              <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} />
+              <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} />
               <Bar dataKey="shipped" name="Shipped" stackId="w" fill={chart.accent} />
               <Bar dataKey="committedNotShipped" name="Committed, not shipped" stackId="w" fill="var(--color-sky-500)" />
               <Bar dataKey="rest" name="Other sessions" stackId="w" fill={chart.muted} radius={[3, 3, 0, 0]} />

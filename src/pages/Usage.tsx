@@ -3,10 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Source } from "../api";
 import type { Drill } from "../App";
-import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
-import { SOURCE_COLOR, SOURCE_LABEL, compact, money, pct } from "../format";
+import { Card, Empty, ErrorNote, Legend, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
+import { SOURCE_COLOR, SOURCE_LABEL, compact, money, pct, sourceLabel } from "../format";
 import { chart } from "../theme";
-import { Legend } from "./Overview";
 
 const SOURCES = Object.keys(SOURCE_LABEL) as Source[];
 
@@ -108,7 +107,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                 <Tooltip
                   {...chart.tooltip}
                   cursor={{ fill: chart.grid }}
-                  formatter={(v, name) => [unit === "cost" ? money(Number(v)) : compact(Number(v)), SOURCE_LABEL[name as Source] ?? name]}
+                  formatter={(v, name) => [unit === "cost" ? money(Number(v)) : compact(Number(v)), sourceLabel(String(name))]}
                 />
                 {SOURCES.map((s) => (
                   <Bar key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} className="cursor-pointer" />

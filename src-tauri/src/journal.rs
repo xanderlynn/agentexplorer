@@ -63,7 +63,6 @@ pub struct Intent {
     pub session_id: Option<String>,
     pub session_title: Option<String>,
     pub session_active_minutes: Option<f64>,
-    pub session_wall_minutes: Option<f64>,
     pub outcome: Option<String>,
     pub actual_minutes: Option<i64>,
     pub reflection: Option<String>,
@@ -151,7 +150,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Intent>> {
     let mut stmt = conn.prepare(
         "SELECT i.id, i.created_at, i.goal, i.task_type, i.project_path, i.tool, i.expected_minutes,
                 i.confidence, i.session_id, s.title, s.active_ms / 60000.0,
-                (s.ended_at - s.started_at) / 60000.0, i.outcome, i.actual_minutes, i.reflection, i.closed_at
+                i.outcome, i.actual_minutes, i.reflection, i.closed_at
          FROM intents i LEFT JOIN sessions s ON s.id = i.session_id
          ORDER BY i.closed_at IS NOT NULL, i.created_at DESC
          LIMIT 500",
@@ -170,11 +169,10 @@ pub fn list(conn: &Connection) -> Result<Vec<Intent>> {
                 session_id: r.get(8)?,
                 session_title: r.get(9)?,
                 session_active_minutes: r.get(10)?,
-                session_wall_minutes: r.get(11)?,
-                outcome: r.get(12)?,
-                actual_minutes: r.get(13)?,
-                reflection: r.get(14)?,
-                closed_at: r.get(15)?,
+                outcome: r.get(11)?,
+                actual_minutes: r.get(12)?,
+                reflection: r.get(13)?,
+                closed_at: r.get(14)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -235,8 +233,6 @@ pub fn auto_link(conn: &Connection) -> Result<()> {
 pub struct CalibrationRow {
     pub key: String,
     pub n: i64,
-    pub avg_expected: f64,
-    pub avg_actual: Option<f64>,
     /// Actual ÷ expected; above 1 means you underestimate.
     pub time_ratio: Option<f64>,
     pub success_rate: f64,
@@ -295,16 +291,12 @@ pub fn calibration(conn: &Connection, since_ms: i64) -> Result<Calibration> {
             .iter()
             .filter_map(|c| c.actual.map(|a| (c.expected as f64, a)))
             .collect();
-        let avg_actual = (!timed.is_empty())
-            .then(|| timed.iter().map(|t| t.1).sum::<f64>() / timed.len() as f64);
         let expected_timed: f64 = timed.iter().map(|t| t.0).sum();
         let time_ratio =
             (expected_timed > 0.0).then(|| timed.iter().map(|t| t.1).sum::<f64>() / expected_timed);
         CalibrationRow {
             key,
             n: rows.len() as i64,
-            avg_expected: rows.iter().map(|c| c.expected as f64).sum::<f64>() / n,
-            avg_actual,
             time_ratio,
             success_rate: rows.iter().map(|c| c.score).sum::<f64>() / n,
             avg_confidence: rows.iter().map(|c| c.confidence as f64).sum::<f64>() / n,

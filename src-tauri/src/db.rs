@@ -229,6 +229,12 @@ ALTER TABLE sessions ADD COLUMN peak_context INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN last_context INTEGER NOT NULL DEFAULT 0;
 DELETE FROM source_files;
 "#,
+    // Live polling and timelines filter on ended_at; Execution and the
+    // session list look up intents by session.
+    r#"
+CREATE INDEX IF NOT EXISTS sessions_ended ON sessions(ended_at);
+CREATE INDEX IF NOT EXISTS intents_session ON intents(session_id);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

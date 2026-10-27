@@ -20,7 +20,8 @@ impl Unit {
         self.paths[0].to_string_lossy().into_owned()
     }
 
-    /// Changes whenever any file in the unit grows or is rewritten.
+    /// Changes whenever any file in the unit grows or is rewritten, or the
+    /// parsers start recording new signals.
     pub fn fingerprint(&self) -> String {
         let mut size = 0u64;
         let mut mtime = 0i64;
@@ -30,7 +31,8 @@ impl Unit {
             }
             mtime = mtime.max(file_mtime_ms(p).unwrap_or(0));
         }
-        format!("{size}:{mtime}:{}", self.paths.len())
+        let version = crate::ingest::SIGNALS_VERSION;
+        format!("v{version}:{size}:{mtime}:{}", self.paths.len())
     }
 }
 

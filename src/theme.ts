@@ -9,7 +9,7 @@
 const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as const;
 type Scale = readonly [string, string, string, string, string, string, string, string, string, string, string];
 
-export interface ThemeDef {
+interface ThemeDef {
   id: string;
   label: string;
   /** Neutral scale, lightest (50) to darkest (950), as written for a dark UI. */
@@ -69,7 +69,7 @@ export interface Appearance {
   corners: string;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { theme: "midnight", accent: "emerald", density: "comfortable", corners: "rounded" };
+const DEFAULT_APPEARANCE: Appearance = { theme: "midnight", accent: "emerald", density: "comfortable", corners: "rounded" };
 
 /** Ready-made combinations offered as one-click skins. */
 export const PRESETS: { label: string; appearance: Appearance }[] = [

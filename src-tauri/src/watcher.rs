@@ -99,7 +99,8 @@ fn run(app: &AppHandle, db_path: &Path, data_dir: &Path) -> anyhow::Result<()> {
             // New tools may have been installed since startup.
             refresh_watches(&mut watcher, &conn);
             match ingestor.ingest_all(&mut conn, false) {
-                Ok(r) => emit(app, &r),
+                Ok(r) if r.changed => emit(app, &r),
+                Ok(_) => {}
                 Err(e) => eprintln!("full scan: {e:#}"),
             }
         }

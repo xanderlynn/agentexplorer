@@ -18,7 +18,6 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-zinc-950);
   color: var(--color-zinc-200);
   /* rem, so the density setting scales body text too. */
   font-size: 0.875rem;

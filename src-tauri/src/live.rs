@@ -23,7 +23,6 @@ pub struct LiveSession {
     pub git_branch: Option<String>,
     /// working | quiet | needs_you | waiting | idle | ended
     pub state: String,
-    pub last_event_at: i64,
     pub age_ms: i64,
     pub user_turns: i64,
     pub active_ms: i64,
@@ -89,7 +88,6 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 project_path: r.get(3)?,
                 git_branch: r.get(4)?,
                 state: state_for(last_event.as_deref(), age).to_string(),
-                last_event_at: ended,
                 age_ms: age,
                 user_turns: r.get(7)?,
                 active_ms: r.get(8)?,
@@ -102,12 +100,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
-    let midnight = chrono::Local::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .and_then(|d| d.and_local_timezone(chrono::Local).earliest())
-        .map(|d| d.timestamp_millis())
-        .unwrap_or(now - 86_400_000);
+    let midnight = crate::stats::local_midnight_ms(chrono::Local::now().date_naive());
     let wait_ms_today: i64 = conn.query_row(
         "SELECT COALESCE(SUM(wait_ms_total), 0) FROM sessions WHERE started_at >= ?1",
         [midnight],

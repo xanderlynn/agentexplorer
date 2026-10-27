@@ -24,6 +24,8 @@ pub struct IngestReport {
     pub failed: usize,
     pub errors: Vec<String>,
     pub duration_ms: u64,
+    /// Whether any row changed, so the UI can skip refetching after an idle scan.
+    pub changed: bool,
 }
 
 pub struct Ingestor {
@@ -50,6 +52,7 @@ impl Ingestor {
     }
 
     pub fn ingest_all(&self, conn: &mut Connection, force: bool) -> Result<IngestReport> {
+        let writes_before = conn.total_changes();
         let units: Vec<Unit> = self
             .enabled_roots(conn)
             .iter()
@@ -91,6 +94,7 @@ impl Ingestor {
             }
         }
         report.errors.truncate(50);
+        report.changed = conn.total_changes() > writes_before;
         Ok(report)
     }
 
@@ -231,9 +235,9 @@ impl Ingestor {
     }
 }
 
-/// Bump when the parsers start recording new per-session signals; rows with
-/// a lower version are re-parsed and left out of signal-based statistics
-/// until they are.
+/// Bump when the parsers start recording new per-session signals. It is part
+/// of every unit's fingerprint, so a bump re-parses every transcript; rows
+/// with a lower version stay out of signal-based statistics until they are.
 pub const SIGNALS_VERSION: i64 = 5;
 
 pub fn source_setting(source: Source) -> String {
@@ -578,6 +582,7 @@ mod tests {
         // A second pass must find nothing new.
         let again = ing.ingest_all(&mut conn, false).unwrap();
         assert_eq!(again.updated, 0, "unchanged files were re-parsed");
+        assert!(!again.changed, "an idle scan wrote to the database");
         println!("second pass: {} ms", again.duration_ms);
     }
 

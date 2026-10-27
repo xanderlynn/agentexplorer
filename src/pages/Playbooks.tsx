@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { api, currentVersion, type Playbook, type PlaybookVersion } from "../api";
-import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, inputClass } from "../components/ui";
-import { date, pct, projectName } from "../format";
+import { api, type Playbook, type PlaybookVersion } from "../api";
+import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, Rate, inputClass } from "../components/ui";
+import { date, fixed, pct, projectName } from "../format";
+import { MIN_N } from "../stats";
 
 const KIND_LABEL: Record<Playbook["kind"], string> = {
   claude_md: "CLAUDE.md",
@@ -107,7 +108,7 @@ function PlaybookCard({ p }: { p: Playbook }) {
 
 /** Change in success rate from the previous version, when both have enough ratings. */
 function SuccessDelta({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion }) {
-  if (!prev || v.successRate == null || prev.successRate == null || v.rated < 5 || prev.rated < 5) return null;
+  if (!prev || v.successRate == null || prev.successRate == null || v.rated < MIN_N || prev.rated < MIN_N) return null;
   const d = v.successRate - prev.successRate;
   if (Math.abs(d) < 0.05) return <span className="ml-1 text-xs text-zinc-500">≈</span>;
   return <span className={`ml-1 text-xs ${d > 0 ? "text-emerald-400" : "text-rose-400"}`}>{d > 0 ? "▲" : "▼"}{Math.round(Math.abs(d) * 100)}</span>;
@@ -115,7 +116,6 @@ function SuccessDelta({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion 
 
 function VersionRow({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion }) {
   const [show, setShow] = useState(false);
-  const n = (x: number | null, d = 1) => (x == null ? "—" : x.toFixed(d));
   return (
     <>
       <tr className="cursor-pointer hover:bg-zinc-800/30" onClick={() => setShow(!show)}>
@@ -123,14 +123,16 @@ function VersionRow({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion })
           {date(v.firstSeen)} {v.gitSha && <span className="font-mono text-xs text-zinc-500">{v.gitSha.slice(0, 7)}</span>}
         </td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{v.sessions}</td>
-        <td className={`py-1.5 text-right tabular-nums ${v.rated && v.rated < 5 ? "text-zinc-500" : "text-zinc-300"}`}>
-          {v.rated ? `${pct(v.successRate)} (${v.rated})` : "—"}
-          <SuccessDelta v={v} prev={prev} />
+        <td className="py-1.5 text-right tabular-nums text-zinc-300">
+          <span className="inline-flex items-center justify-end">
+            <Rate rate={v.successRate} n={v.rated} bar={false} />
+            <SuccessDelta v={v} prev={prev} />
+          </span>
         </td>
-        <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.avgTurns)}</td>
-        <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.avgInterruptions)}</td>
+        <td className="py-1.5 text-right tabular-nums text-zinc-300">{fixed(v.avgTurns)}</td>
+        <td className="py-1.5 text-right tabular-nums text-zinc-300">{fixed(v.avgInterruptions)}</td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{pct(v.toolErrorRate, 1)}</td>
-        <td className="py-1.5 text-right tabular-nums text-zinc-300">{n(v.commitsPerSession)}</td>
+        <td className="py-1.5 text-right tabular-nums text-zinc-300">{fixed(v.commitsPerSession)}</td>
         <td className="py-1.5 text-right tabular-nums text-zinc-300">{pct(v.reworkRate)}</td>
       </tr>
       {show && (
@@ -147,7 +149,7 @@ function VersionRow({ v, prev }: { v: PlaybookVersion; prev?: PlaybookVersion })
 function TemplateEditor({ existing, onDone }: { existing?: Playbook; onDone: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState(existing?.name ?? "");
-  const [content, setContent] = useState((existing && currentVersion(existing)?.content) ?? "");
+  const [content, setContent] = useState((existing && existing.versions[0]?.content) ?? "");
   const save = useMutation({
     mutationFn: () => (existing ? api.updatePromptTemplate(existing.id, name, content) : api.createPromptTemplate(name, content).then(() => undefined)),
     onSuccess: () => {

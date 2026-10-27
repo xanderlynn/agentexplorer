@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, RotateCcw, Trash2 } from "lucide-react";
-import { api, type CalibrationRow, type Intent, type Outcome, type Source } from "../api";
+import { api, type CalibrationRow, type Intent, type Outcome } from "../api";
 import { Preflight } from "../components/Preflight";
 import { Button, Card, Empty, ErrorNote, Loading, OutcomeBadge, OutcomePicker, PageHeader, RANGE_OPTIONS, Segmented, Stat, inputBase, inputClass } from "../components/ui";
-import { SOURCE_LABEL, dateTime, pct, projectName } from "../format";
+import { dateTime, pct, projectName, sourceLabel } from "../format";
 
 export default function Journal({ days, setDays, onOpen }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void }) {
   const intents = useQuery({ queryKey: ["intents"], queryFn: api.intents });
@@ -45,7 +45,7 @@ export default function Journal({ days, setDays, onOpen }: { days: number; setDa
             <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
               <CalTable title="By task type" rows={cal.data.byTaskType} />
               <CalTable title="By confidence" rows={cal.data.byConfidence} keyLabel={(k) => `${k}/5`} />
-              <CalTable title="By tool" rows={cal.data.byTool} keyLabel={(k) => SOURCE_LABEL[k as Source] ?? k} />
+              <CalTable title="By tool" rows={cal.data.byTool} keyLabel={(k) => sourceLabel(k)} />
             </div>
           </>
         )

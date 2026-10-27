@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Target, Trash2 } from "lucide-react";
 import { api, type Experiment, type GoalStatus, type MetricDef, type Source } from "../api";
 import type { Drill } from "../App";
-import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, cx, inputClass } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Field, Loading, Metric, PageHeader, cx, inputClass } from "../components/ui";
 import { SOURCE_LABEL, TASK_TYPES, date } from "../format";
 import { fmtMetric } from "../metrics";
 
@@ -117,15 +117,6 @@ function ExperimentCard({ e, drill }: { e: Experiment; drill: (d: Drill) => void
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: ReactNode; hint: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-      <div className="text-xs uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">{value}</div>
-      <div className="text-xs text-zinc-500">{hint}</div>
-    </div>
-  );
-}
 
 export function NewExperiment({
   metrics,

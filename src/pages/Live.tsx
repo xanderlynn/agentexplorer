@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type LiveSession, type LiveState } from "../api";
+import { api, isWaiting, useLive, type LiveSession, type LiveState } from "../api";
 import { Card, Empty, ErrorNote, Loading, PageHeader, SourceBadge, Stat, cx } from "../components/ui";
 import { MODE_COLOR, MODE_LABEL, SMART_ZONE_DEFAULT, ago, compact, duration, projectName } from "../format";
 
@@ -16,7 +16,7 @@ const ORDER: LiveState[] = ["needs_you", "waiting", "quiet", "working", "idle", 
 
 export default function Live({ onOpen }: { onOpen: (id: string) => void }) {
   // Shares the 5-second poll App.tsx runs for notifications.
-  const q = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, staleTime: 0 });
+  const q = useLive();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
   const header = <PageHeader title="Live" subtitle="Sessions active in the last 3 hours. The bottleneck is often the human; this shows when it's you." />;
@@ -73,13 +73,13 @@ function Row({ s, onOpen, zone }: { s: LiveSession; onOpen: (id: string) => void
               </span>
             )}
           </div>
-          {(s.state === "waiting" || s.state === "needs_you") && s.lastMessage && (
+          {isWaiting(s.state) && s.lastMessage && (
             <div className="mt-1.5 line-clamp-2 rounded-md border-l-2 border-amber-500/60 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-400">{s.lastMessage}</div>
           )}
         </div>
         <div className="shrink-0 text-right">
           <div className={cx("text-sm font-medium", st.text)}>{st.label}</div>
-          <div className="text-xs text-zinc-500">{s.state === "waiting" || s.state === "needs_you" ? `for ${duration(s.ageMs)}` : ago(s.ageMs)}</div>
+          <div className="text-xs text-zinc-500">{isWaiting(s.state) ? `for ${duration(s.ageMs)}` : ago(s.ageMs)}</div>
         </div>
       </button>
     </li>

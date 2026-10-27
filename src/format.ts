@@ -80,6 +80,11 @@ export function money(usd: number | null | undefined, estimate = false): string 
   return estimate ? `~${v}` : v;
 }
 
+/** A fixed-precision number, or a dash when missing. */
+export function fixed(x: number | null | undefined, digits = 1): string {
+  return x == null ? "—" : x.toFixed(digits);
+}
+
 export function pct(x: number | null | undefined, digits = 0): string {
   if (x == null || !Number.isFinite(x)) return "—";
   return `${(x * 100).toFixed(digits)}%`;

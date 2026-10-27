@@ -1,15 +1,12 @@
-import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, ChevronRight, Info } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, type GroupStat, type Insight, type Source } from "../api";
+import { api, type Source } from "../api";
 import type { Drill, Page } from "../App";
-import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge, Stat } from "../components/ui";
+import { Card, Empty, ErrorNote, GroupTable, Legend, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
+import { InsightItem } from "../components/InsightItem";
 import { chart } from "../theme";
-import { SOURCE_COLOR, SOURCE_LABEL, compact, delta, duration, hours, money, pct, projectName } from "../format";
+import { SOURCE_COLOR, compact, delta, duration, hours, money, pct, projectName, sourceLabel } from "../format";
 import { profile } from "../stats";
-
-export const tooltipStyle = chart.tooltip;
 
 function usualPct(series: (number | null)[]) {
   const p = profile(series);
@@ -180,7 +177,7 @@ export default function Overview({
                 <CartesianGrid stroke={chart.grid} vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
-                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} />
+                <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
                 <Bar dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
                 <Bar dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
               </BarChart>
@@ -201,7 +198,7 @@ export default function Overview({
                 <CartesianGrid stroke={chart.grid} vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis tick={{ fill: chart.axis, fontSize: 12 }} />
-                <Tooltip {...tooltipStyle} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
+                <Tooltip {...chart.tooltip} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
                 <Area type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
@@ -215,15 +212,15 @@ export default function Overview({
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={o.bySource} layout="vertical" margin={{ left: 10, right: 16 }}>
                 <XAxis type="number" hide />
-                <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => SOURCE_LABEL[k as Source] ?? k} />
-                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
+                <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => sourceLabel(k)} />
+                <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
                 <Bar dataKey="activeHours" radius={[0, 4, 4, 0]}>
                   {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? chart.muted} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <GroupTable rows={o.bySource} label={(k) => <SourceBadge source={k} />} onRow={(k) => drill({ label: SOURCE_LABEL[k as Source] ?? k, source: k as Source })} />
+          <GroupTable rows={o.bySource} label={(k) => <SourceBadge source={k} />} onRow={(k) => drill({ label: sourceLabel(k), source: k as Source })} />
         </Card>
         <Card title="By project">
           <GroupTable
@@ -234,77 +231,5 @@ export default function Overview({
         </Card>
       </div>
     </>
-  );
-}
-
-export function Legend({ items }: { items: [string, string][] }) {
-  return (
-    <span className="flex gap-3 text-xs text-zinc-400">
-      {items.map(([label, color]) => (
-        <span key={label} className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
-          {label}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-export function InsightItem({ insight, onOpen }: { insight: Insight; onOpen?: () => void }) {
-  const Icon = insight.kind === "warning" ? AlertTriangle : insight.kind === "positive" ? CheckCircle2 : Info;
-  const color = insight.kind === "warning" ? "text-amber-400" : insight.kind === "positive" ? "text-emerald-400" : "text-sky-400";
-  const label = insight.kind === "warning" ? "Warning" : insight.kind === "positive" ? "Going well" : "Note";
-  const body = (
-    <>
-      <Icon size={18} className={`mt-0.5 shrink-0 ${color}`} aria-label={label} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-zinc-100">{insight.title}</div>
-        <div className="mt-0.5 text-sm text-zinc-400">{insight.detail}</div>
-        <div className="mt-1 text-xs text-zinc-500">{insight.evidence}</div>
-      </div>
-      {onOpen && <ChevronRight size={16} className="mt-1 shrink-0 text-zinc-500" aria-hidden />}
-    </>
-  );
-  return (
-    <li>
-      {onOpen ? (
-        <button onClick={onOpen} className="flex w-full gap-3 rounded-lg p-2 text-left transition-colors hover:bg-zinc-800/40" title={`Open the ${insight.sessionIds.length} sessions behind this`}>
-          {body}
-        </button>
-      ) : (
-        <div className="flex gap-3 p-2">{body}</div>
-      )}
-    </li>
-  );
-}
-
-export function GroupTable({ rows, label, onRow }: { rows: GroupStat[]; label: (key: string) => ReactNode; onRow?: (key: string) => void }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs text-zinc-500">
-            <th className="pb-2 font-medium" />
-            <th className="pb-2 text-right font-medium">Sessions</th>
-            <th className="pb-2 text-right font-medium">Active</th>
-            <th className="pb-2 text-right font-medium">Commits</th>
-            <th className="w-40 pb-2 pl-4 font-medium">Success (rated)</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-800/60">
-          {rows.map((g) => (
-            <tr key={g.key} className={onRow ? "cursor-pointer hover:bg-zinc-800/30" : undefined} onClick={onRow ? () => onRow(g.key) : undefined}>
-              <td className="max-w-[14rem] py-1.5 pr-2">{label(g.key)}</td>
-              <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.sessions}</td>
-              <td className="py-1.5 text-right tabular-nums text-zinc-300">{hours(g.activeHours)}</td>
-              <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.commits}</td>
-              <td className="py-1.5 pl-4">
-                <Rate rate={g.successRate} n={g.rated} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }

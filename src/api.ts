@@ -1,6 +1,7 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
 // Field names mirror the Rust structs (serde camelCase).
 import { invoke } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
 
 export type Source = "claude_code" | "copilot_cli" | "copilot_vscode";
 export type Outcome = "shipped" | "partial" | "abandoned" | "redo";
@@ -74,7 +75,6 @@ export interface Friction {
 export interface SessionDetail {
   session: SessionRow;
   filePath: string;
-  entrypoint: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -86,7 +86,6 @@ export interface SessionDetail {
   toolErrorsBy: Record<string, number>;
   toolVetoes: Record<string, number>;
   /** [start, end, kind]: 1 = agent working, 0 = waiting on you. */
-  timeline: [number, number, number][];
   lastMessage: string | null;
   resumeCommand: string | null;
   prompts: { idx: number; ts: number | null; text: string }[];
@@ -204,6 +203,13 @@ export interface Scorecard {
 
 export type LiveState = "working" | "quiet" | "needs_you" | "waiting" | "idle" | "ended";
 
+/** The agent is stopped until you reply or approve something. */
+export const isWaiting = (state: LiveState) => state === "waiting" || state === "needs_you";
+
+/** Live sessions, polled every 5 s. Every caller shares the one poll. */
+export const useLive = () =>
+  useQuery({ queryKey: ["live"], queryFn: () => api.live(), refetchInterval: 5000, refetchIntervalInBackground: true, staleTime: 0 });
+
 export interface LiveSession {
   id: string;
   source: Source;
@@ -211,7 +217,6 @@ export interface LiveSession {
   projectPath: string | null;
   gitBranch: string | null;
   state: LiveState;
-  lastEventAt: number;
   ageMs: number;
   userTurns: number;
   activeMs: number;
@@ -241,7 +246,6 @@ export interface Intent {
   sessionId: string | null;
   sessionTitle: string | null;
   sessionActiveMinutes: number | null;
-  sessionWallMinutes: number | null;
   outcome: Outcome | null;
   actualMinutes: number | null;
   reflection: string | null;
@@ -251,8 +255,6 @@ export interface Intent {
 export interface CalibrationRow {
   key: string;
   n: number;
-  avgExpected: number;
-  avgActual: number | null;
   timeRatio: number | null;
   successRate: number;
   avgConfidence: number;
@@ -276,18 +278,11 @@ export interface PlaybookVersion {
   sessions: number;
   rated: number;
   successRate: number | null;
-  avgRating: number | null;
   avgTurns: number | null;
   avgInterruptions: number | null;
   toolErrorRate: number | null;
   commitsPerSession: number | null;
   reworkRate: number | null;
-}
-
-// The current version is the one put in effect most recently. firstSeen can
-// be older when an edit restores earlier content.
-export function currentVersion(p: { versions: PlaybookVersion[] }): PlaybookVersion | undefined {
-  return p.versions.reduce<PlaybookVersion | undefined>((best, v) => (!best || v.lastSeen > best.lastSeen ? v : best), undefined);
 }
 
 export interface Playbook {
@@ -296,6 +291,8 @@ export interface Playbook {
   name: string;
   path: string | null;
   projectRoot: string | null;
+  /** Most recently in effect first, so versions[0] is current. firstSeen can be
+   *  older than a later version's when an edit restores earlier content. */
   versions: PlaybookVersion[];
 }
 

@@ -10,12 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::journal::{self, outcome_score};
 use crate::signals::{self, Friction};
+use crate::stats::{
+    DAY_MS, HOUR_MS, MIN_SAMPLE, local_date, local_midnight_ms, monday, pct, success, week_of,
+};
 use crate::util::now_ms;
-
-const DAY_MS: i64 = 86_400_000;
-
-/// Groups smaller than this are too noisy to compare.
-pub const MIN_SAMPLE: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Range {
@@ -115,7 +113,7 @@ fn style_of(planned: bool, user_turns: i64) -> &'static str {
 }
 
 impl SessionRow {
-    fn score(&self) -> Option<f64> {
+    pub fn score(&self) -> Option<f64> {
         self.outcome.as_deref().and_then(outcome_score)
     }
 }
@@ -379,7 +377,6 @@ pub struct LinkedIntent {
 pub struct SessionDetail {
     pub session: SessionRow,
     pub file_path: String,
-    pub entrypoint: Option<String>,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
@@ -390,8 +387,6 @@ pub struct SessionDetail {
     pub tool_counts: BTreeMap<String, i64>,
     pub tool_errors_by: BTreeMap<String, i64>,
     pub tool_vetoes: BTreeMap<String, i64>,
-    /// (start, end, kind): 1 = agent working, 0 = waiting on you.
-    pub timeline: Vec<(i64, i64, u8)>,
     pub last_message: Option<String>,
     /// A command that reopens the session in its tool, when it has one.
     pub resume_command: Option<String>,
@@ -408,7 +403,6 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     };
     struct Extra {
         file_path: String,
-        entrypoint: Option<String>,
         tokens: [i64; 4],
         lines: (Option<i64>, Option<i64>),
         notes: Option<String>,
@@ -417,27 +411,24 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         external_id: String,
         tool_errors_by: String,
         tool_vetoes: String,
-        timeline: String,
     }
     let x = conn.query_row(
-        "SELECT file_path, entrypoint, input_tokens, output_tokens, cache_read_tokens,
+        "SELECT file_path, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, lines_added, lines_removed, notes, tool_counts,
-                last_message, external_id, tool_errors_by, tool_vetoes, timeline
+                last_message, external_id, tool_errors_by, tool_vetoes
          FROM sessions WHERE id = ?1",
         [id],
         |r| {
             Ok(Extra {
                 file_path: r.get(0)?,
-                entrypoint: r.get(1)?,
-                tokens: [r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?],
-                lines: (r.get(6)?, r.get(7)?),
-                notes: r.get(8)?,
-                tool_counts: r.get(9)?,
-                last_message: r.get(10)?,
-                external_id: r.get(11)?,
-                tool_errors_by: r.get(12)?,
-                tool_vetoes: r.get(13)?,
-                timeline: r.get(14)?,
+                tokens: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?],
+                lines: (r.get(5)?, r.get(6)?),
+                notes: r.get(7)?,
+                tool_counts: r.get(8)?,
+                last_message: r.get(9)?,
+                external_id: r.get(10)?,
+                tool_errors_by: r.get(11)?,
+                tool_vetoes: r.get(12)?,
             })
         },
     )?;
@@ -507,7 +498,6 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     Ok(SessionDetail {
         session,
         file_path: x.file_path,
-        entrypoint: x.entrypoint,
         input_tokens: x.tokens[0],
         output_tokens: x.tokens[1],
         cache_read_tokens: x.tokens[2],
@@ -518,7 +508,6 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         tool_counts: serde_json::from_str(&x.tool_counts).unwrap_or_default(),
         tool_errors_by: serde_json::from_str(&x.tool_errors_by).unwrap_or_default(),
         tool_vetoes: serde_json::from_str(&x.tool_vetoes).unwrap_or_default(),
-        timeline: serde_json::from_str(&x.timeline).unwrap_or_default(),
         last_message: x.last_message,
         resume_command,
         prompts,
@@ -662,7 +651,7 @@ fn totals(rows: &[SessionRow]) -> Totals {
     let mut wait_ms = 0i64;
     let mut wait_n = 0i64;
     for s in rows {
-        t.active_hours += s.active_ms as f64 / 3_600_000.0;
+        t.active_hours += s.active_ms as f64 / HOUR_MS;
         t.user_turns += s.user_turns;
         t.tool_calls += s.tool_calls;
         t.tool_errors += s.tool_errors;
@@ -686,13 +675,12 @@ fn totals(rows: &[SessionRow]) -> Totals {
     }
     t.success_rate = success_rate(rows.iter());
     t.avg_wait_seconds = (wait_n > 0).then(|| wait_ms as f64 / wait_n as f64 / 1000.0);
-    t.wait_hours = wait_ms as f64 / 3_600_000.0;
+    t.wait_hours = wait_ms as f64 / HOUR_MS;
     t
 }
 
-fn success_rate<'a>(rows: impl Iterator<Item = &'a SessionRow>) -> Option<f64> {
-    let scores: Vec<f64> = rows.filter_map(SessionRow::score).collect();
-    (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64)
+fn success_rate<'a>(rows: impl IntoIterator<Item = &'a SessionRow>) -> Option<f64> {
+    success(rows).1
 }
 
 #[derive(Debug, Serialize)]
@@ -723,7 +711,7 @@ fn group_by(rows: &[SessionRow], key: impl Fn(&SessionRow) -> Option<String>) ->
             GroupStat {
                 key,
                 sessions: g.len(),
-                active_hours: g.iter().map(|s| s.active_ms as f64 / 3_600_000.0).sum(),
+                active_hours: g.iter().map(|s| s.active_ms as f64 / HOUR_MS).sum(),
                 cost_usd: g.iter().filter_map(|s| s.cost_usd).sum(),
                 commits: g.iter().map(|s| s.commits).sum(),
                 rated: g.iter().filter(|s| s.outcome.is_some()).count(),
@@ -784,13 +772,8 @@ pub const TREND_WEEKS: i64 = 12;
 
 fn trend(conn: &Connection) -> Result<Trend> {
     let today = Local::now().date_naive();
-    let this_monday = today - Duration::days(today.weekday().num_days_from_monday() as i64);
-    let first = this_monday - Duration::weeks(TREND_WEEKS - 1);
-    let since = first
-        .and_hms_opt(0, 0, 0)
-        .and_then(|d| d.and_local_timezone(Local).earliest())
-        .map(|d| d.timestamp_millis())
-        .unwrap_or(0);
+    let first = monday(today) - Duration::weeks(TREND_WEEKS - 1);
+    let since = local_midnight_ms(first);
     let rows = load_sessions(
         conn,
         Range {
@@ -829,13 +812,6 @@ fn trend(conn: &Connection) -> Result<Trend> {
         t.cost_usd.push(tt.cost_usd);
     }
     Ok(t)
-}
-
-fn local_date(ms: i64) -> Option<NaiveDate> {
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|d| d.date_naive())
 }
 
 pub fn project_name(path: &str) -> String {
@@ -966,10 +942,9 @@ pub fn scorecard(conn: &Connection, days: i64) -> Result<Scorecard> {
 
     let mut weekly: BTreeMap<NaiveDate, WeekStat> = BTreeMap::new();
     for s in &rows {
-        let Some(d) = s.started_at.and_then(local_date) else {
+        let Some(monday) = s.started_at.and_then(week_of) else {
             continue;
         };
-        let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
         let w = weekly.entry(monday).or_insert_with(|| WeekStat {
             week_start: monday.format("%Y-%m-%d").to_string(),
             sessions: 0,
@@ -980,7 +955,7 @@ pub fn scorecard(conn: &Connection, days: i64) -> Result<Scorecard> {
         });
         w.sessions += 1;
         w.commits += s.commits;
-        w.active_hours += s.active_ms as f64 / 3_600_000.0;
+        w.active_hours += s.active_ms as f64 / HOUR_MS;
         if s.commits > 0 {
             w.sessions_with_commits += 1;
         }
@@ -1093,10 +1068,6 @@ fn success_spread<'a, 'b>(
     let best = scored.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
     let worst = scored.iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
     (best.1 - worst.1 >= 0.2).then_some((best.0, best.1, worst.0, worst.1))
-}
-
-fn pct(x: f64) -> String {
-    format!("{:.0}%", x * 100.0)
 }
 
 pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
@@ -1316,7 +1287,7 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
     let measured: Vec<SessionRow> = rows.iter().filter(|s| s.has_signals).cloned().collect();
     // Corrections: the human had to say "no, that's not it".
     let by_corr = buckets(
-        &rows,
+        &measured,
         &["no corrections", "one correction", "2+ corrections"],
         |s| Some(s.corrections.min(2) as usize),
     );

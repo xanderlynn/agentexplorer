@@ -1,8 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Loader2 } from "lucide-react";
-import type { Outcome, Source } from "../api";
+import type { GroupStat, Outcome, Source } from "../api";
 import { OUTCOMES } from "../api";
-import { OUTCOME_CLASS, OUTCOME_LABEL, SOURCE_COLOR, SOURCE_LABEL, pct } from "../format";
+import { OUTCOME_CLASS, OUTCOME_LABEL, SOURCE_COLOR, hours, pct, sourceLabel } from "../format";
 import { MIN_N, wilson } from "../stats";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
@@ -94,7 +94,7 @@ export function Stat({
   );
 }
 
-export function Sparkline({ values, className }: { values: (number | null)[]; className?: string }) {
+function Sparkline({ values, className }: { values: (number | null)[]; className?: string }) {
   const pts = values.map((v, i) => [i, v] as const).filter((p): p is readonly [number, number] => p[1] != null);
   if (pts.length < 2) return null;
   const w = 72;
@@ -200,7 +200,7 @@ export function SourceBadge({ source }: { source: Source | string }) {
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-300">
       <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      {SOURCE_LABEL[source as Source] ?? source}
+      {sourceLabel(source)}
     </span>
   );
 }
@@ -315,11 +315,66 @@ export function ErrorNote({ error }: { error: unknown }) {
 }
 
 // Horizontal bar used in tables, 0..1.
-export function Bar({ value, color = "var(--color-emerald-500)" }: { value: number | null; color?: string }) {
+export function Meter({ value, color = "var(--color-emerald-500)" }: { value: number | null; color?: string }) {
   const w = value == null ? 0 : Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
       <div className="h-full rounded-full" style={{ width: `${w}%`, background: color }} />
+    </div>
+  );
+}
+
+export function Legend({ items }: { items: [string, string][] }) {
+  return (
+    <span className="flex gap-3 text-xs text-zinc-400">
+      {items.map(([label, color]) => (
+        <span key={label} className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+          {label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function GroupTable({ rows, label, onRow }: { rows: GroupStat[]; label: (key: string) => ReactNode; onRow?: (key: string) => void }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-zinc-500">
+            <th className="pb-2 font-medium" />
+            <th className="pb-2 text-right font-medium">Sessions</th>
+            <th className="pb-2 text-right font-medium">Active</th>
+            <th className="pb-2 text-right font-medium">Commits</th>
+            <th className="w-40 pb-2 pl-4 font-medium">Success (rated)</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-800/60">
+          {rows.map((g) => (
+            <tr key={g.key} className={onRow ? "cursor-pointer hover:bg-zinc-800/30" : undefined} onClick={onRow ? () => onRow(g.key) : undefined}>
+              <td className="max-w-[14rem] py-1.5 pr-2">{label(g.key)}</td>
+              <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.sessions}</td>
+              <td className="py-1.5 text-right tabular-nums text-zinc-300">{hours(g.activeHours)}</td>
+              <td className="py-1.5 text-right tabular-nums text-zinc-300">{g.commits}</td>
+              <td className="py-1.5 pl-4">
+                <Rate rate={g.successRate} n={g.rated} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A small labelled figure in a bordered tile. */
+export function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+      <div className="text-xs uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">{value}</div>
+      {hint && <div className="text-xs text-zinc-500">{hint}</div>}
     </div>
   );
 }

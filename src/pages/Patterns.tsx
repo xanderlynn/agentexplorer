@@ -2,9 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Benchmark, type Patterns as PatternsT } from "../api";
 import type { Drill } from "../App";
-import { Bar as Meter, Card, Empty, ErrorNote, Heuristic, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
-import { duration, pct } from "../format";
-import { quantile } from "../stats";
+import { Card, Empty, ErrorNote, Heuristic, Loading, Meter, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
+import { duration, fixed, pct } from "../format";
+import { MIN_N, quantile } from "../stats";
 import { ToolHealthCard } from "../components/Reality";
 import { chart, heat } from "../theme";
 
@@ -374,11 +374,10 @@ function BenchTable({ rows }: { rows: Benchmark[] }) {
     <tr key={label}>
       <td className="py-1.5 text-zinc-400">{label}</td>
       {rows.map((b) => (
-        <td key={b.label} className={`py-1.5 text-right tabular-nums ${b.sessions < 5 ? "text-zinc-500" : "text-zinc-200"}`}>{f(b)}</td>
+        <td key={b.label} className={`py-1.5 text-right tabular-nums ${b.sessions < MIN_N ? "text-zinc-500" : "text-zinc-200"}`}>{f(b)}</td>
       ))}
     </tr>
   );
-  const num = (x: number | null, d = 1) => (x == null ? "—" : x.toFixed(d));
   return (
     <table className="w-full text-sm">
       <thead>
@@ -394,12 +393,12 @@ function BenchTable({ rows }: { rows: Benchmark[] }) {
       </thead>
       <tbody className="divide-y divide-zinc-800/60">
         {metric("Success", (b) => pct(b.successRate))}
-        {metric("Prompts / session", (b) => num(b.avgTurns))}
-        {metric("Corrections / session", (b) => num(b.correctionsPerSession, 2))}
-        {metric("Interruptions / session", (b) => num(b.interruptionsPerSession, 2))}
-        {metric("Active minutes", (b) => num(b.avgActiveMinutes, 0))}
+        {metric("Prompts / session", (b) => fixed(b.avgTurns))}
+        {metric("Corrections / session", (b) => fixed(b.correctionsPerSession, 2))}
+        {metric("Interruptions / session", (b) => fixed(b.interruptionsPerSession, 2))}
+        {metric("Active minutes", (b) => fixed(b.avgActiveMinutes, 0))}
         {metric("Re-edit rate", (b) => pct(b.reEditRate))}
-        {metric("Flow score ≈", (b) => num(b.avgFriction, 1))}
+        {metric("Flow score ≈", (b) => fixed(b.avgFriction, 1))}
       </tbody>
     </table>
   );

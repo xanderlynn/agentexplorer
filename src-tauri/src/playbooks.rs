@@ -79,16 +79,31 @@ fn add_version(
     git_sha: Option<&str>,
 ) -> Result<()> {
     let content = normalize_eol(content);
-    let version_id: i64 = conn.query_row(
-        "INSERT INTO playbook_versions (playbook_id, hash, content, first_seen, git_sha)
+    let hash = hash(&content);
+    let known: Option<(i64, i64, Option<String>)> = conn
+        .query_row(
+            "SELECT id, first_seen, git_sha FROM playbook_versions WHERE playbook_id = ?1 AND hash = ?2",
+            params![playbook_id, hash],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let unchanged = known
+        .as_ref()
+        .filter(|(_, seen, sha)| *seen <= first_seen && (sha.is_some() || git_sha.is_none()));
+    let version_id: i64 = if let Some((id, _, _)) = unchanged {
+        *id
+    } else {
+        conn.query_row(
+            "INSERT INTO playbook_versions (playbook_id, hash, content, first_seen, git_sha)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(playbook_id, hash) DO UPDATE SET
            first_seen = MIN(first_seen, excluded.first_seen),
            git_sha = COALESCE(git_sha, excluded.git_sha)
          RETURNING id",
-        params![playbook_id, hash(&content), content, first_seen, git_sha],
-        |r| r.get(0),
-    )?;
+            params![playbook_id, hash, content, first_seen, git_sha],
+            |r| r.get(0),
+        )?
+    };
     // Content that comes back (a revert) gets another sighting, so it is in
     // effect again from that point.
     conn.execute(
@@ -282,6 +297,9 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
 
     let tx = conn.unchecked_transaction()?;
     {
+        let mut current = tx.prepare(
+            "SELECT version_id FROM session_playbooks WHERE session_id = ?1 AND link = 'auto'",
+        )?;
         let mut delete =
             tx.prepare("DELETE FROM session_playbooks WHERE session_id = ?1 AND link = 'auto'")?;
         let mut insert = tx.prepare("INSERT OR IGNORE INTO session_playbooks (session_id, version_id, link) VALUES (?1, ?2, 'auto')")?;
@@ -289,8 +307,8 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
             if wanted.as_ref().is_some_and(|w| !w.contains(sid.as_str())) {
                 continue;
             }
-            delete.execute([sid])?;
             let started = started.unwrap_or(0);
+            let mut versions = BTreeSet::new();
             let prompt = first_prompt.as_deref().map(normalize).unwrap_or_default();
             for (pid, kind, proot) in &playbooks {
                 if !applies_to(kind, source) {
@@ -311,6 +329,16 @@ pub fn relink(conn: &Connection, sessions: Option<&[String]>) -> Result<()> {
                     continue;
                 }
                 if let Some(v) = version_at(&history[pid], started) {
+                    versions.insert(v);
+                }
+            }
+            // Only write when the links differ, so an idle scan changes nothing.
+            let had: BTreeSet<i64> = current
+                .query_map([sid], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            if had != versions {
+                delete.execute([sid])?;
+                for v in &versions {
                     insert.execute(params![sid, v])?;
                 }
             }
@@ -352,7 +380,6 @@ pub struct VersionStats {
     pub sessions: i64,
     pub rated: i64,
     pub success_rate: Option<f64>,
-    pub avg_rating: Option<f64>,
     pub avg_turns: Option<f64>,
     pub avg_interruptions: Option<f64>,
     pub tool_error_rate: Option<f64>,
@@ -389,7 +416,6 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                 SUM(s.outcome IS NOT NULL),
                 AVG(CASE s.outcome WHEN 'shipped' THEN 1.0 WHEN 'partial' THEN 0.5
                                    WHEN 'abandoned' THEN 0.0 WHEN 'redo' THEN 0.0 END),
-                AVG(s.rating),
                 AVG(s.user_turns),
                 AVG(s.interruptions),
                 CAST(SUM(s.tool_errors) AS REAL) / NULLIF(SUM(s.tool_calls), 0),
@@ -416,12 +442,11 @@ pub fn list(conn: &Connection) -> Result<Vec<PlaybookStats>> {
                     sessions: r.get(5)?,
                     rated: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
                     success_rate: r.get(7)?,
-                    avg_rating: r.get(8)?,
-                    avg_turns: r.get(9)?,
-                    avg_interruptions: r.get(10)?,
-                    tool_error_rate: r.get(11)?,
-                    commits_per_session: r.get(12)?,
-                    rework_rate: r.get(13)?,
+                    avg_turns: r.get(8)?,
+                    avg_interruptions: r.get(9)?,
+                    tool_error_rate: r.get(10)?,
+                    commits_per_session: r.get(11)?,
+                    rework_rate: r.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;

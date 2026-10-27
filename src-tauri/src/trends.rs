@@ -10,36 +10,11 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 
 use crate::analytics::{Range, SessionRow, load_sessions};
-use crate::journal::outcome_score;
 use crate::pricing;
+use crate::stats::{
+    DAY_MS, HOUR_MS, MIN_SAMPLE, local_date, local_midnight_ms, mean, ratio, success, week_of,
+};
 use crate::util::now_ms;
-
-const DAY_MS: i64 = 86_400_000;
-
-fn local_date(ms: i64) -> Option<NaiveDate> {
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|d| d.date_naive())
-}
-
-fn success(rows: &[&SessionRow]) -> (usize, Option<f64>) {
-    let scores: Vec<f64> = rows
-        .iter()
-        .filter_map(|s| s.outcome.as_deref().and_then(outcome_score))
-        .collect();
-    let rate = (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64);
-    (scores.len(), rate)
-}
-
-fn mean(xs: impl Iterator<Item = f64>) -> Option<f64> {
-    let v: Vec<f64> = xs.collect();
-    (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
-}
-
-fn ratio(num: i64, den: i64) -> Option<f64> {
-    (den > 0).then(|| num as f64 / den as f64)
-}
 
 // ------------------------------------------------------------------- usage
 
@@ -190,7 +165,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         .into_iter()
         .map(|(model, g)| {
             let n = g.len() as f64;
-            let (rated, success_rate) = success(&g);
+            let (rated, success_rate) = success(g.iter().copied());
             let costs: Vec<f64> = g.iter().filter_map(|s| s.cost_usd).collect();
             let cost: f64 = costs.iter().sum();
             ModelRow {
@@ -217,11 +192,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
     // Month to date and a straight-line projection, in local time.
     let today = Local::now().date_naive();
     let month_start = today.with_day(1).unwrap_or(today);
-    let month_start_ms = month_start
-        .and_hms_opt(0, 0, 0)
-        .and_then(|d| d.and_local_timezone(Local).earliest())
-        .map(|d| d.timestamp_millis())
-        .unwrap_or(0);
+    let month_start_ms = local_midnight_ms(month_start);
     let mtd: f64 = conn.query_row(
         "SELECT COALESCE(SUM(cost_usd), 0) FROM sessions WHERE started_at >= ?1",
         [month_start_ms],
@@ -395,7 +366,7 @@ fn benchmark(label: &str, rows: &[&SessionRow]) -> Benchmark {
     Benchmark {
         label: label.into(),
         sessions: n,
-        success_rate: success(rows).1,
+        success_rate: success(rows.iter().copied()).1,
         avg_turns: per(&|s| s.user_turns as f64),
         corrections_per_session: per(&|s| s.corrections as f64),
         interruptions_per_session: per(&|s| s.interruptions as f64),
@@ -460,7 +431,7 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
         .into_iter()
         .map(|(category, g)| {
             let n = g.len() as f64;
-            let (rated, success_rate) = success(&g);
+            let (rated, success_rate) = success(g.iter().copied());
             CategoryRow {
                 category,
                 sessions: g.len(),
@@ -503,8 +474,7 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
 
     let mut weeks: BTreeMap<NaiveDate, Vec<&SessionRow>> = BTreeMap::new();
     for s in &measured {
-        if let Some(d) = s.started_at.and_then(local_date) {
-            let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
+        if let Some(monday) = s.started_at.and_then(week_of) {
             weeks.entry(monday).or_default().push(s);
         }
     }
@@ -516,7 +486,7 @@ pub fn patterns(conn: &Connection, days: i64) -> Result<Patterns> {
             QualityWeek {
                 week_start: monday.format("%Y-%m-%d").to_string(),
                 sessions: g.len(),
-                success_rate: success(&g).1,
+                success_rate: success(g.iter().copied()).1,
                 read_edit_ratio: ratio(g.iter().map(|s| s.reads).sum(), edits),
                 edits_without_read_rate: ratio(g.iter().map(|s| s.edits_without_read).sum(), edits),
                 re_edit_rate: ratio(g.iter().map(|s| s.re_edits).sum(), edits),
@@ -697,7 +667,7 @@ pub fn reality(conn: &Connection, days: i64) -> Result<Reality> {
     let mut by_answer: Vec<AnswerRow> = groups
         .into_iter()
         .map(|(answer, g)| {
-            let (rated, success_rate) = success(&g);
+            let (rated, success_rate) = success(g.iter().copied());
             let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
             AnswerRow {
                 answer,
@@ -734,8 +704,8 @@ pub fn reality(conn: &Connection, days: i64) -> Result<Reality> {
         time_ratio: cal.overall.as_ref().and_then(|o| o.time_ratio),
         time_ratio_n: cal.overall.as_ref().map(|o| o.n).unwrap_or(0),
         leverage: ratio(agent_ms, wait_ms),
-        agent_hours: agent_ms as f64 / 3_600_000.0,
-        wait_hours: wait_ms as f64 / 3_600_000.0,
+        agent_hours: agent_ms as f64 / HOUR_MS,
+        wait_hours: wait_ms as f64 / HOUR_MS,
     })
 }
 
@@ -767,14 +737,14 @@ pub fn fit(conn: &Connection, days: i64) -> Result<Vec<FitCell>> {
     Ok(cells
         .into_iter()
         .map(|((category, source), g)| {
-            let (rated, success_rate) = success(&g);
+            let (rated, success_rate) = success(g.iter().copied());
             let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
             let rework_rate = ratio(
                 with.iter().filter(|s| s.reworked).count() as i64,
                 with.len() as i64,
             );
             let verdict = match (rated, success_rate) {
-                (n, _) if n < crate::analytics::MIN_SAMPLE => "unknown",
+                (n, _) if n < MIN_SAMPLE => "unknown",
                 (_, Some(r)) if r >= 0.7 && rework_rate.is_none_or(|w| w <= 0.2) => "delegate",
                 (_, Some(r)) if r >= 0.45 => "structure",
                 _ => "yourself",
@@ -1130,7 +1100,7 @@ pub struct ModeSplit {
 
 impl ModeSplit {
     fn add(&mut self, mode_ms: &BTreeMap<String, i64>) {
-        let h = |k: &str| *mode_ms.get(k).unwrap_or(&0) as f64 / 3_600_000.0;
+        let h = |k: &str| *mode_ms.get(k).unwrap_or(&0) as f64 / HOUR_MS;
         self.coding += h("coding");
         self.research += h("research");
         self.running += h("running");
@@ -1208,8 +1178,7 @@ pub fn execution(conn: &Connection, days: i64) -> Result<Execution> {
             .entry(s.source.clone())
             .or_default()
             .add(&s.mode_ms);
-        if let Some(d) = s.started_at.and_then(local_date) {
-            let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
+        if let Some(monday) = s.started_at.and_then(week_of) {
             weekly.entry(monday).or_default().add(&s.mode_ms);
         }
     }
@@ -1217,7 +1186,7 @@ pub fn execution(conn: &Connection, days: i64) -> Result<Execution> {
     let mut styles = vec![];
     for style in ["one_shot", "planned", "iterative"] {
         let g: Vec<&SessionRow> = rows.iter().filter(|s| s.style == style).collect();
-        let (rated, success_rate) = success(&g);
+        let (rated, success_rate) = success(g.iter().copied());
         let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
         styles.push(StyleRow {
             style: style.into(),
@@ -1243,8 +1212,8 @@ pub fn execution(conn: &Connection, days: i64) -> Result<Execution> {
     let measured: Vec<&SessionRow> = rows.iter().filter(|s| s.peak_context > 0).collect();
     let (over, within): (Vec<&SessionRow>, Vec<&SessionRow>) =
         measured.iter().partition(|s| s.peak_context > zone);
-    let (rated_within, success_within) = success(&within);
-    let (rated_over, success_over) = success(&over);
+    let (rated_within, success_within) = success(within.iter().copied());
+    let (rated_over, success_over) = success(over.iter().copied());
     let bounds = [
         (0, 50_000, "under 50k"),
         (50_000, 100_000, "50–100k"),

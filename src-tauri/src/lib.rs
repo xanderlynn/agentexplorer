@@ -13,6 +13,7 @@ mod pricing;
 mod retro;
 mod signals;
 mod sources;
+mod stats;
 mod trends;
 mod util;
 mod watcher;

@@ -11,15 +11,12 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::analytics::{Range, SessionRow, load_sessions};
-use crate::journal::outcome_score;
+use crate::stats::{DAY_MS, MIN_SAMPLE};
 use crate::util::now_ms;
 
-const DAY_MS: i64 = 86_400_000;
 /// The baseline is the same metric over this many days before the start.
 const BASELINE_DAYS: i64 = 28;
 const MAX_ACTIVE_GOALS: i64 = 3;
-/// Results with fewer sessions than this are "too early to tell".
-pub const MIN_N: usize = 5;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,11 +112,7 @@ pub fn measure(key: &str, rows: &[&SessionRow]) -> (Option<f64>, usize) {
     };
     let ratio = |num: i64, den: i64, n: usize| ((den > 0).then(|| num as f64 / den as f64), n);
     match key {
-        "success_rate" => mean(
-            rows.iter()
-                .filter_map(|s| s.outcome.as_deref().and_then(outcome_score))
-                .collect(),
-        ),
+        "success_rate" => mean(rows.iter().filter_map(|s| s.score()).collect()),
         "corrections_per_session" => mean(rows.iter().map(|s| s.corrections as f64).collect()),
         "interruptions_per_session" => mean(rows.iter().map(|s| s.interruptions as f64).collect()),
         "re_edit_rate" => ratio(
@@ -267,7 +260,7 @@ fn reading(
     let (Some(b), Some(c)) = (baseline, current) else {
         return "too_early";
     };
-    if n < MIN_N || baseline_n < MIN_N {
+    if n < MIN_SAMPLE || baseline_n < MIN_SAMPLE {
         return "too_early";
     }
     // Ignore changes smaller than 10% of the baseline (or 0.05 on a rate).
@@ -327,17 +320,26 @@ pub fn list(conn: &Connection) -> Result<Vec<Experiment>> {
         })?
         .collect::<rusqlite::Result<_>>()?;
 
+    // One load covers every experiment's window.
+    let now = now_ms();
+    let all = match rows.iter().map(|e| e.start_at).min() {
+        Some(since) => load_sessions(
+            conn,
+            Range {
+                since,
+                until: now + 1,
+            },
+        )?,
+        None => vec![],
+    };
     let mut out = vec![];
     for e in rows {
         let Ok(def) = metric(&e.metric) else { continue };
-        let window = load_sessions(
-            conn,
-            Range {
-                since: e.start_at,
-                until: e.end_at.min(now_ms() + 1),
-            },
-        )?;
-        let eligible = in_scope(&window, e.category.as_deref(), e.source.as_deref());
+        let until = e.end_at.min(now + 1);
+        let eligible: Vec<&SessionRow> = in_scope(&all, e.category.as_deref(), e.source.as_deref())
+            .into_iter()
+            .filter(|s| s.started_at.is_some_and(|t| t >= e.start_at && t < until))
+            .collect();
         let tag = tag_for(e.id);
         let applied: Vec<&SessionRow> = eligible
             .iter()
@@ -519,15 +521,15 @@ pub fn goals(conn: &Connection) -> Result<Vec<GoalStatus>> {
         let (current, n) = measure(&m, &week_rows);
         let (counter_current, _) = measure(&c, &week_rows);
         let (counter_baseline, _) = measure(&c, &before_rows);
-        // Below MIN_N sessions a week, "met" would be noise.
-        let met = current.filter(|_| n >= MIN_N).map(|v| {
+        // Below MIN_SAMPLE sessions a week, "met" would be noise.
+        let met = current.filter(|_| n >= MIN_SAMPLE).map(|v| {
             if def.higher_is_better {
                 v >= target
             } else {
                 v <= target
             }
         });
-        let counter_slipping = n >= MIN_N
+        let counter_slipping = n >= MIN_SAMPLE
             && match (counter_current, counter_baseline) {
                 (Some(now), Some(base)) => {
                     let margin =

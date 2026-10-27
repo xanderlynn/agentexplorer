@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, type Mode, type ModeSplit, type Source } from "../api";
+import { api, type Mode, type ModeSplit } from "../api";
 import type { Drill } from "../App";
-import { Card, Empty, ErrorNote, Heuristic, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
-import { MODE_COLOR, MODE_LABEL, SOURCE_LABEL, STYLE_LABEL, compact, pct } from "../format";
+import { Card, Empty, ErrorNote, Heuristic, Legend, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
+import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, fixed, pct, sourceLabel } from "../format";
 import { MIN_N } from "../stats";
 import { chart } from "../theme";
-import { Legend } from "./Overview";
 
 const MODES: Mode[] = ["coding", "research", "running", "discussion"];
 
@@ -70,7 +69,7 @@ export default function Execution({ days, setDays, drill }: { days: number; setD
                 <ul className="space-y-2">
                   {e.bySource.map((s) => (
                     <li key={s.label}>
-                      <div className="mb-1 text-xs text-zinc-300">{SOURCE_LABEL[s.label as Source] ?? s.label}</div>
+                      <div className="mb-1 text-xs text-zinc-300">{sourceLabel(s.label)}</div>
                       <ModeBar split={s.split} />
                     </li>
                   ))}
@@ -120,10 +119,10 @@ export default function Execution({ days, setDays, drill }: { days: number; setD
                     <span className="block text-xs text-zinc-500">{STYLE_HELP[s.style]}</span>
                   </td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{s.sessions}</td>
-                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{s.avgPrompts?.toFixed(1) ?? "—"}</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{fixed(s.avgPrompts)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{s.avgActiveMinutes != null ? Math.round(s.avgActiveMinutes) : "—"}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{s.avgTokens != null ? compact(s.avgTokens) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{s.avgCorrections?.toFixed(1) ?? "—"}</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{fixed(s.avgCorrections)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{pct(s.reworkRate)}</td>
                   <td className="py-1.5 pl-4">
                     <Rate rate={s.successRate} n={s.rated} />
