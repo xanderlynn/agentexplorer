@@ -1,6 +1,7 @@
 mod analytics;
 mod commands;
 mod db;
+mod experiments;
 mod git;
 mod ingest;
 mod journal;
@@ -49,6 +50,17 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_overview,
+            commands::quick_review,
+            commands::list_metrics,
+            commands::list_experiments,
+            commands::create_experiment,
+            commands::experiment_verdict,
+            commands::delete_experiment,
+            commands::set_experiment_applied,
+            commands::list_goals,
+            commands::create_goal,
+            commands::retire_goal,
+            commands::preflight,
             commands::get_insights,
             commands::get_scorecard,
             commands::get_usage,

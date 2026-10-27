@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
-import { api, currentVersion, type Outcome } from "../api";
+import { api, currentVersion, type Outcome, type VsManual } from "../api";
 import { compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
 
@@ -15,6 +15,12 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
   const [rating, setRating] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState("");
+  const [vsManual, setVsManual] = useState<VsManual | null>(null);
+  const exps = useQuery({ queryKey: ["experiments"], queryFn: api.experiments });
+  const applied = useMutation({
+    mutationFn: (v: { experimentId: number; on: boolean }) => api.setExperimentApplied(id, v.experimentId, v.on),
+    onSuccess: () => qc.invalidateQueries(),
+  });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
   // Seed the form once per session, not on every refetch, so typing is not lost.
@@ -23,7 +29,8 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
       setOutcome(q.data.session.outcome);
       setRating(q.data.session.rating);
       setNotes(q.data.notes ?? "");
-      setTags(q.data.session.tags.join(", "));
+      setTags(q.data.session.tags.filter((t) => !t.startsWith("exp-")).join(", "));
+      setVsManual(q.data.session.vsManual);
       setLoadedFor(id);
     }
   }, [q.data, id, loadedFor]);
@@ -41,7 +48,12 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
         outcome,
         rating,
         notes: notes.trim() || null,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        // Experiment tags are managed by the toggles below, not the text box.
+        tags: [
+          ...tags.split(",").map((t) => t.trim()).filter(Boolean),
+          ...(q.data?.session.tags.filter((t) => t.startsWith("exp-")) ?? []),
+        ],
+        vsManual,
       }),
     onSuccess: () => qc.invalidateQueries(),
   });
@@ -92,6 +104,37 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                 <Field label="What would you do differently?">
                   <textarea className={inputClass} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. should have given it the failing test first" />
                 </Field>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-zinc-400">Faster than doing it by hand?</span>
+                  {(["faster", "same", "slower", "unsure"] as VsManual[]).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setVsManual(vsManual === v ? null : v)}
+                      className={`rounded-md px-2 py-0.5 capitalize ring-1 ring-inset ${vsManual === v ? "bg-zinc-700 text-zinc-50 ring-zinc-500" : "text-zinc-400 ring-zinc-700 hover:bg-zinc-800"}`}
+                    >
+                      {v === "same" ? "about the same" : v === "unsure" ? "not sure" : v}
+                    </button>
+                  ))}
+                </div>
+                {exps.data?.some((e) => e.status === "active") && (
+                  <div className="space-y-1 text-sm">
+                    <div className="text-xs text-zinc-400">Did this session apply an experiment?</div>
+                    {exps.data
+                      .filter((e) => e.status === "active")
+                      .map((e) => (
+                        <label key={e.id} className="flex items-center gap-2 text-zinc-300">
+                          <input
+                            type="checkbox"
+                            className="accent-emerald-500"
+                            checked={s.tags.includes(`exp-${e.id}`)}
+                            onChange={(ev) => applied.mutate({ experimentId: e.id, on: ev.target.checked })}
+                          />
+                          {e.title}
+                        </label>
+                      ))}
+                  </div>
+                )}
                 <Field label="Tags" hint="Comma separated">
                   <input className={inputClass} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="refactor, flaky-tests" />
                 </Field>

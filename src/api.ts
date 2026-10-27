@@ -49,7 +49,12 @@ export interface SessionRow {
   subagents: number;
   corrections: number;
   friction: Friction;
+  hasSignals: boolean;
+  vsManual: VsManual | null;
+  reworked: boolean;
 }
+
+export type VsManual = "faster" | "slower" | "same" | "unsure";
 
 /** Heuristic 1–5 scores; 5 is the least friction. */
 export interface Friction {
@@ -201,6 +206,7 @@ export interface LiveSession {
   activeMs: number;
   avgWaitMs: number | null;
   lastMessage: string | null;
+  outcome: Outcome | null;
 }
 
 export interface LiveSummary {
@@ -287,6 +293,77 @@ export interface Retro {
   engine: "claude_cli" | "anthropic_api";
   model: string | null;
   contentMd: string;
+  reflection: string | null;
+  suggestions: Suggestion[];
+}
+
+export interface Suggestion {
+  title: string;
+  hypothesis: string | null;
+  metric: string;
+  category: string | null;
+}
+
+export interface MetricDef {
+  key: string;
+  label: string;
+  higherIsBetter: boolean;
+  unit: "rate" | "score" | "number";
+}
+
+export interface Experiment {
+  id: number;
+  createdAt: number;
+  title: string;
+  hypothesis: string | null;
+  metric: MetricDef;
+  category: string | null;
+  source: Source | null;
+  startAt: number;
+  endAt: number;
+  baselineValue: number | null;
+  baselineN: number;
+  currentValue: number | null;
+  currentN: number;
+  applied: number;
+  eligible: number;
+  reading: "too_early" | "better" | "worse" | "no_change";
+  status: "active" | "kept" | "dropped";
+  verdictNote: string | null;
+}
+
+export interface GoalStatus {
+  id: number;
+  metric: MetricDef;
+  target: number;
+  current: number | null;
+  n: number;
+  met: boolean | null;
+  counter: MetricDef;
+  counterCurrent: number | null;
+  counterBaseline: number | null;
+  counterSlipping: boolean;
+}
+
+export interface AskCheck {
+  goal: boolean;
+  doneCriteria: boolean;
+  anchors: boolean;
+  constraints: boolean;
+  verification: boolean;
+  score: number;
+}
+
+export interface PreflightAdvice {
+  category: string;
+  categorySuccess: number | null;
+  categoryN: number;
+  clearSuccess: number | null;
+  clearN: number;
+  vagueSuccess: number | null;
+  vagueN: number;
+  timeRatio: number | null;
+  ask: AskCheck;
 }
 
 export interface SourceStatus {
@@ -416,8 +493,20 @@ export const api = {
   usage: (days: number) => invoke<Usage>("get_usage", { days }),
   patterns: (days: number) => invoke<Patterns>("get_patterns", { days }),
   session: (id: string) => invoke<SessionDetail>("get_session", { id }),
-  saveReview: (review: { id: string; outcome: Outcome | null; rating: number | null; notes: string | null; tags: string[] }) =>
+  saveReview: (review: { id: string; outcome: Outcome | null; rating: number | null; notes: string | null; tags: string[]; vsManual: VsManual | null }) =>
     invoke<void>("save_review", { review }),
+  quickReview: (id: string, outcome: Outcome, vsManual: VsManual | null) => invoke<void>("quick_review", { id, outcome, vsManual }),
+  metrics: () => invoke<MetricDef[]>("list_metrics"),
+  experiments: () => invoke<Experiment[]>("list_experiments"),
+  createExperiment: (input: { title: string; hypothesis: string | null; metric: string; category: string | null; source: Source | null; days: number; retroId: number | null }) =>
+    invoke<number>("create_experiment", { input }),
+  experimentVerdict: (id: number, decision: "keep" | "drop" | "extend", note: string | null) => invoke<void>("experiment_verdict", { id, decision, note }),
+  deleteExperiment: (id: number) => invoke<void>("delete_experiment", { id }),
+  setExperimentApplied: (sessionId: string, experimentId: number, applied: boolean) => invoke<void>("set_experiment_applied", { sessionId, experimentId, applied }),
+  goals: () => invoke<GoalStatus[]>("list_goals"),
+  createGoal: (input: { metric: string; target: number; counterMetric: string }) => invoke<number>("create_goal", { input }),
+  retireGoal: (id: number) => invoke<void>("retire_goal", { id }),
+  preflight: (text: string, source: Source | null) => invoke<PreflightAdvice>("preflight", { text, source }),
   live: () => invoke<LiveSummary>("get_live"),
   rescan: (force: boolean) => invoke<IngestReport>("rescan", { force }),
   sources: () => invoke<SourceStatus[]>("get_sources"),
@@ -432,6 +521,8 @@ export const api = {
     tool: Source | null;
     expectedMinutes: number;
     confidence: number;
+    doneWhen?: string | null;
+    context?: string | null;
   }) => invoke<number>("create_intent", { input }),
   closeIntent: (input: { id: number; outcome: Outcome; actualMinutes: number | null; reflection: string | null }) =>
     invoke<void>("close_intent", { input }),
@@ -449,8 +540,8 @@ export const api = {
     invoke<void>("set_session_playbook", { sessionId, versionId, linked }),
 
   retros: () => invoke<Retro[]>("list_retros"),
-  previewRetro: (days: number) => invoke<string>("preview_retro", { days }),
-  generateRetro: (engine: string, days: number) => invoke<Retro>("generate_retro", { engine, days }),
+  previewRetro: (days: number, reflection: string | null) => invoke<string>("preview_retro", { days, reflection }),
+  generateRetro: (engine: string, days: number, reflection: string | null) => invoke<Retro>("generate_retro", { engine, days, reflection }),
   deleteRetro: (id: number) => invoke<void>("delete_retro", { id }),
 
   settings: () => invoke<Settings>("get_settings"),

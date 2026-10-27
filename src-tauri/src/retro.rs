@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use rusqlite::{Connection, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::analytics::{self, Range, project_name, source_label};
@@ -41,12 +41,56 @@ Time, retries, interruptions, waiting, abandoned work: what it cost and the like
 Patterns in opening prompts and follow-ups, with short quoted examples.
 ## Calibration
 How estimates and confidence compared with results, if journal data exists.
-## Last period's experiments
-Only if a previous retro is provided: whether the data shows each experiment was tried and whether it helped.
+## Experiments so far
+Only if experiments are listed: for each, what the measured before/after shows. Cite n, and say \"too early to tell\" when n is below 5 rather than guessing.
 ## Experiments for next period
-Exactly three, each with what to do differently, and the metric in this app that will show whether it worked.
+Exactly three, each with what to do differently and the metric in this app that will show whether it worked.
 
-Do not use tools. Reply with the Markdown only.";
+If the developer wrote their own reflection, start from it: agree, add evidence, or gently challenge it.
+
+After the Markdown, add one fenced ```json block containing your three experiments, in this shape:
+{\"experiments\": [{\"title\": \"short name\", \"hypothesis\": \"if I do X, metric Y improves\", \"metric\": \"<one metric key>\", \"category\": \"<optional task category>\"}]}
+Valid metric keys: success_rate, corrections_per_session, interruptions_per_session, re_edit_rate, blind_edit_rate, clear_ask, flow_score, active_minutes, commit_rate, cost_per_session, rework_rate. Valid categories: feature, bugfix, refactor, tests, docs, research, infra, review, other.
+
+Do not use tools. Reply with the Markdown and the JSON block only.";
+
+/// An experiment the retro proposed, ready to adopt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub title: String,
+    #[serde(default)]
+    pub hypothesis: Option<String>,
+    pub metric: String,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// Splits the model's reply into the Markdown to show and the proposed
+/// experiments. Suggestions with unknown metrics are dropped.
+pub fn split_reply(reply: &str) -> (String, Vec<Suggestion>) {
+    let Some(start) = reply.rfind("```json") else {
+        return (reply.trim().to_string(), vec![]);
+    };
+    let body_start = start + "```json".len();
+    let end = reply[body_start..]
+        .find("```")
+        .map(|e| body_start + e)
+        .unwrap_or(reply.len());
+    #[derive(Deserialize)]
+    struct Block {
+        experiments: Vec<Suggestion>,
+    }
+    let suggestions = serde_json::from_str::<Block>(reply[body_start..end].trim())
+        .map(|b| b.experiments)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| crate::experiments::metric(&s.metric).is_ok() && !s.title.trim().is_empty())
+        .take(3)
+        .collect();
+    let markdown = format!("{}{}", &reply[..start], reply.get(end + 3..).unwrap_or(""));
+    (markdown.trim().to_string(), suggestions)
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,11 +102,14 @@ pub struct RetroRow {
     pub engine: String,
     pub model: Option<String>,
     pub content_md: String,
+    pub reflection: Option<String>,
+    pub suggestions: Vec<Suggestion>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<RetroRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, created_at, period_start, period_end, engine, model, content_md
+        "SELECT id, created_at, period_start, period_end, engine, model, content_md, reflection,
+                experiments_json
          FROM retros ORDER BY created_at DESC LIMIT 100",
     )?;
     let rows = stmt
@@ -75,6 +122,11 @@ pub fn list(conn: &Connection) -> Result<Vec<RetroRow>> {
                 engine: r.get(4)?,
                 model: r.get(5)?,
                 content_md: r.get(6)?,
+                reflection: r.get(7)?,
+                suggestions: r
+                    .get::<_, Option<String>>(8)?
+                    .and_then(|j| serde_json::from_str(&j).ok())
+                    .unwrap_or_default(),
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -94,7 +146,7 @@ pub struct Prepared {
 
 /// Builds the user message. Exposed separately so the UI can preview exactly
 /// what will be sent before anything leaves the machine.
-pub fn prepare(conn: &Connection, days: i64) -> Result<Prepared> {
+pub fn prepare(conn: &Connection, days: i64, reflection: Option<&str>) -> Result<Prepared> {
     let range = Range::last_days(days.max(1));
     let overview = analytics::overview(conn, days.max(1))?;
     let insights = analytics::insights(conn, days.max(1))?;
@@ -178,9 +230,55 @@ pub fn prepare(conn: &Connection, days: i64) -> Result<Prepared> {
         }
     }
 
-    if let Some(prev) = list(conn)?.into_iter().next() {
-        prompt.push_str("\n# Previous retro (for follow-up on its experiments)\n");
-        prompt.push_str(&truncate(&prev.content_md, 4000));
+    let exps = crate::experiments::list(conn)?;
+    if !exps.is_empty() {
+        prompt.push_str(
+            "\n# Experiments (baseline locked at start; current = sessions in the window)\n",
+        );
+        for e in exps.iter().take(10) {
+            prompt.push_str(&format!(
+                "- \"{}\" [{}] metric {} ({}): baseline {} (n={}) → current {} (n={}); applied in {}/{} eligible sessions; reading: {}{}\n",
+                e.title,
+                e.status,
+                e.metric.key,
+                if e.metric.higher_is_better { "higher is better" } else { "lower is better" },
+                e.baseline_value.map(|v| format!("{v:.2}")).unwrap_or_else(|| "none".into()),
+                e.baseline_n,
+                e.current_value.map(|v| format!("{v:.2}")).unwrap_or_else(|| "none".into()),
+                e.current_n,
+                e.applied,
+                e.eligible,
+                e.reading,
+                e.verdict_note.as_deref().map(|n| format!("; your note: \"{}\"", truncate(n, 160))).unwrap_or_default(),
+            ));
+        }
+    }
+    let goals = crate::experiments::goals(conn)?;
+    if !goals.is_empty() {
+        prompt.push_str("\n# Goals (last 7 days)\n");
+        for g in &goals {
+            prompt.push_str(&format!(
+                "- {} target {:.2}: now {} (n={}); counter-metric {} {} (was {}){}\n",
+                g.metric.key,
+                g.target,
+                g.current
+                    .map(|v| format!("{v:.2}"))
+                    .unwrap_or_else(|| "none".into()),
+                g.n,
+                g.counter.key,
+                g.counter_current
+                    .map(|v| format!("{v:.2}"))
+                    .unwrap_or_else(|| "none".into()),
+                g.counter_baseline
+                    .map(|v| format!("{v:.2}"))
+                    .unwrap_or_else(|| "none".into()),
+                if g.counter_slipping { ", SLIPPING" } else { "" },
+            ));
+        }
+    }
+    if let Some(r) = reflection.map(str::trim).filter(|r| !r.is_empty()) {
+        prompt.push_str("\n# The developer's own reflection, written before this review\n");
+        prompt.push_str(&truncate(r, 2000));
         prompt.push('\n');
     }
 
@@ -191,8 +289,14 @@ pub fn prepare(conn: &Connection, days: i64) -> Result<Prepared> {
     })
 }
 
-pub fn generate(conn: &Connection, data_dir: &Path, engine: &str, days: i64) -> Result<RetroRow> {
-    let prepared = prepare(conn, days)?;
+pub fn generate(
+    conn: &Connection,
+    data_dir: &Path,
+    engine: &str,
+    days: i64,
+    reflection: Option<&str>,
+) -> Result<RetroRow> {
+    let prepared = prepare(conn, days, reflection)?;
     let (content, model) = match engine {
         "claude_cli" => {
             let model = db::get_setting(conn, "retro.cliModel")?.filter(|m| !m.is_empty());
@@ -217,9 +321,11 @@ pub fn generate(conn: &Connection, data_dir: &Path, engine: &str, days: i64) -> 
         other => bail!("Unknown retro engine {other}"),
     };
 
+    let (markdown, suggestions) = split_reply(&content);
     conn.execute(
-        "INSERT INTO retros (created_at, period_start, period_end, engine, model, stats_json, content_md)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO retros (created_at, period_start, period_end, engine, model, stats_json, content_md,
+                             reflection, experiments_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             now_ms(),
             prepared.range.since,
@@ -227,7 +333,9 @@ pub fn generate(conn: &Connection, data_dir: &Path, engine: &str, days: i64) -> 
             engine,
             model,
             prepared.stats_json,
-            content
+            markdown,
+            reflection.map(str::trim).filter(|r| !r.is_empty()),
+            serde_json::to_string(&suggestions)?
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -455,11 +563,28 @@ mod tests {
             [now - 3_600_000],
         )
         .unwrap();
-        let p = prepare(&conn, 7).unwrap();
+        let p = prepare(&conn, 7, Some("I kept steering instead of restarting")).unwrap();
+        assert!(p.prompt.contains("kept steering"));
         assert!(p.prompt.contains("Auth refactor"));
         assert!(p.prompt.contains("Refactor the auth module"));
         assert!(p.prompt.contains("Went in circles"));
         assert!(p.prompt.contains("outcome redo"));
         assert!(p.stats_json.contains("\"sessions\": 1"));
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    #[test]
+    fn splits_markdown_from_suggestions() {
+        let reply = "## Summary\nGood week.\n\n```json\n{\"experiments\": [{\"title\": \"Test first\", \"metric\": \"success_rate\", \"category\": \"bugfix\"}, {\"title\": \"Bad\", \"metric\": \"sessions\"}]}\n```\n";
+        let (md, s) = split_reply(reply);
+        assert_eq!(md, "## Summary\nGood week.");
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].metric, "success_rate");
+        let (md, s) = split_reply("no block");
+        assert_eq!((md.as_str(), s.len()), ("no block", 0));
     }
 }

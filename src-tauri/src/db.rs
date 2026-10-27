@@ -172,6 +172,46 @@ DELETE FROM source_files;
 ALTER TABLE sessions ADD COLUMN signals_version INTEGER NOT NULL DEFAULT 0;
 DELETE FROM source_files;
 "#,
+    // The improvement loop: one-tap reviews, pre-flight intents, experiments,
+    // goals and structured retros. ask_score needs a re-parse.
+    r#"
+ALTER TABLE sessions ADD COLUMN ask_score INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN vs_manual TEXT CHECK (vs_manual IN ('faster','slower','same','unsure'));
+ALTER TABLE intents ADD COLUMN done_when TEXT;
+ALTER TABLE intents ADD COLUMN context TEXT;
+ALTER TABLE retros ADD COLUMN reflection TEXT;
+ALTER TABLE retros ADD COLUMN experiments_json TEXT;
+ALTER TABLE session_commits ADD COLUMN reworked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_commits ADD COLUMN rework_sha TEXT;
+
+CREATE TABLE experiments (
+    id             INTEGER PRIMARY KEY,
+    created_at     INTEGER NOT NULL,
+    title          TEXT NOT NULL,
+    hypothesis     TEXT,
+    metric         TEXT NOT NULL,
+    category       TEXT,
+    source         TEXT,
+    start_at       INTEGER NOT NULL,
+    end_at         INTEGER NOT NULL,
+    baseline_value REAL,
+    baseline_n     INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','kept','dropped')),
+    verdict_note   TEXT,
+    retro_id       INTEGER REFERENCES retros(id) ON DELETE SET NULL
+);
+
+CREATE TABLE goals (
+    id             INTEGER PRIMARY KEY,
+    created_at     INTEGER NOT NULL,
+    metric         TEXT NOT NULL,
+    target         REAL NOT NULL,
+    counter_metric TEXT NOT NULL,
+    active         INTEGER NOT NULL DEFAULT 1
+);
+
+DELETE FROM source_files;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

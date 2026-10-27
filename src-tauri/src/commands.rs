@@ -13,6 +13,9 @@ use tauri::State;
 use crate::analytics::{
     self, Insight, Overview, Review, Scorecard, SessionDetail, SessionFilter, SessionRow,
 };
+use crate::experiments::{
+    self, Experiment, GoalStatus, MetricDef, NewExperiment, NewGoal, PreflightAdvice,
+};
 use crate::ingest::{IngestReport, Ingestor, source_setting};
 use crate::journal::{self, Calibration, CloseIntent, Intent, NewIntent};
 use crate::live::{self, LiveSummary};
@@ -307,8 +310,14 @@ pub fn list_retros(state: State<AppState>) -> CmdResult<Vec<RetroRow>> {
 }
 
 #[tauri::command(async)]
-pub fn preview_retro(state: State<AppState>, days: i64) -> CmdResult<String> {
-    with_db(&state, |c| Ok(retro::prepare(c, days)?.prompt))
+pub fn preview_retro(
+    state: State<AppState>,
+    days: i64,
+    reflection: Option<String>,
+) -> CmdResult<String> {
+    with_db(&state, |c| {
+        Ok(retro::prepare(c, days, reflection.as_deref())?.prompt)
+    })
 }
 
 #[tauri::command]
@@ -316,9 +325,10 @@ pub async fn generate_retro(
     state: State<'_, AppState>,
     engine: String,
     days: i64,
+    reflection: Option<String>,
 ) -> CmdResult<RetroRow> {
     blocking(&state, move |conn, data_dir| {
-        retro::generate(conn, data_dir, &engine, days)
+        retro::generate(conn, data_dir, &engine, days, reflection.as_deref())
     })
     .await
 }
@@ -396,4 +406,88 @@ pub fn set_api_key(key: String) -> CmdResult<()> {
 #[tauri::command(async)]
 pub fn clear_api_key() -> CmdResult<()> {
     retro::clear_api_key().map_err(err)
+}
+
+// ------------------------------------------------------------ improvement
+
+#[tauri::command(async)]
+pub fn quick_review(
+    state: State<AppState>,
+    id: String,
+    outcome: String,
+    vs_manual: Option<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        analytics::quick_review(c, &id, &outcome, vs_manual.as_deref())
+    })
+}
+
+#[tauri::command(async)]
+pub fn list_metrics() -> Vec<MetricDef> {
+    experiments::METRICS.to_vec()
+}
+
+#[tauri::command(async)]
+pub fn list_experiments(state: State<AppState>) -> CmdResult<Vec<Experiment>> {
+    with_db(&state, experiments::list)
+}
+
+#[tauri::command(async)]
+pub fn create_experiment(state: State<AppState>, input: NewExperiment) -> CmdResult<i64> {
+    with_db(&state, |c| experiments::create(c, &input))
+}
+
+#[tauri::command(async)]
+pub fn experiment_verdict(
+    state: State<AppState>,
+    id: i64,
+    decision: String,
+    note: Option<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        experiments::verdict(c, id, &decision, note.as_deref())
+    })
+}
+
+#[tauri::command(async)]
+pub fn delete_experiment(state: State<AppState>, id: i64) -> CmdResult<()> {
+    with_db(&state, |c| experiments::delete(c, id))
+}
+
+#[tauri::command(async)]
+pub fn set_experiment_applied(
+    state: State<AppState>,
+    session_id: String,
+    experiment_id: i64,
+    applied: bool,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        experiments::set_applied(c, &session_id, experiment_id, applied)
+    })
+}
+
+#[tauri::command(async)]
+pub fn list_goals(state: State<AppState>) -> CmdResult<Vec<GoalStatus>> {
+    with_db(&state, experiments::goals)
+}
+
+#[tauri::command(async)]
+pub fn create_goal(state: State<AppState>, input: NewGoal) -> CmdResult<i64> {
+    with_db(&state, |c| experiments::create_goal(c, &input))
+}
+
+#[tauri::command(async)]
+pub fn retire_goal(state: State<AppState>, id: i64) -> CmdResult<()> {
+    with_db(&state, |c| experiments::retire_goal(c, id))
+}
+
+#[tauri::command(async)]
+pub fn preflight(
+    state: State<AppState>,
+    text: String,
+    source: Option<String>,
+) -> CmdResult<PreflightAdvice> {
+    with_db(&state, |c| {
+        experiments::preflight(c, &text, source.as_deref())
+    })
 }

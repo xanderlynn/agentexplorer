@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { BookOpenCheck, ChartColumn, Coins, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Trophy } from "lucide-react";
-import { api, type LiveState, type SessionFilter } from "./api";
+import { BookOpenCheck, ChartColumn, Coins, FlaskConical, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
+import { api, type LiveSession, type LiveState, type SessionFilter } from "./api";
 import { cx } from "./components/ui";
 import { SessionDrawer } from "./components/SessionDrawer";
+import { Preflight } from "./components/Preflight";
+import { QuickReview } from "./components/QuickReview";
 import { projectName } from "./format";
+import Today from "./pages/Today";
+import Experiments from "./pages/Experiments";
 import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
 import Live from "./pages/Live";
@@ -21,9 +25,10 @@ import Settings from "./pages/Settings";
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Gauge }[] = [
+  { id: "today", label: "Today", icon: Sun },
   { id: "overview", label: "Overview", icon: Gauge },
   { id: "live", label: "Live", icon: Radio },
   { id: "sessions", label: "Sessions", icon: ListChecks },
@@ -32,6 +37,7 @@ const NAV: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: "journal", label: "Journal", icon: NotebookPen },
   { id: "playbooks", label: "Playbooks", icon: BookOpenCheck },
   { id: "scorecard", label: "Scorecard", icon: Trophy },
+  { id: "experiments", label: "Experiments", icon: FlaskConical },
   { id: "retro", label: "Weekly retro", icon: Sparkles },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -57,7 +63,8 @@ function store(key: string, value: unknown) {
 
 export default function App() {
   const qc = useQueryClient();
-  const [page, setPage] = useState<Page>(() => readStored("page", "overview"));
+  const [page, setPage] = useState<Page>(() => readStored("page", "today"));
+  const [planning, setPlanning] = useState(false);
   const [days, setDays] = useState<number>(() => readStored("days", 30));
   const [openSession, setOpenSession] = useState<string | null>(null);
   const [drill, setDrill] = useState<Drill | null>(null);
@@ -120,6 +127,8 @@ export default function App() {
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 lg:px-8">
+          {page === "today" && <Today onOpen={setOpenSession} go={go} drill={openSessions} plan={() => setPlanning(true)} />}
+          {page === "experiments" && <Experiments drill={openSessions} />}
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
           {page === "live" && <Live onOpen={setOpenSession} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
@@ -134,6 +143,8 @@ export default function App() {
       </main>
 
       {openSession && <SessionDrawer id={openSession} onClose={() => setOpenSession(null)} />}
+      {planning && <Preflight onClose={() => setPlanning(false)} />}
+      <ReviewPrompt sessions={live.data?.sessions} onOpen={setOpenSession} />
     </div>
   );
 }
@@ -162,4 +173,54 @@ function useWaitingNotifications(sessions: { id: string; state: LiveState; title
       }
     })().catch(() => {});
   }, [sessions, enabled]);
+}
+
+const PROMPTS_PER_DAY = 3;
+
+/**
+ * Asks for a one-tap review when a session finishes, while it's fresh.
+ * Never more than three a day, and never for a session already rated.
+ */
+function ReviewPrompt({ sessions, onOpen }: { sessions: LiveSession[] | undefined; onOpen: (id: string) => void }) {
+  const previous = useRef<Map<string, LiveState> | null>(null);
+  const [queue, setQueue] = useState<LiveSession[]>([]);
+  useEffect(() => {
+    if (!sessions) return;
+    const now = new Map(sessions.map((s) => [s.id, s.state]));
+    const before = previous.current;
+    previous.current = now;
+    if (!before) return;
+    const finished = sessions.filter((s) => {
+      const was = before.get(s.id);
+      const active = was === "working" || was === "quiet" || was === "waiting" || was === "needs_you";
+      return active && (s.state === "ended" || s.state === "idle") && !s.outcome;
+    });
+    if (!finished.length) return;
+    const today = new Date().toDateString();
+    const shown = readStored<{ day: string; n: number }>("reviewPrompts", { day: today, n: 0 });
+    const used = shown.day === today ? shown.n : 0;
+    const room = Math.max(0, PROMPTS_PER_DAY - used);
+    if (!room) return;
+    const add = finished.slice(0, room);
+    store("reviewPrompts", { day: today, n: used + add.length });
+    setQueue((q) => [...q, ...add.filter((s) => !q.some((x) => x.id === s.id))]);
+  }, [sessions]);
+
+  const current = queue[0];
+  if (!current) return null;
+  const dismiss = () => setQueue((q) => q.slice(1));
+  return (
+    <div className="fixed bottom-5 right-5 z-30 w-96 rounded-xl border border-zinc-700 bg-zinc-900 p-4 shadow-2xl" role="dialog" aria-label="Review the session that just finished">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <button className="min-w-0 text-left" onClick={() => onOpen(current.id)}>
+          <div className="text-xs text-zinc-500">Session finished · {projectName(current.projectPath)}</div>
+          <div className="truncate text-sm font-medium text-zinc-100">{current.title ?? "Untitled session"}</div>
+        </button>
+        <button aria-label="Dismiss" className="text-zinc-500 hover:text-zinc-200" onClick={dismiss}>
+          <X size={15} />
+        </button>
+      </div>
+      <QuickReview id={current.id} onDone={dismiss} compact />
+    </div>
+  );
 }

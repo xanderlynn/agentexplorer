@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, RotateCcw, Trash2 } from "lucide-react";
 import { api, type CalibrationRow, type Intent, type Outcome, type Source } from "../api";
-import { Button, Card, Empty, ErrorNote, Field, Loading, OutcomeBadge, OutcomePicker, PageHeader, RANGE_OPTIONS, Segmented, Stat, inputBase, inputClass } from "../components/ui";
-import { SOURCE_LABEL, TASK_TYPES, dateTime, pct, projectName } from "../format";
+import { Preflight } from "../components/Preflight";
+import { Button, Card, Empty, ErrorNote, Loading, OutcomeBadge, OutcomePicker, PageHeader, RANGE_OPTIONS, Segmented, Stat, inputBase, inputClass } from "../components/ui";
+import { SOURCE_LABEL, dateTime, pct, projectName } from "../format";
 
 export default function Journal({ days, setDays, onOpen }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void }) {
   const intents = useQuery({ queryKey: ["intents"], queryFn: api.intents });
@@ -19,7 +20,7 @@ export default function Journal({ days, setDays, onOpen }: { days: number; setDa
         actions={<Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />}
       />
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <NewIntent />
+        <PlanCard />
         <Card title={`Open intents (${open.length})`} className="xl:col-span-2">
           {intents.isLoading && <Loading />}
           {intents.data && open.length === 0 && <p className="text-sm text-zinc-500">Nothing in flight. Log your next task on the left before you start it.</p>}
@@ -63,67 +64,17 @@ export default function Journal({ days, setDays, onOpen }: { days: number; setDa
   );
 }
 
-function NewIntent() {
-  const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
-  const [goal, setGoal] = useState("");
-  const [taskType, setTaskType] = useState("feature");
-  const [projectPath, setProjectPath] = useState("");
-  const [tool, setTool] = useState<Source | "">("");
-  const [expected, setExpected] = useState(30);
-  const [confidence, setConfidence] = useState(3);
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createIntent({ goal, taskType, projectPath: projectPath || null, tool: tool || null, expectedMinutes: Math.max(1, Math.round(expected)), confidence }),
-    onSuccess: () => {
-      setGoal("");
-      qc.invalidateQueries();
-    },
-  });
-
+function PlanCard() {
+  const [open, setOpen] = useState(false);
   return (
-    <Card title="Log what you're about to delegate">
-      <form
-        className="space-y-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate();
-        }}
-      >
-        <Field label="Goal" hint="What does done look like?">
-          <textarea className={inputClass} rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="Add CSV export to the reports page, with tests" />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Type">
-            <select className={inputClass} value={taskType} onChange={(e) => setTaskType(e.target.value)}>
-              {TASK_TYPES.map((t) => <option key={t}>{t}</option>)}
-            </select>
-          </Field>
-          <Field label="Tool">
-            <select className={inputClass} value={tool} onChange={(e) => setTool(e.target.value as Source | "")}>
-              <option value="">Any</option>
-              {(Object.keys(SOURCE_LABEL) as Source[]).map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
-            </select>
-          </Field>
-        </div>
-        <Field label="Project" hint="Pick one and the next session started there links automatically.">
-          <select className={inputClass} value={projectPath} onChange={(e) => setProjectPath(e.target.value)}>
-            <option value="">None</option>
-            {projects.data?.map((p) => <option key={p} value={p}>{projectName(p)} — {p}</option>)}
-          </select>
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Expected minutes">
-            <input type="number" min={1} className={inputClass} value={expected} onChange={(e) => setExpected(Math.max(1, Number(e.target.value)))} />
-          </Field>
-          <Field label={`Confidence: ${confidence}/5`}>
-            <input type="range" min={1} max={5} value={confidence} onChange={(e) => setConfidence(Number(e.target.value))} className="mt-2 w-full accent-emerald-500" />
-          </Field>
-        </div>
-        <Button variant="primary" type="submit" busy={create.isPending} disabled={!goal.trim()}>Log intent</Button>
-        <ErrorNote error={create.error} />
-      </form>
+    <Card title="Plan before you delegate">
+      <p className="text-sm text-zinc-400">
+        Write the goal, what done looks like, and the files involved. It becomes your opening prompt and a journal entry in one step, with advice from your own history.
+      </p>
+      <Button className="mt-3" variant="primary" onClick={() => setOpen(true)}>
+        Plan a task
+      </Button>
+      {open && <Preflight onClose={() => setOpen(false)} />}
     </Card>
   );
 }

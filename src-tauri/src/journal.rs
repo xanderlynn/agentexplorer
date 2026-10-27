@@ -34,6 +34,10 @@ pub struct NewIntent {
     pub tool: Option<String>,
     pub expected_minutes: i64,
     pub confidence: i64,
+    #[serde(default)]
+    pub done_when: Option<String>,
+    #[serde(default)]
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,8 +81,9 @@ pub fn create(conn: &Connection, input: &NewIntent) -> Result<i64> {
         bail!("Expected minutes must be positive.");
     }
     conn.execute(
-        "INSERT INTO intents (created_at, goal, task_type, project_path, tool, expected_minutes, confidence)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO intents (created_at, goal, task_type, project_path, tool, expected_minutes, confidence,
+                              done_when, context)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             now_ms(),
             input.goal.trim(),
@@ -86,7 +91,9 @@ pub fn create(conn: &Connection, input: &NewIntent) -> Result<i64> {
             input.project_path.as_deref().filter(|p| !p.trim().is_empty()),
             input.tool.as_deref().filter(|t| !t.is_empty()),
             input.expected_minutes,
-            input.confidence
+            input.confidence,
+            input.done_when.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            input.context.as_deref().map(str::trim).filter(|s| !s.is_empty())
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -342,6 +349,8 @@ mod tests {
                 tool: None,
                 expected_minutes: 30,
                 confidence: 4,
+                done_when: None,
+                context: None,
             },
         )
         .unwrap();

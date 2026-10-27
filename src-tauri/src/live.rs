@@ -30,6 +30,7 @@ pub struct LiveSession {
     pub avg_wait_ms: Option<i64>,
     /// The agent's latest reply: what it is asking when it waits on you.
     pub last_message: Option<String>,
+    pub outcome: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,7 +58,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     let now = now_ms();
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
-                active_ms, wait_ms_total, wait_count, last_message
+                active_ms, wait_ms_total, wait_count, last_message, outcome
          FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 50",
     )?;
     let sessions: Vec<LiveSession> = stmt
@@ -80,6 +81,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 active_ms: r.get(8)?,
                 avg_wait_ms: (wait_count > 0).then(|| wait_total / wait_count),
                 last_message: r.get(11)?,
+                outcome: r.get(12)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

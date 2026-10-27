@@ -87,6 +87,10 @@ pub struct SessionRow {
     /// False for sessions parsed before tool, correction and category
     /// signals existed; they are left out of statistics built on them.
     pub has_signals: bool,
+    /// "Faster than doing it by hand?": faster, slower, same or unsure.
+    pub vs_manual: Option<String>,
+    /// A commit from this session was reverted or fixed within 7 days.
+    pub reworked: bool,
 }
 
 impl SessionRow {
@@ -105,24 +109,26 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
        s.last_event, s.tags, s.category, s.reads, s.edits, s.shell_calls,
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
-       s.signals_version >= 1
+       s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
-                  SUM(ai_trailer) AS ai
+                  SUM(ai_trailer) AS ai, SUM(reworked) AS rw
            FROM session_commits GROUP BY session_id) c ON c.session_id = s.id";
 
 fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     let tags: String = r.get(31)?;
     let first_prompt: Option<String> = r.get(3)?;
-    let first_prompt_len: i64 = r.get(28)?;
     let corrections: i64 = r.get(40)?;
     let interruptions: i64 = r.get(15)?;
     let user_turns: i64 = r.get(11)?;
     let active_ms: i64 = r.get(10)?;
     Ok(SessionRow {
         friction: signals::friction(
-            first_prompt.as_deref().unwrap_or(""),
-            first_prompt_len as usize,
+            match r.get::<_, i64>(42)? {
+                // Parsed before ask scores existed: score the stored opening.
+                0 => signals::check_ask(first_prompt.as_deref().unwrap_or("")).score,
+                n => n as u8,
+            },
             corrections,
             interruptions,
             user_turns,
@@ -170,6 +176,8 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         subagents: r.get(39)?,
         corrections,
         has_signals: r.get(41)?,
+        vs_manual: r.get(43)?,
+        reworked: r.get(44)?,
     })
 }
 
@@ -499,9 +507,42 @@ pub struct Review {
     pub rating: Option<i64>,
     pub notes: Option<String>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub vs_manual: Option<String>,
+}
+
+pub const VS_MANUAL: [&str; 4] = ["faster", "slower", "same", "unsure"];
+
+fn check_vs_manual(v: Option<&str>) -> Result<()> {
+    if let Some(v) = v
+        && !VS_MANUAL.contains(&v)
+    {
+        bail!("Unknown answer {v}");
+    }
+    Ok(())
+}
+
+/// The one-tap review: outcome and "faster than by hand?", keeping any
+/// rating, notes and tags already written.
+pub fn quick_review(
+    conn: &Connection,
+    id: &str,
+    outcome: &str,
+    vs_manual: Option<&str>,
+) -> Result<()> {
+    if !journal::OUTCOMES.contains(&outcome) {
+        bail!("Unknown outcome {outcome}");
+    }
+    check_vs_manual(vs_manual)?;
+    conn.execute(
+        "UPDATE sessions SET outcome = ?1, vs_manual = COALESCE(?2, vs_manual), reviewed_at = ?3 WHERE id = ?4",
+        params![outcome, vs_manual, now_ms(), id],
+    )?;
+    Ok(())
 }
 
 pub fn save_review(conn: &Connection, r: &Review) -> Result<()> {
+    check_vs_manual(r.vs_manual.as_deref())?;
     if let Some(o) = r.outcome.as_deref()
         && !journal::OUTCOMES.contains(&o)
     {
@@ -517,14 +558,16 @@ pub fn save_review(conn: &Connection, r: &Review) -> Result<()> {
         .filter(|t| !t.is_empty())
         .collect();
     conn.execute(
-        "UPDATE sessions SET outcome = ?1, rating = ?2, notes = ?3, tags = ?4, reviewed_at = ?5 WHERE id = ?6",
+        "UPDATE sessions SET outcome = ?1, rating = ?2, notes = ?3, tags = ?4, reviewed_at = ?5,
+                vs_manual = ?7 WHERE id = ?6",
         params![
             r.outcome,
             r.rating,
             r.notes.as_deref().filter(|n| !n.trim().is_empty()),
             serde_json::to_string(&tags)?,
             now_ms(),
-            r.id
+            r.id,
+            r.vs_manual
         ],
     )?;
     Ok(())
@@ -1511,6 +1554,7 @@ mod tests {
                 rating: Some(3),
                 notes: Some("tests missing".into()),
                 tags: vec![" Refactor ".into(), "".into()],
+                vs_manual: Some("faster".into()),
             },
         )
         .unwrap();
@@ -1525,7 +1569,8 @@ mod tests {
                     outcome: Some("great".into()),
                     rating: None,
                     notes: None,
-                    tags: vec![]
+                    tags: vec![],
+                    vs_manual: None,
                 }
             )
             .is_err()

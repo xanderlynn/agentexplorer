@@ -220,41 +220,116 @@ pub struct Friction {
     pub overall: f64,
 }
 
-/// `prompt_len` is the opening prompt's full length; `first_prompt` may be a
-/// truncated copy, used only to look for concrete anchors.
+/// What a prompt gives the agent to work with. Scored on content, not
+/// length, so a long but vague prompt doesn't score well.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AskCheck {
+    /// Enough words to state a goal.
+    pub goal: bool,
+    /// Says what "done" looks like.
+    pub done_criteria: bool,
+    /// Points at concrete files, code or errors.
+    pub anchors: bool,
+    /// States limits: what not to change, what to avoid.
+    pub constraints: bool,
+    /// Says how to check the result (tests, build, repro).
+    pub verification: bool,
+    /// 1–5.
+    pub score: u8,
+}
+
+const DONE_MARKERS: &[&str] = &[
+    "done when",
+    "should",
+    "must",
+    "so that",
+    "acceptance",
+    "expected",
+    "expect",
+    "make sure",
+    "ensure",
+    "until",
+    "success",
+    "result in",
+];
+const CONSTRAINT_MARKERS: &[&str] = &[
+    "don't",
+    "do not",
+    "without",
+    "only",
+    "keep",
+    "avoid",
+    "must not",
+    "no new",
+    "never",
+    "leave",
+    "unchanged",
+];
+const VERIFY_MARKERS: &[&str] = &[
+    "test*",
+    "verify",
+    "verified",
+    "run",
+    "check",
+    "build",
+    "lint",
+    "reproduce",
+    "repro",
+    "assert*",
+    "ci",
+];
+
+pub fn check_ask(prompt: &str) -> AskCheck {
+    let w = words(prompt);
+    let any = |list: &[&str]| list.iter().any(|k| matches(&w, k));
+    let anchors = prompt.contains('`')
+        || prompt.split_whitespace().any(|t| {
+            let t =
+                t.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_');
+            t.contains('/')
+                || t.contains('\\')
+                || (t.contains('.')
+                    && t.rsplit('.').next().is_some_and(|ext| {
+                        (1..=5).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphabetic())
+                    })
+                    && !t.ends_with('.'))
+        });
+    let mut c = AskCheck {
+        goal: w.len() >= 8,
+        done_criteria: any(DONE_MARKERS),
+        anchors,
+        constraints: any(CONSTRAINT_MARKERS),
+        verification: any(VERIFY_MARKERS),
+        score: 1,
+    };
+    let points = [
+        c.goal,
+        c.done_criteria,
+        c.anchors,
+        c.constraints,
+        c.verification,
+    ]
+    .iter()
+    .filter(|x| **x)
+    .count() as u8;
+    c.score = (1 + points).min(5);
+    if !c.goal {
+        // A one-liner can't be a clear ask, whatever keywords it has.
+        c.score = c.score.min(2);
+    }
+    c
+}
+
+/// `ask_score` is `check_ask(first prompt).score`.
 pub fn friction(
-    first_prompt: &str,
-    prompt_len: usize,
+    ask_score: u8,
     corrections: i64,
     interruptions: i64,
     user_turns: i64,
     active_minutes: i64,
 ) -> Friction {
-    let mut requirements: u8 = match prompt_len {
-        0..40 => 1,
-        40..100 => 2,
-        100..250 => 3,
-        250..600 => 4,
-        _ => 5,
-    };
-    // Concrete anchors (paths, code, acceptance criteria) make a goal clearer.
-    let lower = first_prompt.to_lowercase();
-    let anchored = first_prompt.contains('`')
-        || first_prompt.contains('/')
-        || [
-            "should",
-            "must",
-            "acceptance",
-            "done when",
-            "so that",
-            "test",
-        ]
-        .iter()
-        .any(|w| lower.contains(w));
-    if anchored && requirements < 5 {
-        requirements += 1;
-    }
-
+    let requirements = ask_score.clamp(1, 5);
     let steering = 5u8.saturating_sub((corrections + interruptions).clamp(0, 4) as u8);
 
     let scope: u8 = match (active_minutes, user_turns) {
@@ -314,10 +389,20 @@ mod tests {
 
     #[test]
     fn friction_rewards_clear_bounded_sessions() {
-        let prompt = "Add a CSV export button to src/reports/page.tsx. It should include the visible columns and have a unit test.";
-        let clear = friction(prompt, prompt.len(), 0, 0, 3, 12);
-        assert_eq!((clear.requirements, clear.steering, clear.scope), (4, 5, 5));
-        let rough = friction("fix it", 6, 3, 2, 30, 150);
+        let prompt = "Add a CSV export button to src/reports/page.tsx. It should include the visible columns, keep the existing layout, and have a unit test.";
+        let ask = check_ask(prompt);
+        assert!(
+            ask.goal && ask.done_criteria && ask.anchors && ask.constraints && ask.verification
+        );
+        let clear = friction(ask.score, 0, 0, 3, 12);
+        assert_eq!((clear.requirements, clear.steering, clear.scope), (5, 5, 5));
+        let rough = friction(check_ask("fix it").score, 3, 2, 30, 150);
         assert_eq!((rough.requirements, rough.steering, rough.scope), (1, 1, 1));
+    }
+
+    #[test]
+    fn long_vague_prompts_do_not_score_well() {
+        let vague = "I would really like it if you could have a look at the whole thing and generally make everything a lot better and nicer overall please, thank you so much";
+        assert!(check_ask(vague).score <= 2);
     }
 }
