@@ -139,6 +139,19 @@ pub struct ParsedSession {
     /// Working (1) and waiting-on-you (0) spans: (start, end, kind).
     pub timeline: Vec<(i64, i64, u8)>,
     pub turn_start: Option<i64>,
+    /// Tool kinds used in the current turn; classifies the turn when tool
+    /// calls carry no timestamps (VS Code).
+    pub turn_tools: Vec<ToolKind>,
+    /// The open stretch of the current turn: its start and mode. A new
+    /// stretch starts whenever a timed tool call changes the mode.
+    pub stretch: Option<(i64, Mode)>,
+    /// Agent working time per mode.
+    pub mode_ms: BTreeMap<String, i64>,
+    /// Plan mode was used (Claude Code plan mode, a Copilot plan).
+    pub planned: bool,
+    /// Largest and most recent context size sent to the model, in tokens.
+    pub peak_context: u64,
+    pub last_context: u64,
     pub read_paths: HashSet<String>,
     /// Files changed with Edit-type tools in this session.
     pub edited_paths: HashSet<String>,
@@ -154,7 +167,40 @@ pub enum ToolKind {
     /// Creates or overwrites a whole file; no prior read is expected.
     Write,
     Shell,
+    /// Web search and fetch.
+    Web,
     Other,
+}
+
+/// What a turn of agent work was mostly doing, judged by its tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Changed files.
+    Coding = 1,
+    /// Only read, searched or browsed.
+    Research = 2,
+    /// Ran commands (tests, builds) without changing files.
+    Running = 3,
+    /// No tools: answering, planning, explaining.
+    Discussion = 4,
+}
+
+impl Mode {
+    pub const ALL: [Mode; 4] = [
+        Mode::Coding,
+        Mode::Research,
+        Mode::Running,
+        Mode::Discussion,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Mode::Coding => "coding",
+            Mode::Research => "research",
+            Mode::Running => "running",
+            Mode::Discussion => "discussion",
+        }
+    }
 }
 
 /// Groups tool names across Claude Code, Copilot CLI and VS Code.
@@ -180,6 +226,7 @@ pub fn tool_kind(name: &str) -> ToolKind {
         "bash" | "shell" | "powershell" | "run_in_terminal" | "run_command" | "execute" => {
             ToolKind::Shell
         }
+        _ if n.contains("web") || n.starts_with("fetch") => ToolKind::Web,
         _ => ToolKind::Other,
     }
 }
@@ -220,7 +267,22 @@ impl ParsedSession {
             && t >= start
         {
             self.agent_ms += t - start;
-            self.push_span(start, t, 1);
+            self.close_stretch(start, t, true);
+        }
+        self.turn_tools.clear();
+        self.stretch = None;
+    }
+
+    /// Ends the open stretch at `end`, recording it as a span (and, when
+    /// `count`, as time in its mode). Without timed tool calls the whole
+    /// turn gets the turn's overall mode.
+    fn close_stretch(&mut self, turn_start: i64, end: i64, count: bool) {
+        let (start, mode) = self.stretch.unwrap_or((turn_start, self.turn_mode()));
+        if end > start {
+            if count {
+                *self.mode_ms.entry(mode.key().into()).or_default() += end - start;
+            }
+            self.push_span(start, end, mode as u8);
         }
     }
 
@@ -256,11 +318,20 @@ impl ParsedSession {
     }
 
     /// Records one tool call. `path` is the file it touched, when known.
-    pub fn note_tool(&mut self, name: &str, path: Option<&str>) {
+    /// Records one tool call. `path` is the file it touched and `ts` when
+    /// it was made, when known.
+    pub fn note_tool(&mut self, name: &str, path: Option<&str>, ts: Option<i64>) {
         self.tool_calls += 1;
         *self.tool_counts.entry(name.to_string()).or_default() += 1;
         let path = path.map(crate::util::path_key);
-        match tool_kind(name) {
+        let kind = tool_kind(name);
+        if !self.turn_tools.contains(&kind) {
+            self.turn_tools.push(kind);
+        }
+        if let (Some(turn_start), Some(t)) = (self.turn_start, ts) {
+            self.switch_stretch(turn_start, t, kind);
+        }
+        match kind {
             ToolKind::Read => {
                 self.reads += 1;
                 if let Some(p) = path {
@@ -292,7 +363,7 @@ impl ParsedSession {
                 }
             }
             ToolKind::Shell => self.shell_calls += 1,
-            ToolKind::Other => {}
+            ToolKind::Web | ToolKind::Other => {}
         }
     }
 
@@ -317,8 +388,63 @@ impl ParsedSession {
         if let (Some(start), Some(end)) = (self.turn_start, last)
             && end > start
         {
-            self.push_span(start, end, 1);
+            self.close_stretch(start, end, false);
         }
+    }
+
+    /// Time up to a tool call belongs to the stretch it ends; the first
+    /// tool's mode also claims the time before it (the agent deciding to
+    /// call it). Tools with no clear mode continue the current stretch.
+    fn switch_stretch(&mut self, turn_start: i64, t: i64, kind: ToolKind) {
+        let mode = match kind {
+            ToolKind::Edit | ToolKind::Write => Mode::Coding,
+            ToolKind::Shell => Mode::Running,
+            ToolKind::Read | ToolKind::Web => Mode::Research,
+            ToolKind::Other => match self.stretch {
+                Some((_, m)) => m,
+                None => return,
+            },
+        };
+        match self.stretch {
+            None => self.stretch = Some((turn_start, mode)),
+            Some((start, current)) if current != mode && t > start => {
+                *self.mode_ms.entry(current.key().into()).or_default() += t - start;
+                self.push_span(start, t, current as u8);
+                self.stretch = Some((t, mode));
+            }
+            _ => {}
+        }
+    }
+
+    /// Coding if the turn changed files, else running if it ran commands,
+    /// else research if it read or browsed, else discussion.
+    fn turn_mode(&self) -> Mode {
+        let used = |k: ToolKind| self.turn_tools.contains(&k);
+        if used(ToolKind::Edit) || used(ToolKind::Write) {
+            Mode::Coding
+        } else if used(ToolKind::Shell) {
+            Mode::Running
+        } else if used(ToolKind::Read) || used(ToolKind::Web) {
+            Mode::Research
+        } else {
+            Mode::Discussion
+        }
+    }
+
+    pub fn note_context(&mut self, tokens: u64) {
+        if tokens > 0 {
+            self.peak_context = self.peak_context.max(tokens);
+            self.last_context = tokens;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn mode_of(kinds: &[ToolKind]) -> Mode {
+        ParsedSession {
+            turn_tools: kinds.to_vec(),
+            ..Default::default()
+        }
+        .turn_mode()
     }
 
     pub fn derive(&self) -> Derived {
@@ -364,5 +490,42 @@ impl ParsedSession {
             cost_usd,
             cost_is_estimate,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_a_turn_into_stretches_by_tool() {
+        let mut s = ParsedSession::default();
+        s.note_human_prompt(Some(0));
+        s.note_tool("Read", Some("a.rs"), Some(1_000));
+        s.note_tool("Grep", None, Some(5_000));
+        s.note_tool("Edit", Some("a.rs"), Some(20_000));
+        s.note_tool("Bash", None, Some(22_000));
+        s.note_turn_end(Some(30_000));
+        assert_eq!(s.mode_ms.get("research"), Some(&20_000));
+        assert_eq!(s.mode_ms.get("coding"), Some(&2_000));
+        assert_eq!(s.mode_ms.get("running"), Some(&8_000));
+        assert_eq!(s.agent_ms, 30_000);
+        assert_eq!(s.timeline.len(), 3);
+    }
+
+    #[test]
+    fn classifies_turns_by_strongest_tool() {
+        assert_eq!(
+            ParsedSession::mode_of(&[ToolKind::Read, ToolKind::Edit]),
+            Mode::Coding
+        );
+        assert_eq!(
+            ParsedSession::mode_of(&[ToolKind::Read, ToolKind::Shell]),
+            Mode::Running
+        );
+        assert_eq!(ParsedSession::mode_of(&[ToolKind::Web]), Mode::Research);
+        assert_eq!(ParsedSession::mode_of(&[]), Mode::Discussion);
+        assert_eq!(tool_kind("WebFetch"), ToolKind::Web);
+        assert_eq!(tool_kind("fetch_copilot_cli_documentation"), ToolKind::Web);
     }
 }

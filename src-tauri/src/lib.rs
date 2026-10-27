@@ -65,6 +65,7 @@ pub fn run() {
             commands::get_scorecard,
             commands::get_usage,
             commands::get_reality,
+            commands::get_execution,
             commands::get_anomalies,
             commands::get_failure_clusters,
             commands::get_timelines,

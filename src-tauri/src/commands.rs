@@ -84,6 +84,11 @@ pub fn get_reality(state: State<AppState>, days: i64) -> CmdResult<trends::Reali
 }
 
 #[tauri::command(async)]
+pub fn get_execution(state: State<AppState>, days: i64) -> CmdResult<trends::Execution> {
+    with_db(&state, |c| trends::execution(c, days))
+}
+
+#[tauri::command(async)]
 pub fn get_anomalies(state: State<AppState>, days: i64) -> CmdResult<Vec<trends::Anomaly>> {
     with_db(&state, |c| trends::anomalies(c, days))
 }
@@ -383,6 +388,7 @@ const SETTING_KEYS: &[&str] = &[
     "retro.apiModel",
     "retro.claudePath",
     "budget.monthly",
+    "context.smartZoneTokens",
 ];
 
 #[derive(Serialize)]

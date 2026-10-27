@@ -31,6 +31,10 @@ pub struct LiveSession {
     /// The agent's latest reply: what it is asking when it waits on you.
     pub last_message: Option<String>,
     pub outcome: Option<String>,
+    /// What the latest turn was doing: coding, research, running, discussion.
+    pub mode: Option<String>,
+    /// Context sent with the latest request, in tokens.
+    pub context: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +45,16 @@ pub struct LiveSummary {
     pub waiting_on_you: usize,
     /// Time agents spent waiting on you across sessions started today.
     pub wait_ms_today: i64,
+}
+
+/// The mode of the most recent working span in a stored timeline.
+fn last_mode(timeline: &str) -> Option<String> {
+    let spans: Vec<(i64, i64, u8)> = serde_json::from_str(timeline).ok()?;
+    let kind = spans.iter().rev().find(|s| s.2 != 0)?.2;
+    crate::model::Mode::ALL
+        .iter()
+        .find(|m| **m as u8 == kind)
+        .map(|m| m.key().to_string())
 }
 
 pub fn state_for(last_event: Option<&str>, age_ms: i64) -> &'static str {
@@ -58,7 +72,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     let now = now_ms();
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
-                active_ms, wait_ms_total, wait_count, last_message, outcome
+                active_ms, wait_ms_total, wait_count, last_message, outcome, timeline, last_context
          FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 50",
     )?;
     let sessions: Vec<LiveSession> = stmt
@@ -82,6 +96,8 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 avg_wait_ms: (wait_count > 0).then(|| wait_total / wait_count),
                 last_message: r.get(11)?,
                 outcome: r.get(12)?,
+                mode: last_mode(&r.get::<_, String>(13)?),
+                context: r.get(14)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

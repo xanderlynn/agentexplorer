@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Source } from "../api";
@@ -11,11 +12,18 @@ const SOURCES = Object.keys(SOURCE_LABEL) as Source[];
 
 export default function Usage({ days, setDays, drill }: { days: number; setDays: (d: number) => void; drill: (d: Drill) => void }) {
   const q = useQuery({ queryKey: ["usage", days], queryFn: () => api.usage(days) });
+  // On a subscription, tokens (limits) matter more than dollars.
+  const [unit, setUnit] = useState<"tokens" | "cost">("tokens");
   const header = (
     <PageHeader
       title="Usage"
-      subtitle="Spend, tokens, caching and models. Claude Code costs are as recorded; Copilot figures are API-equivalent estimates."
-      actions={<Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />}
+      subtitle="Tokens and spend by tool and model. On a subscription, tokens decide when you hit limits; Claude Code costs are as recorded, Copilot's are API-equivalent estimates."
+      actions={
+        <>
+          <Segmented options={[{ value: "tokens", label: "Tokens" }, { value: "cost", label: "Cost" }]} value={unit} onChange={setUnit} />
+          <Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />
+        </>
+      }
     />
   );
   if (q.isLoading) return <>{header}<Loading /></>;
@@ -25,7 +33,8 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
   if (u.byModel.length === 0) return <>{header}<Empty title="No sessions in this range" /></>;
 
   const total = u.daily.reduce((n, d) => n + Object.values(d.cost).reduce((a, b) => a + b, 0), 0);
-  const costRows = u.daily.map((d) => ({ date: d.date, ...d.cost }));
+  const perDay = u.daily.map((d) => ({ date: d.date, ...(unit === "cost" ? d.cost : d.tokens) }));
+  const tokens = u.input + u.output + u.cacheRead + u.cacheWrite;
   const cacheRows = u.daily.map((d) => {
     const prompt = d.input + d.cacheRead + d.cacheWrite;
     return { date: d.date, hitRate: prompt ? d.cacheRead / prompt : null };
@@ -42,6 +51,10 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
     <>
       {header}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Tokens in range" value={compact(tokens)} hint={`${compact(u.output)} output · ${compact(u.cacheRead)} from cache`} />
+        <Stat label="Tokens per session" value={u.sessions ? compact(tokens / u.sessions) : "—"} n={u.sessions} />
+        <Stat label="Tokens per shipped session" value={u.shipped ? compact(tokens / u.shipped) : "—"} n={u.shipped} hint="all tokens ÷ sessions you rated shipped" />
+        <Stat label="Cache hit rate" value={pct(u.cacheHitRate)} hint="share of prompt tokens read from cache" />
         <Stat label="Spend in range" value={money(total, true)} hint={u.costPerSession != null ? `${money(u.costPerSession)} per session with a cost` : undefined} />
         <Stat
           label="This month"
@@ -56,7 +69,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
             )
           }
         />
-        <Stat label="Cache hit rate" value={pct(u.cacheHitRate)} hint="share of prompt tokens read from cache" />
+        <Stat label="Spend per shipped session" value={u.shipped ? money(total / u.shipped, true) : "—"} n={u.shipped} />
         <Stat label="Saved by caching" value={money(u.cacheSavingsUsd, true)} hint="vs. full input price, Claude models" />
       </div>
 
@@ -78,11 +91,11 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card title="Spend per day by tool" action={<Legend items={SOURCES.map((s) => [SOURCE_LABEL[s], SOURCE_COLOR[s]])} />}>
+        <Card title={unit === "cost" ? "Spend per day by tool" : "Tokens per day by tool"} action={<Legend items={SOURCES.map((s) => [SOURCE_LABEL[s], SOURCE_COLOR[s]])} />}>
           <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={costRows}
+                data={perDay}
                 margin={{ left: -6, right: 8, top: 8 }}
                 onClick={(e) => {
                   const date = e?.activeLabel as string | undefined;
@@ -91,8 +104,12 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
               >
                 <CartesianGrid stroke={chart.grid} vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => `$${v}`} />
-                <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v, name) => [money(Number(v)), SOURCE_LABEL[name as Source] ?? name]} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => (unit === "cost" ? `$${v}` : compact(v))} />
+                <Tooltip
+                  {...chart.tooltip}
+                  cursor={{ fill: chart.grid }}
+                  formatter={(v, name) => [unit === "cost" ? money(Number(v)) : compact(Number(v)), SOURCE_LABEL[name as Source] ?? name]}
+                />
                 {SOURCES.map((s) => (
                   <Bar key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} className="cursor-pointer" />
                 ))}
@@ -141,6 +158,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                 <th className="pb-2 text-right font-medium">Sessions</th>
                 <th className="pb-2 text-right font-medium">Spend</th>
                 <th className="pb-2 text-right font-medium">Per session</th>
+                <th className="pb-2 text-right font-medium">Tokens / session</th>
                 <th className="pb-2 text-right font-medium">Prompts</th>
                 <th className="pb-2 text-right font-medium">Active min</th>
                 <th className="pb-2 text-right font-medium">Flow ≈</th>
@@ -154,6 +172,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.sessions}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{money(m.costUsd)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{money(m.costPerSession)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-300">{compact(m.tokens / Math.max(1, m.sessions))}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.avgTurns.toFixed(1)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{Math.round(m.avgActiveMinutes)}</td>
                   <td className="py-1.5 text-right tabular-nums text-zinc-300">{m.avgFriction.toFixed(1)}</td>

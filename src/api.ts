@@ -53,7 +53,13 @@ export interface SessionRow {
   vsManual: VsManual | null;
   reworked: boolean;
   agentMs: number;
+  planned: boolean;
+  peakContext: number;
+  modeMs: Partial<Record<Mode, number>>;
+  style: "one_shot" | "planned" | "iterative";
 }
+
+export type Mode = "coding" | "research" | "running" | "discussion";
 
 export type VsManual = "faster" | "slower" | "same" | "unsure";
 
@@ -212,6 +218,8 @@ export interface LiveSession {
   avgWaitMs: number | null;
   lastMessage: string | null;
   outcome: Outcome | null;
+  mode: Mode | null;
+  context: number;
 }
 
 export interface LiveSummary {
@@ -349,6 +357,38 @@ export interface ToolHealth {
   vetoes: number;
 }
 
+export type ModeSplit = Record<Mode, number>;
+
+export interface Execution {
+  /** Hours per mode. */
+  modes: ModeSplit;
+  bySource: { label: string; split: ModeSplit }[];
+  weekly: { label: string; split: ModeSplit }[];
+  styles: {
+    style: "one_shot" | "planned" | "iterative";
+    sessions: number;
+    rated: number;
+    successRate: number | null;
+    reworkRate: number | null;
+    avgActiveMinutes: number | null;
+    avgPrompts: number | null;
+    avgTokens: number | null;
+    avgCorrections: number | null;
+    ids: string[];
+  }[];
+  context: {
+    smartZoneTokens: number;
+    measured: number;
+    overZone: string[];
+    compacted: string[];
+    successWithin: number | null;
+    ratedWithin: number;
+    successOver: number | null;
+    ratedOver: number;
+    buckets: [string, number][];
+  };
+}
+
 export interface Anomaly {
   id: string;
   title: string | null;
@@ -478,7 +518,7 @@ export interface SessionFilter {
 }
 
 export interface Usage {
-  daily: { date: string; cost: Record<string, number>; input: number; output: number; cacheRead: number; cacheWrite: number }[];
+  daily: { date: string; cost: Record<string, number>; tokens: Record<string, number>; input: number; output: number; cacheRead: number; cacheWrite: number }[];
   byModel: {
     model: string;
     sessions: number;
@@ -503,6 +543,8 @@ export interface Usage {
   daysInMonth: number;
   budgetUsd: number | null;
   costPerSession: number | null;
+  sessions: number;
+  shipped: number;
 }
 
 export interface Benchmark {
@@ -560,6 +602,7 @@ export const api = {
   exportSessions: (filter: SessionFilter) => invoke<string>("export_sessions", { filter }),
   usage: (days: number) => invoke<Usage>("get_usage", { days }),
   reality: (days: number) => invoke<Reality>("get_reality", { days }),
+  execution: (days: number) => invoke<Execution>("get_execution", { days }),
   anomalies: (days: number) => invoke<Anomaly[]>("get_anomalies", { days }),
   failureClusters: (days: number) => invoke<FailureCluster[]>("get_failure_clusters", { days }),
   timelines: (since: number) => invoke<Lane[]>("get_timelines", { since }),

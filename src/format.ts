@@ -1,4 +1,4 @@
-import type { Outcome, Source } from "./api";
+import type { Mode, Outcome, Source } from "./api";
 
 export const SOURCE_LABEL: Record<Source, string> = {
   claude_code: "Claude Code",
@@ -24,6 +24,33 @@ export const OUTCOME_CLASS: Record<Outcome, string> = {
   partial: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   abandoned: "bg-zinc-500/15 text-zinc-300 ring-zinc-500/30",
   redo: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
+};
+
+export const MODE_LABEL: Record<Mode, string> = {
+  coding: "Coding",
+  research: "Research",
+  running: "Running commands",
+  discussion: "Discussion",
+};
+
+// Fixed hues so modes read the same in every theme; waiting stays amber.
+export const MODE_COLOR: Record<Mode, string> = {
+  coding: "#10b981",
+  research: "#38bdf8",
+  running: "#a78bfa",
+  discussion: "#a1a1aa",
+};
+
+/** Timeline span kinds from the backend: 0 = waiting on you, 1–4 = modes. */
+export const SPAN_MODE: Record<number, Mode | "waiting"> = { 0: "waiting", 1: "coding", 2: "research", 3: "running", 4: "discussion" };
+
+/** Matches trends::DEFAULT_SMART_ZONE_TOKENS in the backend. */
+export const SMART_ZONE_DEFAULT = 100_000;
+
+export const STYLE_LABEL: Record<string, string> = {
+  one_shot: "One-shot",
+  planned: "Planned",
+  iterative: "Iterative",
 };
 
 export const sourceLabel = (s: string) => SOURCE_LABEL[s as Source] ?? s;

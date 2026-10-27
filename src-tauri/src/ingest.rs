@@ -234,7 +234,7 @@ impl Ingestor {
 /// Bump when the parsers start recording new per-session signals; rows with
 /// a lower version are re-parsed and left out of signal-based statistics
 /// until they are.
-pub const SIGNALS_VERSION: i64 = 3;
+pub const SIGNALS_VERSION: i64 = 5;
 
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())
@@ -309,10 +309,10 @@ fn upsert_session(
             wait_ms_total, wait_count, ingested_at, tool_counts, reads, edits, shell_calls,
             edits_without_read, re_edits, compactions, subagents, corrections, category,
             last_message, signals_version, ask_score, tool_errors_by, tool_vetoes, agent_ms,
-            timeline
+            timeline, mode_ms, planned, peak_context, last_context
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
                    ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
-                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50)
+                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54)
          ON CONFLICT(id) DO UPDATE SET
             file_path = excluded.file_path,
             project_path = COALESCE(excluded.project_path, project_path),
@@ -340,7 +340,9 @@ fn upsert_session(
             last_message = excluded.last_message, signals_version = excluded.signals_version,
             ask_score = excluded.ask_score, tool_errors_by = excluded.tool_errors_by,
             tool_vetoes = excluded.tool_vetoes, agent_ms = excluded.agent_ms,
-            timeline = excluded.timeline",
+            timeline = excluded.timeline, mode_ms = excluded.mode_ms,
+            planned = excluded.planned, peak_context = excluded.peak_context,
+            last_context = excluded.last_context",
         params![
             id,
             source.as_str(),
@@ -396,6 +398,10 @@ fn upsert_session(
             serde_json::to_string(&s.tool_vetoes)?,
             s.agent_ms,
             serde_json::to_string(&s.timeline)?,
+            serde_json::to_string(&s.mode_ms)?,
+            s.planned,
+            s.peak_context as i64,
+            s.last_context as i64,
         ],
     )?;
 
@@ -546,6 +552,28 @@ mod tests {
         println!(
             "commits linked={} playbooks={} playbook links={}",
             extra.0, extra.1, extra.2
+        );
+        let modes: Vec<String> = conn
+            .prepare("SELECT mode_ms FROM sessions")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let mut total: std::collections::BTreeMap<String, i64> = Default::default();
+        for m in modes {
+            for (k, v) in
+                serde_json::from_str::<std::collections::BTreeMap<String, i64>>(&m).unwrap()
+            {
+                *total.entry(k).or_default() += v;
+            }
+        }
+        println!(
+            "agent minutes by mode: {:?}",
+            total
+                .iter()
+                .map(|(k, v)| (k, *v / 60_000))
+                .collect::<Vec<_>>()
         );
         // A second pass must find nothing new.
         let again = ing.ingest_all(&mut conn, false).unwrap();

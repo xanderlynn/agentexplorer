@@ -115,6 +115,9 @@ export default function Settings() {
 
         <Card title="Behaviour">
           <div className="space-y-3">
+            <Field label="Smart-zone limit (tokens)" hint="Sessions whose context grows past this are flagged. Models follow instructions less reliably long before their window is full; 100k is a sensible default.">
+              <SettingInput settingKey="context.smartZoneTokens" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder="100000" />
+            </Field>
             <Field label="Monthly AI budget (USD)" hint="Optional. Shown against your month-to-date pace on the Usage page.">
               <SettingInput settingKey="budget.monthly" values={v} ready={!!settings.data} onSave={(key, value) => set.mutate({ key, value })} placeholder="e.g. 200" />
             </Field>

@@ -111,7 +111,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 Some("toolInvocation" | "toolInvocationSerialized") => {
                     let name = item.get("toolId").and_then(Value::as_str).unwrap_or("tool");
                     // "copilot_readFile" → "readFile" for grouping with other tools.
-                    s.note_tool(&vscode_tool_name(name), None);
+                    s.note_tool(&vscode_tool_name(name), None, None);
                 }
                 // Plain markdown parts carry no kind.
                 None | Some("markdownContent") => {
@@ -133,6 +133,19 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
         }
 
         let meta = result.and_then(|r| r.get("metadata"));
+        if let Some(t) = meta
+            .and_then(|m| m.get("promptTokens"))
+            .and_then(Value::as_u64)
+        {
+            s.note_context(t);
+        }
+        if req
+            .pointer("/modeInfo/modeId")
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.eq_ignore_ascii_case("plan"))
+        {
+            s.planned = true;
+        }
         let n = |k: &str| {
             meta.and_then(|m| m.get(k))
                 .and_then(Value::as_u64)

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type LiveSession, type LiveState } from "../api";
 import { Card, Empty, ErrorNote, Loading, PageHeader, SourceBadge, Stat, cx } from "../components/ui";
-import { ago, duration, projectName } from "../format";
+import { MODE_COLOR, MODE_LABEL, SMART_ZONE_DEFAULT, ago, compact, duration, projectName } from "../format";
 
 const STATE: Record<LiveState, { label: string; dot: string; text: string; help: string }> = {
   needs_you: { label: "Needs permission", dot: "bg-rose-400 animate-pulse", text: "text-rose-300", help: "Waiting for you to approve a tool call." },
@@ -17,6 +17,8 @@ const ORDER: LiveState[] = ["needs_you", "waiting", "quiet", "working", "idle", 
 export default function Live({ onOpen }: { onOpen: (id: string) => void }) {
   // Shares the 5-second poll App.tsx runs for notifications.
   const q = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 5000, staleTime: 0 });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
   const header = <PageHeader title="Live" subtitle="Sessions active in the last 3 hours. The bottleneck is often the human; this shows when it's you." />;
   if (q.isLoading) return <>{header}<Loading /></>;
   if (q.error) return <>{header}<ErrorNote error={q.error} /></>;
@@ -38,7 +40,7 @@ export default function Live({ onOpen }: { onOpen: (id: string) => void }) {
           <Empty title="Nothing running">Start a Claude Code or Copilot session and it will appear here within a few seconds.</Empty>
         ) : (
           <ul className="divide-y divide-zinc-800/70">
-            {sorted.map((s) => <Row key={s.id} s={s} onOpen={onOpen} />)}
+            {sorted.map((s) => <Row key={s.id} s={s} onOpen={onOpen} zone={zone} />)}
           </ul>
         )}
       </Card>
@@ -46,7 +48,7 @@ export default function Live({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-function Row({ s, onOpen }: { s: LiveSession; onOpen: (id: string) => void }) {
+function Row({ s, onOpen, zone }: { s: LiveSession; onOpen: (id: string) => void; zone: number }) {
   const st = STATE[s.state];
   return (
     <li>
@@ -60,6 +62,16 @@ function Row({ s, onOpen }: { s: LiveSession; onOpen: (id: string) => void }) {
             {s.gitBranch && <span>· {s.gitBranch}</span>}
             <span>· {s.userTurns} prompts · {duration(s.activeMs)} active</span>
             {s.avgWaitMs != null && <span>· you respond in {duration(s.avgWaitMs)} on average</span>}
+            {s.mode && (s.state === "working" || s.state === "quiet") && (
+              <span className="inline-flex items-center gap-1">
+                · <span className="h-2 w-2 rounded-full" style={{ background: MODE_COLOR[s.mode] }} aria-hidden /> {MODE_LABEL[s.mode].toLowerCase()}
+              </span>
+            )}
+            {s.context > 0 && (
+              <span className={s.context > zone ? "text-amber-300" : undefined} title={s.context > zone ? "Past the smart zone: consider starting fresh with a summary" : undefined}>
+                · {compact(s.context)} context{s.context > zone ? " ⚠" : ""}
+              </span>
+            )}
           </div>
           {(s.state === "waiting" || s.state === "needs_you") && s.lastMessage && (
             <div className="mt-1.5 line-clamp-2 rounded-md border-l-2 border-amber-500/60 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-400">{s.lastMessage}</div>

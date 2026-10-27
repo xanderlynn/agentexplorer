@@ -49,6 +49,8 @@ pub struct UsageDay {
     pub date: String,
     /// Cost per tool (claude_code, copilot_cli, copilot_vscode).
     pub cost: BTreeMap<String, f64>,
+    /// All tokens (including cache) per tool.
+    pub tokens: BTreeMap<String, i64>,
     pub input: i64,
     pub output: i64,
     pub cache_read: i64,
@@ -91,6 +93,8 @@ pub struct Usage {
     /// Optional monthly budget from Settings.
     pub budget_usd: Option<f64>,
     pub cost_per_session: Option<f64>,
+    pub sessions: usize,
+    pub shipped: usize,
 }
 
 struct Tokens {
@@ -144,6 +148,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
                 UsageDay {
                     date: d.format("%Y-%m-%d").to_string(),
                     cost: BTreeMap::new(),
+                    tokens: BTreeMap::new(),
                     input: 0,
                     output: 0,
                     cache_read: 0,
@@ -166,6 +171,7 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         }
         if let Some(day) = local_date(t.started_at).and_then(|d| daily.get_mut(&d)) {
             *day.cost.entry(t.source.clone()).or_default() += t.cost.unwrap_or(0.0);
+            *day.tokens.entry(t.source.clone()).or_default() += t.t.iter().sum::<i64>();
             day.input += t.t[0];
             day.output += t.t[1];
             day.cache_read += t.t[2];
@@ -273,6 +279,11 @@ pub fn usage(conn: &Connection, days: i64) -> Result<Usage> {
         budget_usd,
         cost_per_session: (!costed.is_empty())
             .then(|| costed.iter().sum::<f64>() / costed.len() as f64),
+        sessions: rows.len(),
+        shipped: rows
+            .iter()
+            .filter(|s| s.outcome.as_deref() == Some("shipped"))
+            .count(),
     })
 }
 
@@ -1103,5 +1114,218 @@ mod review_tests {
         assert_eq!(cause("s1").as_deref(), Some("Steering churn"));
 
         assert_eq!(timelines(&conn, 0).unwrap().len(), 12);
+    }
+}
+
+// -------------------------------------------------------------- execution
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModeSplit {
+    pub coding: f64,
+    pub research: f64,
+    pub running: f64,
+    pub discussion: f64,
+}
+
+impl ModeSplit {
+    fn add(&mut self, mode_ms: &BTreeMap<String, i64>) {
+        let h = |k: &str| *mode_ms.get(k).unwrap_or(&0) as f64 / 3_600_000.0;
+        self.coding += h("coding");
+        self.research += h("research");
+        self.running += h("running");
+        self.discussion += h("discussion");
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabeledSplit {
+    pub label: String,
+    /// Hours per mode.
+    pub split: ModeSplit,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleRow {
+    pub style: String,
+    pub sessions: usize,
+    pub rated: usize,
+    pub success_rate: Option<f64>,
+    pub rework_rate: Option<f64>,
+    pub avg_active_minutes: Option<f64>,
+    pub avg_prompts: Option<f64>,
+    pub avg_tokens: Option<f64>,
+    pub avg_corrections: Option<f64>,
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextStats {
+    pub smart_zone_tokens: i64,
+    /// Sessions with a measured context size.
+    pub measured: usize,
+    pub over_zone: Vec<String>,
+    pub compacted: Vec<String>,
+    pub success_within: Option<f64>,
+    pub rated_within: usize,
+    pub success_over: Option<f64>,
+    pub rated_over: usize,
+    /// (label, sessions) by peak context.
+    pub buckets: Vec<(String, usize)>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Execution {
+    pub modes: ModeSplit,
+    pub by_source: Vec<LabeledSplit>,
+    pub weekly: Vec<LabeledSplit>,
+    pub styles: Vec<StyleRow>,
+    pub context: ContextStats,
+}
+
+/// Default for the "smart zone": past this much context, models lose track
+/// of instructions and earlier detail. Configurable in Settings.
+pub const DEFAULT_SMART_ZONE_TOKENS: i64 = 100_000;
+
+/// What the agents spend their time doing, how sessions are run (one-shot,
+/// planned, iterative), and how often they outgrow the model's smart zone.
+pub fn execution(conn: &Connection, days: i64) -> Result<Execution> {
+    let rows: Vec<SessionRow> = load_sessions(conn, Range::last_days(days))?
+        .into_iter()
+        .filter(|s| s.has_signals)
+        .collect();
+
+    let mut modes = ModeSplit::default();
+    let mut by_source: BTreeMap<String, ModeSplit> = BTreeMap::new();
+    let mut weekly: BTreeMap<NaiveDate, ModeSplit> = BTreeMap::new();
+    for s in &rows {
+        modes.add(&s.mode_ms);
+        by_source
+            .entry(s.source.clone())
+            .or_default()
+            .add(&s.mode_ms);
+        if let Some(d) = s.started_at.and_then(local_date) {
+            let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
+            weekly.entry(monday).or_default().add(&s.mode_ms);
+        }
+    }
+
+    let mut styles = vec![];
+    for style in ["one_shot", "planned", "iterative"] {
+        let g: Vec<&SessionRow> = rows.iter().filter(|s| s.style == style).collect();
+        let (rated, success_rate) = success(&g);
+        let with: Vec<&&SessionRow> = g.iter().filter(|s| s.commits > 0).collect();
+        styles.push(StyleRow {
+            style: style.into(),
+            sessions: g.len(),
+            rated,
+            success_rate,
+            rework_rate: ratio(
+                with.iter().filter(|s| s.reworked).count() as i64,
+                with.len() as i64,
+            ),
+            avg_active_minutes: mean(g.iter().map(|s| s.active_ms as f64 / 60_000.0)),
+            avg_prompts: mean(g.iter().map(|s| s.user_turns as f64)),
+            avg_tokens: mean(g.iter().map(|s| s.tokens as f64)),
+            avg_corrections: mean(g.iter().map(|s| s.corrections as f64)),
+            ids: g.iter().map(|s| s.id.clone()).collect(),
+        });
+    }
+
+    let zone = crate::db::get_setting(conn, "context.smartZoneTokens")?
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_SMART_ZONE_TOKENS);
+    let measured: Vec<&SessionRow> = rows.iter().filter(|s| s.peak_context > 0).collect();
+    let (over, within): (Vec<&SessionRow>, Vec<&SessionRow>) =
+        measured.iter().partition(|s| s.peak_context > zone);
+    let (rated_within, success_within) = success(&within);
+    let (rated_over, success_over) = success(&over);
+    let bounds = [
+        (0, 50_000, "under 50k"),
+        (50_000, 100_000, "50–100k"),
+        (100_000, 200_000, "100–200k"),
+        (200_000, 500_000, "200–500k"),
+        (500_000, i64::MAX, "500k+"),
+    ];
+    let buckets = bounds
+        .iter()
+        .map(|(lo, hi, label)| {
+            (
+                label.to_string(),
+                measured
+                    .iter()
+                    .filter(|s| s.peak_context >= *lo && s.peak_context < *hi)
+                    .count(),
+            )
+        })
+        .collect();
+
+    Ok(Execution {
+        modes,
+        by_source: by_source
+            .into_iter()
+            .map(|(label, split)| LabeledSplit { label, split })
+            .collect(),
+        weekly: weekly
+            .into_iter()
+            .map(|(d, split)| LabeledSplit {
+                label: d.format("%Y-%m-%d").to_string(),
+                split,
+            })
+            .collect(),
+        styles,
+        context: ContextStats {
+            smart_zone_tokens: zone,
+            measured: measured.len(),
+            over_zone: over.iter().map(|s| s.id.clone()).collect(),
+            compacted: rows
+                .iter()
+                .filter(|s| s.compactions > 0)
+                .map(|s| s.id.clone())
+                .collect(),
+            success_within,
+            rated_within,
+            success_over,
+            rated_over,
+            buckets,
+        },
+    })
+}
+
+#[cfg(test)]
+mod execution_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn splits_modes_styles_and_context() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_ms();
+        let rows = [
+            ("a", 1, 0, 30_000, "{\"coding\":3600000}"),
+            ("b", 5, 0, 250_000, "{\"research\":1800000}"),
+            ("c", 4, 1, 80_000, "{\"running\":600000}"),
+        ];
+        for (id, turns, planned, ctx, modes) in rows {
+            conn.execute(
+                "INSERT INTO sessions (id, source, external_id, file_path, started_at, ended_at, user_turns,
+                                       planned, peak_context, mode_ms, signals_version, ask_score, ingested_at)
+                 VALUES (?1, 'claude_code', ?1, '/f', ?2, ?2, ?3, ?4, ?5, ?6, 4, 3, 0)",
+                params![id, now - 60_000, turns, planned, ctx, modes],
+            )
+            .unwrap();
+        }
+        let e = execution(&conn, 7).unwrap();
+        assert!((e.modes.coding - 1.0).abs() < 1e-9);
+        assert!((e.modes.research - 0.5).abs() < 1e-9);
+        let n = |s: &str| e.styles.iter().find(|r| r.style == s).unwrap().sessions;
+        assert_eq!((n("one_shot"), n("planned"), n("iterative")), (1, 1, 1));
+        assert_eq!(e.context.over_zone, ["b"]);
+        assert_eq!(e.context.measured, 3);
     }
 }

@@ -139,7 +139,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 if let Some(id) = d.get("toolCallId").and_then(Value::as_str) {
                     s.tool_names.insert(id.to_string(), name.to_string());
                 }
-                s.note_tool(name, path);
+                s.note_tool(name, path, ts);
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
@@ -156,6 +156,13 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             }
             "session.error" => s.tool_errors += 1,
             "session.compaction_complete" => s.compactions += 1,
+            "session.compaction_start" => {
+                let n = |k: &str| d.get(k).and_then(Value::as_u64).unwrap_or(0);
+                s.note_context(
+                    n("systemTokens") + n("conversationTokens") + n("toolDefinitionsTokens"),
+                );
+            }
+            "session.plan_changed" => s.planned = true,
             "subagent.started" => s.subagents += 1,
             "abort" => {
                 s.interruptions += 1;
@@ -218,6 +225,9 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     let rem = cc.get("linesRemoved").and_then(Value::as_i64).unwrap_or(0);
                     s.lines_added = Some(s.lines_added.unwrap_or(0) + add);
                     s.lines_removed = Some(s.lines_removed.unwrap_or(0) + rem);
+                }
+                if let Some(t) = d.get("currentTokens").and_then(Value::as_u64) {
+                    s.note_context(t);
                 }
                 s.last_event = Some(LastEvent::Closed);
             }

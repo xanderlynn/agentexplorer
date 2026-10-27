@@ -69,7 +69,12 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                     && !model.is_empty()
                     && model != "<synthetic>"
                 {
-                    usage_by_msg.insert(id.to_string(), (model.to_string(), read_usage(u)));
+                    let usage = read_usage(u);
+                    if !is_subagent {
+                        // Everything sent in this request: the context size.
+                        s.note_context(usage.input + usage.cache_read + usage.cache_write);
+                    }
+                    usage_by_msg.insert(id.to_string(), (model.to_string(), usage));
                 }
                 if is_subagent || v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
                     continue;
@@ -81,6 +86,9 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                         Some("tool_use") => {
                             tool_uses += 1;
                             let name = item.get("name").and_then(Value::as_str).unwrap_or("tool");
+                            if matches!(name, "ExitPlanMode" | "EnterPlanMode") {
+                                s.planned = true;
+                            }
                             if let Some(tid) = item.get("id").and_then(Value::as_str) {
                                 s.tool_names.insert(tid.to_string(), name.to_string());
                             }
@@ -88,7 +96,7 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                             let path = ["file_path", "path", "notebook_path"]
                                 .iter()
                                 .find_map(|k| input.get(*k).and_then(Value::as_str));
-                            s.note_tool(name, path);
+                            s.note_tool(name, path, ts);
                         }
                         Some("text") => {
                             if let Some(t) = item.get("text").and_then(Value::as_str) {
@@ -160,6 +168,9 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
 
 fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
     s.note_time(ts);
+    if v.get("permissionMode").and_then(Value::as_str) == Some("plan") {
+        s.planned = true;
+    }
     // Sidechain lines are agent-to-agent traffic; older versions wrote them
     // into the main transcript without an `origin` tag.
     if v.get("isMeta").and_then(Value::as_bool) == Some(true)
@@ -371,6 +382,9 @@ mod tests {
         assert_eq!((s.reads, s.edits), (1, 1));
         assert_eq!(s.subagents, 1);
         assert_eq!(s.last_message.as_deref(), Some("done"));
+        // Read + Edit in the first turn: coding. Context = input + cache.
+        assert!(s.mode_ms.get("coding").is_some_and(|ms| *ms > 0));
+        assert_eq!(s.peak_context, 1110);
         assert_eq!(s.tool_errors, 1);
         assert_eq!(s.interruptions, 1);
         assert_eq!(s.title.as_deref(), Some("Login page"));

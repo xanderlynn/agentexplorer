@@ -93,6 +93,25 @@ pub struct SessionRow {
     pub reworked: bool,
     /// Time the agent spent working on your prompts.
     pub agent_ms: i64,
+    /// Plan mode was used, or the session came from a pre-flight plan.
+    pub planned: bool,
+    /// Largest context sent to the model in this session, in tokens.
+    pub peak_context: i64,
+    /// Agent working time per mode: coding, research, running, discussion.
+    pub mode_ms: BTreeMap<String, i64>,
+    pub style: &'static str,
+}
+
+/// one_shot (a single prompt), planned (plan mode or a pre-flight plan),
+/// or iterative (several prompts without a plan).
+fn style_of(planned: bool, user_turns: i64) -> &'static str {
+    if planned {
+        "planned"
+    } else if user_turns <= 1 {
+        "one_shot"
+    } else {
+        "iterative"
+    }
 }
 
 impl SessionRow {
@@ -111,7 +130,9 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
        s.last_event, s.tags, s.category, s.reads, s.edits, s.shell_calls,
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
-       s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms
+       s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms,
+       s.planned OR EXISTS(SELECT 1 FROM intents i WHERE i.session_id = s.id),
+       s.peak_context, s.mode_ms
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai, SUM(reworked) AS rw
@@ -124,6 +145,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     let interruptions: i64 = r.get(15)?;
     let user_turns: i64 = r.get(11)?;
     let active_ms: i64 = r.get(10)?;
+    let planned: bool = r.get(46)?;
     Ok(SessionRow {
         friction: signals::friction(
             match r.get::<_, i64>(42)? {
@@ -181,6 +203,10 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         vs_manual: r.get(43)?,
         reworked: r.get(44)?,
         agent_ms: r.get(45)?,
+        planned,
+        peak_context: r.get(47)?,
+        mode_ms: serde_json::from_str(&r.get::<_, String>(48)?).unwrap_or_default(),
+        style: style_of(planned, user_turns),
     })
 }
 

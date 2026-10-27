@@ -1,9 +1,8 @@
-import type { Lane } from "../api";
-import { SOURCE_COLOR } from "../format";
-import { duration, projectName } from "../format";
+import type { Lane, Mode } from "../api";
+import { MODE_COLOR, MODE_LABEL, SOURCE_COLOR, SPAN_MODE, duration, projectName } from "../format";
 
 /**
- * One lane per session: agent working (accent) and waiting on you (amber)
+ * One lane per session: agent work coloured by mode, and waiting on you (amber)
  * across the day, with a "now" line. Shows at a glance when parallel
  * agents were idling on you.
  */
@@ -29,7 +28,7 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
       </div>
       <ul className="space-y-1.5">
         {lanes.map((l) => {
-          const working = l.spans.filter((s) => s[2] === 1).reduce((a, s) => a + s[1] - s[0], 0);
+          const working = l.spans.filter((s) => s[2] !== 0).reduce((a, s) => a + s[1] - s[0], 0);
           const waiting = l.spans.filter((s) => s[2] === 0).reduce((a, s) => a + s[1] - s[0], 0);
           return (
             <li key={l.id}>
@@ -43,7 +42,8 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
                     <span
                       key={i}
                       className="absolute top-0.5 h-3 rounded-sm"
-                      style={{ left: x(a), width: w(a, b), background: k === 1 ? "var(--color-emerald-500)" : "var(--color-amber-500)", opacity: k === 1 ? 0.9 : 0.75 }}
+                      style={{ left: x(a), width: w(a, b), background: k === 0 ? "var(--color-amber-500)" : MODE_COLOR[SPAN_MODE[k] as Mode], opacity: k === 0 ? 0.75 : 0.9 }}
+                      title={SPAN_MODE[k] === "waiting" ? "waiting on you" : MODE_LABEL[SPAN_MODE[k] as Mode]}
                     />
                   ))}
                   <span className="absolute -top-0.5 h-5 w-px bg-zinc-300" style={{ left: "100%" }} aria-hidden />
@@ -53,10 +53,12 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
           );
         })}
       </ul>
-      <div className="mt-2 flex gap-4 text-xs text-zinc-400">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> agent working
-        </span>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
+        {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
+          <span key={m} className="inline-flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: MODE_COLOR[m] }} /> {MODE_LABEL[m]}
+          </span>
+        ))}
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" /> waiting on you
         </span>

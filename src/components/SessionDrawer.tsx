@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
-import { api, currentVersion, type Outcome, type VsManual } from "../api";
-import { compact, dateTime, duration, money, projectName } from "../format";
+import { api, currentVersion, type Mode, type Outcome, type VsManual } from "../api";
+import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
 
 export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
@@ -178,8 +178,24 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
                 <Metric label="Re-edits" value={s.reEdits} hint="same file again" />
                 <Metric label="Compactions · agents" value={`${s.compactions} · ${s.subagents}`} />
                 <Metric label="Agent time" value={duration(s.agentMs)} hint="working on your prompts" />
+                <Metric label="Style" value={STYLE_LABEL[s.style]} hint={s.planned ? "planned" : `${s.userTurns} prompts`} />
+                <Metric
+                  label="Peak context"
+                  value={s.peakContext ? compact(s.peakContext) : "—"}
+                  hint={s.compactions ? `compacted ${s.compactions}×` : "tokens in one request"}
+                />
                 <Metric label="Reworked later" value={s.commits ? (s.reworked ? "Yes" : "No") : "—"} hint="revert or fix within 7 days" />
               </div>
+              {Object.keys(s.modeMs).length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-400">
+                  {(Object.entries(s.modeMs) as [Mode, number][]).map(([m, ms]) => (
+                    <span key={m} className="inline-flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full" style={{ background: MODE_COLOR[m] }} aria-hidden />
+                      {MODE_LABEL[m]} {duration(ms)}
+                    </span>
+                  ))}
+                </div>
+              )}
               {(Object.keys(d.toolErrorsBy).length > 0 || Object.keys(d.toolVetoes).length > 0) && (
                 <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
                   {Object.entries(d.toolErrorsBy).map(([tool, n]) => (

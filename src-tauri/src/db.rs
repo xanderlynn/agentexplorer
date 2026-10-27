@@ -221,6 +221,14 @@ ALTER TABLE sessions ADD COLUMN agent_ms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN timeline TEXT NOT NULL DEFAULT '[]';
 DELETE FROM source_files;
 "#,
+    // Execution style: time per mode, plan use and context size.
+    r#"
+ALTER TABLE sessions ADD COLUMN mode_ms TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE sessions ADD COLUMN planned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN peak_context INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN last_context INTEGER NOT NULL DEFAULT 0;
+DELETE FROM source_files;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -277,6 +285,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "tool_vetoes", "TEXT NOT NULL DEFAULT '{}'"),
     ("sessions", "agent_ms", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "timeline", "TEXT NOT NULL DEFAULT '[]'"),
+    ("sessions", "mode_ms", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "planned", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "peak_context", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "last_context", "INTEGER NOT NULL DEFAULT 0"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),
