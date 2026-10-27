@@ -1,0 +1,214 @@
+//! Normalized representation of one AI session, independent of which tool wrote it.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::pricing;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    ClaudeCode,
+    CopilotCli,
+    CopilotVscode,
+}
+
+impl Source {
+    pub const ALL: [Source; 3] = [
+        Source::ClaudeCode,
+        Source::CopilotCli,
+        Source::CopilotVscode,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Source::ClaudeCode => "claude_code",
+            Source::CopilotCli => "copilot_cli",
+            Source::CopilotVscode => "copilot_vscode",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Source::ClaudeCode => "Claude Code",
+            Source::CopilotCli => "Copilot CLI",
+            Source::CopilotVscode => "Copilot Chat (VS Code)",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+impl TokenUsage {
+    pub fn add(&mut self, other: &TokenUsage) {
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_read += other.cache_read;
+        self.cache_write += other.cache_write;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Prompt {
+    pub ts: Option<i64>,
+    pub text: String,
+}
+
+/// What the parser saw last; drives the live monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LastEvent {
+    /// The agent finished its turn and is waiting for the human.
+    TurnEnded,
+    /// The agent is mid-turn (thinking, calling tools, streaming).
+    Working,
+    /// The agent asked for a permission that has not been answered.
+    NeedsPermission,
+    /// The session process exited.
+    Closed,
+}
+
+impl LastEvent {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LastEvent::TurnEnded => "turn_ended",
+            LastEvent::Working => "working",
+            LastEvent::NeedsPermission => "needs_permission",
+            LastEvent::Closed => "closed",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ParsedSession {
+    pub external_id: String,
+    pub project_path: Option<String>,
+    pub git_branch: Option<String>,
+    pub title: Option<String>,
+    pub entrypoint: Option<String>,
+    pub event_times: Vec<i64>,
+    /// Assistant turns per model, used to pick the primary model.
+    pub model_turns: HashMap<String, u64>,
+    pub tokens_by_model: HashMap<String, TokenUsage>,
+    pub user_turns: u64,
+    pub assistant_turns: u64,
+    pub tool_calls: u64,
+    pub tool_errors: u64,
+    pub interruptions: u64,
+    pub permission_requests: u64,
+    pub prompts: Vec<Prompt>,
+    /// Cost reported by the tool itself, when it records one.
+    pub reported_cost_usd: Option<f64>,
+    pub premium_requests: Option<f64>,
+    pub lines_added: Option<i64>,
+    pub lines_removed: Option<i64>,
+    pub last_event: Option<LastEvent>,
+    /// How long the agent waited on the human between finishing a turn and
+    /// the next prompt, one sample per turn.
+    pub wait_samples: Vec<i64>,
+    /// Set by `note_turn_end`, consumed by `note_human_prompt`.
+    pub last_turn_end: Option<i64>,
+}
+
+/// Idle gaps longer than this do not count toward active time.
+pub const ACTIVE_GAP_CAP_MS: i64 = 5 * 60 * 1000;
+
+/// A gap longer than this means the human stepped away, not that they were
+/// slow to respond, so it is left out of response-latency figures.
+pub const WAIT_SAMPLE_CAP_MS: i64 = 30 * 60 * 1000;
+
+#[derive(Debug, Clone)]
+pub struct Derived {
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub active_ms: i64,
+    pub model: Option<String>,
+    pub tokens: TokenUsage,
+    pub cost_usd: Option<f64>,
+    pub cost_is_estimate: bool,
+}
+
+impl ParsedSession {
+    pub fn is_empty(&self) -> bool {
+        self.user_turns == 0 && self.assistant_turns == 0
+    }
+
+    pub fn note_time(&mut self, ts: Option<i64>) {
+        if let Some(t) = ts {
+            self.event_times.push(t);
+        }
+    }
+
+    pub fn note_turn_end(&mut self, ts: Option<i64>) {
+        if ts.is_some() {
+            self.last_turn_end = ts;
+        }
+    }
+
+    pub fn note_human_prompt(&mut self, ts: Option<i64>) {
+        if let (Some(end), Some(t)) = (self.last_turn_end.take(), ts) {
+            let gap = t - end;
+            if (0..=WAIT_SAMPLE_CAP_MS).contains(&gap) {
+                self.wait_samples.push(gap);
+            }
+        }
+    }
+
+    pub fn add_tokens(&mut self, model: &str, usage: &TokenUsage) {
+        self.tokens_by_model
+            .entry(model.to_string())
+            .or_default()
+            .add(usage);
+    }
+
+    pub fn derive(&self) -> Derived {
+        let mut times = self.event_times.clone();
+        times.sort_unstable();
+        let active_ms = times
+            .windows(2)
+            .map(|w| (w[1] - w[0]).clamp(0, ACTIVE_GAP_CAP_MS))
+            .sum();
+
+        let model = self
+            .model_turns
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+            .map(|(m, _)| m.clone());
+
+        let mut tokens = TokenUsage::default();
+        for usage in self.tokens_by_model.values() {
+            tokens.add(usage);
+        }
+
+        let (cost_usd, cost_is_estimate) = match self.reported_cost_usd {
+            Some(c) => (Some(c), false),
+            None => {
+                let mut total = 0.0;
+                let mut any = false;
+                for (m, usage) in &self.tokens_by_model {
+                    if let Some(c) = pricing::estimate_cost(m, usage) {
+                        total += c;
+                        any = true;
+                    }
+                }
+                (any.then_some(total), true)
+            }
+        };
+
+        Derived {
+            started_at: times.first().copied(),
+            ended_at: times.last().copied(),
+            active_ms,
+            model,
+            tokens,
+            cost_usd,
+            cost_is_estimate,
+        }
+    }
+}

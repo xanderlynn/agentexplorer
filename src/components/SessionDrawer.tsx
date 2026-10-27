@@ -1,0 +1,212 @@
+import { useEffect, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { FolderOpen, GitCommitHorizontal, X } from "lucide-react";
+import { api, type Outcome } from "../api";
+import { compact, dateTime, duration, money, projectName } from "../format";
+import { Button, ErrorNote, Field, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
+
+export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["session", id], queryFn: () => api.session(id) });
+  const playbooks = useQuery({ queryKey: ["playbooks"], queryFn: api.playbooks });
+
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [rating, setRating] = useState<number | null>(null);
+  const [notes, setNotes] = useState("");
+  const [tags, setTags] = useState("");
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+
+  // Seed the form once per session, not on every refetch, so typing is not lost.
+  useEffect(() => {
+    if (q.data && loadedFor !== id) {
+      setOutcome(q.data.session.outcome);
+      setRating(q.data.session.rating);
+      setNotes(q.data.notes ?? "");
+      setTags(q.data.session.tags.join(", "));
+      setLoadedFor(id);
+    }
+  }, [q.data, id, loadedFor]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.saveReview({
+        id,
+        outcome,
+        rating,
+        notes: notes.trim() || null,
+        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      }),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+
+  const togglePlaybook = useMutation({
+    mutationFn: ({ versionId, linked }: { versionId: number; linked: boolean }) => api.setSessionPlaybook(id, versionId, linked),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+
+  const d = q.data;
+  const s = d?.session;
+  const templates = (playbooks.data ?? []).filter((p) => p.kind === "prompt" && p.versions.length > 0);
+  const linkedVersions = new Set(d?.playbooks.map((p) => p.versionId));
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
+      <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative flex h-full w-full max-w-2xl flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950 shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-zinc-800 bg-zinc-950/95 px-5 py-4 backdrop-blur">
+          <div className="min-w-0">
+            {s && <SourceBadge source={s.source} />}
+            <h2 className="mt-1 truncate text-base font-semibold text-zinc-50">{s?.title ?? "Session"}</h2>
+            {s && (
+              <div className="mt-0.5 text-xs text-zinc-500">
+                {projectName(s.repoRoot ?? s.projectPath)}
+                {s.gitBranch && ` · ${s.gitBranch}`} · {dateTime(s.startedAt)} · {s.model ?? "unknown model"}
+              </div>
+            )}
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </Button>
+        </div>
+
+        {q.isLoading && <div className="px-5"><Loading /></div>}
+        <div className="px-5"><ErrorNote error={q.error} /></div>
+
+        {d && s && (
+          <div className="space-y-6 px-5 py-5">
+            <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <h3 className="mb-3 text-sm font-medium text-zinc-200">How did it go?</h3>
+              <div className="space-y-3">
+                <OutcomePicker value={outcome} onChange={setOutcome} />
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-500">Quality</span>
+                  <Rating value={rating} onChange={setRating} />
+                </div>
+                <Field label="What would you do differently?">
+                  <textarea className={inputClass} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. should have given it the failing test first" />
+                </Field>
+                <Field label="Tags" hint="Comma separated">
+                  <input className={inputClass} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="refactor, flaky-tests" />
+                </Field>
+                <div className="flex items-center gap-3">
+                  <Button variant="primary" busy={save.isPending} onClick={() => save.mutate()}>Save review</Button>
+                  {save.isSuccess && <span className="text-xs text-emerald-400">Saved</span>}
+                  <ErrorNote error={save.error} />
+                </div>
+              </div>
+              {d.intent && (
+                <div className="mt-4 border-t border-zinc-800 pt-3 text-xs text-zinc-400">
+                  Journal intent: <span className="text-zinc-200">{d.intent.goal}</span> · expected {d.intent.expectedMinutes} min · confidence {d.intent.confidence}/5
+                </div>
+              )}
+            </section>
+
+            <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Metric label="Active" value={duration(s.activeMs)} />
+              <Metric label="Prompts" value={s.userTurns} />
+              <Metric label="Interruptions" value={s.interruptions} />
+              <Metric label="Tool errors" value={`${s.toolErrors}/${s.toolCalls}`} />
+              <Metric label="Cost" value={money(s.costUsd, s.costIsEstimate)} hint={s.source !== "claude_code" ? "API-equivalent" : undefined} />
+              <Metric label="Tokens" value={compact(d.inputTokens + d.outputTokens + d.cacheReadTokens + d.cacheWriteTokens)} />
+              <Metric label="Waited on you" value={s.waitCount ? duration(s.waitMsTotal) : "—"} hint={s.waitCount ? `${s.waitCount} hand-backs` : undefined} />
+              <Metric label="Lines" value={d.linesAdded != null ? `+${d.linesAdded} −${d.linesRemoved ?? 0}` : "—"} />
+            </section>
+
+            <section>
+              <h3 className="mb-2 text-sm font-medium text-zinc-200">Commits ({d.commits.length})</h3>
+              {d.commits.length === 0 ? (
+                <p className="text-sm text-zinc-500">No commits by you in this repo during or within 30 minutes after this session.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {d.commits.map((c) => (
+                    <li key={c.sha} className="flex items-start gap-2 text-sm">
+                      <GitCommitHorizontal size={15} className="mt-0.5 shrink-0 text-zinc-500" />
+                      <span className="font-mono text-xs text-zinc-500">{c.sha.slice(0, 7)}</span>
+                      <span className="min-w-0 flex-1 truncate text-zinc-200">{c.subject}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-zinc-500">
+                        <span className="text-emerald-400">+{c.insertions}</span> <span className="text-rose-400">−{c.deletions}</span>
+                        {c.aiTrailer && <span className="ml-1.5 rounded bg-zinc-800 px-1 text-zinc-400">AI</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
+              <h3 className="mb-2 text-sm font-medium text-zinc-200">Playbooks in effect</h3>
+              {d.playbooks.length === 0 && <p className="text-sm text-zinc-500">No instruction files or prompt templates matched.</p>}
+              <ul className="space-y-1">
+                {d.playbooks.map((p) => (
+                  <li key={p.versionId} className="flex items-center justify-between text-sm">
+                    <span className="text-zinc-200">{p.name}</span>
+                    <span className="text-xs text-zinc-500">
+                      version of {dateTime(p.firstSeen)} · {p.link}
+                      {p.link === "manual" && (
+                        <button className="ml-2 text-zinc-400 hover:text-rose-300" onClick={() => togglePlaybook.mutate({ versionId: p.versionId, linked: false })}>
+                          remove
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {templates.length > 0 && (
+                <div className="mt-2">
+                  <select
+                    className={inputClass}
+                    value=""
+                    onChange={(e) => e.target.value && togglePlaybook.mutate({ versionId: Number(e.target.value), linked: true })}
+                  >
+                    <option value="">Mark a prompt template as used…</option>
+                    {templates
+                      .filter((t) => !linkedVersions.has(t.versions[0].id))
+                      .map((t) => (
+                        <option key={t.id} value={t.versions[0].id}>{t.name}</option>
+                      ))}
+                  </select>
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h3 className="mb-2 text-sm font-medium text-zinc-200">Your prompts ({d.prompts.length})</h3>
+              <ol className="space-y-2">
+                {d.prompts.map((p) => (
+                  <li key={p.idx} className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                    <div className="mb-1 text-[11px] text-zinc-500">#{p.idx + 1} · {dateTime(p.ts)}</div>
+                    <div className="whitespace-pre-wrap break-words text-sm text-zinc-300">{p.text}</div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <section className="flex items-center justify-between border-t border-zinc-800 pt-4 text-xs text-zinc-500">
+              <span className="truncate font-mono">{d.filePath}</span>
+              <Button size="sm" variant="ghost" onClick={() => revealItemInDir(d.filePath).catch(() => {})}>
+                <FolderOpen size={14} /> Show file
+              </Button>
+            </section>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-100">{value}</div>
+      {hint && <div className="text-[11px] text-zinc-500">{hint}</div>}
+    </div>
+  );
+}

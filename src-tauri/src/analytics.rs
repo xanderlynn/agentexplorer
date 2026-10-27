@@ -1,0 +1,1130 @@
+//! Read models for the UI: session lists, the overview, the scorecard, and
+//! rule-based insights that point at specific habits to change.
+
+use std::collections::BTreeMap;
+
+use anyhow::{Result, bail};
+use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike};
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+
+use crate::journal::{self, outcome_score};
+use crate::util::now_ms;
+
+const DAY_MS: i64 = 86_400_000;
+
+/// Groups smaller than this are too noisy to compare.
+pub const MIN_SAMPLE: usize = 5;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Range {
+    pub since: i64,
+    pub until: i64,
+}
+
+impl Range {
+    /// `days == 0` means all time.
+    pub fn last_days(days: i64) -> Self {
+        let until = now_ms() + 1;
+        let since = if days <= 0 { 0 } else { until - days * DAY_MS };
+        Range { since, until }
+    }
+
+    pub fn previous(&self) -> Option<Range> {
+        (self.since > 0).then(|| Range {
+            since: self.since - (self.until - self.since),
+            until: self.since,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRow {
+    pub id: String,
+    pub source: String,
+    pub title: Option<String>,
+    pub first_prompt: Option<String>,
+    pub project_path: Option<String>,
+    pub repo_root: Option<String>,
+    pub git_branch: Option<String>,
+    pub model: Option<String>,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub active_ms: i64,
+    pub user_turns: i64,
+    pub assistant_turns: i64,
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub interruptions: i64,
+    pub permission_requests: i64,
+    pub cost_usd: Option<f64>,
+    pub cost_is_estimate: bool,
+    pub premium_requests: Option<f64>,
+    pub outcome: Option<String>,
+    pub rating: Option<i64>,
+    pub commits: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub ai_commits: i64,
+    pub wait_ms_total: i64,
+    pub wait_count: i64,
+    pub first_prompt_len: i64,
+    pub tokens: i64,
+    pub last_event: Option<String>,
+    pub tags: Vec<String>,
+}
+
+impl SessionRow {
+    fn score(&self) -> Option<f64> {
+        self.outcome.as_deref().and_then(outcome_score)
+    }
+}
+
+const SESSION_SELECT: &str = "
+SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, s.repo_root,
+       s.git_branch, s.model, s.started_at, s.ended_at, s.active_ms, s.user_turns,
+       s.assistant_turns, s.tool_calls, s.tool_errors, s.interruptions, s.permission_requests,
+       s.cost_usd, s.cost_is_estimate, s.premium_requests, s.outcome, s.rating,
+       COALESCE(c.n, 0), COALESCE(c.ins, 0), COALESCE(c.del, 0), COALESCE(c.ai, 0),
+       s.wait_ms_total, s.wait_count, length(COALESCE(s.first_prompt, '')),
+       s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
+       s.last_event, s.tags
+FROM sessions s
+LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
+                  SUM(ai_trailer) AS ai
+           FROM session_commits GROUP BY session_id) c ON c.session_id = s.id";
+
+fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
+    let tags: String = r.get(31)?;
+    Ok(SessionRow {
+        id: r.get(0)?,
+        source: r.get(1)?,
+        title: r.get(2)?,
+        first_prompt: r.get(3)?,
+        project_path: r.get(4)?,
+        repo_root: r.get(5)?,
+        git_branch: r.get(6)?,
+        model: r.get(7)?,
+        started_at: r.get(8)?,
+        ended_at: r.get(9)?,
+        active_ms: r.get(10)?,
+        user_turns: r.get(11)?,
+        assistant_turns: r.get(12)?,
+        tool_calls: r.get(13)?,
+        tool_errors: r.get(14)?,
+        interruptions: r.get(15)?,
+        permission_requests: r.get(16)?,
+        cost_usd: r.get(17)?,
+        cost_is_estimate: r.get(18)?,
+        premium_requests: r.get(19)?,
+        outcome: r.get(20)?,
+        rating: r.get(21)?,
+        commits: r.get(22)?,
+        insertions: r.get(23)?,
+        deletions: r.get(24)?,
+        ai_commits: r.get(25)?,
+        wait_ms_total: r.get(26)?,
+        wait_count: r.get(27)?,
+        first_prompt_len: r.get(28)?,
+        tokens: r.get(29)?,
+        last_event: r.get(30)?,
+        tags: serde_json::from_str(&tags).unwrap_or_default(),
+    })
+}
+
+pub fn load_sessions(conn: &Connection, range: Range) -> Result<Vec<SessionRow>> {
+    let sql = format!(
+        "{SESSION_SELECT} WHERE s.started_at >= ?1 AND s.started_at < ?2 ORDER BY s.started_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params![range.since, range.until], map_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFilter {
+    pub days: i64,
+    pub source: Option<String>,
+    /// An outcome, or "unrated".
+    pub outcome: Option<String>,
+    pub search: Option<String>,
+    pub project: Option<String>,
+}
+
+pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<SessionRow>> {
+    let needle = f
+        .search
+        .as_deref()
+        .map(str::to_lowercase)
+        .filter(|s| !s.is_empty());
+    let rows = load_sessions(conn, Range::last_days(f.days))?
+        .into_iter()
+        .filter(|s| f.source.as_deref().is_none_or(|src| src == s.source))
+        .filter(|s| match f.outcome.as_deref() {
+            None | Some("") => true,
+            Some("unrated") => s.outcome.is_none(),
+            Some(o) => s.outcome.as_deref() == Some(o),
+        })
+        .filter(|s| {
+            f.project
+                .as_deref()
+                .is_none_or(|p| s.repo_root.as_deref().or(s.project_path.as_deref()) == Some(p))
+        })
+        .filter(|s| {
+            needle.as_deref().is_none_or(|n| {
+                [&s.title, &s.first_prompt, &s.project_path, &s.git_branch]
+                    .iter()
+                    .any(|field| {
+                        field
+                            .as_deref()
+                            .is_some_and(|v| v.to_lowercase().contains(n))
+                    })
+            })
+        })
+        .take(2000)
+        .collect();
+    Ok(rows)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptRow {
+    pub idx: i64,
+    pub ts: Option<i64>,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitRow {
+    pub sha: String,
+    pub repo_root: String,
+    pub committed_at: i64,
+    pub subject: String,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub files: i64,
+    pub ai_trailer: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPlaybook {
+    pub version_id: i64,
+    pub playbook_id: i64,
+    pub name: String,
+    pub kind: String,
+    pub first_seen: i64,
+    pub link: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedIntent {
+    pub id: i64,
+    pub goal: String,
+    pub expected_minutes: i64,
+    pub confidence: i64,
+    pub outcome: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetail {
+    pub session: SessionRow,
+    pub file_path: String,
+    pub entrypoint: Option<String>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub lines_added: Option<i64>,
+    pub lines_removed: Option<i64>,
+    pub notes: Option<String>,
+    pub prompts: Vec<PromptRow>,
+    pub commits: Vec<CommitRow>,
+    pub playbooks: Vec<SessionPlaybook>,
+    pub intent: Option<LinkedIntent>,
+}
+
+pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
+    let sql = format!("{SESSION_SELECT} WHERE s.id = ?1");
+    let Some(session) = conn.query_row(&sql, [id], map_row).optional()? else {
+        bail!("Session not found");
+    };
+    let (file_path, entrypoint, it, ot, crt, cwt, la, lr, notes) = conn.query_row(
+        "SELECT file_path, entrypoint, input_tokens, output_tokens, cache_read_tokens,
+                cache_write_tokens, lines_added, lines_removed, notes
+         FROM sessions WHERE id = ?1",
+        [id],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
+            ))
+        },
+    )?;
+    let prompts = conn
+        .prepare("SELECT idx, ts, text FROM prompts WHERE session_id = ?1 ORDER BY idx")?
+        .query_map([id], |r| {
+            Ok(PromptRow {
+                idx: r.get(0)?,
+                ts: r.get(1)?,
+                text: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let commits = conn
+        .prepare(
+            "SELECT sha, repo_root, committed_at, subject, insertions, deletions, files, ai_trailer
+             FROM session_commits WHERE session_id = ?1 ORDER BY committed_at",
+        )?
+        .query_map([id], |r| {
+            Ok(CommitRow {
+                sha: r.get(0)?,
+                repo_root: r.get(1)?,
+                committed_at: r.get(2)?,
+                subject: r.get(3)?,
+                insertions: r.get(4)?,
+                deletions: r.get(5)?,
+                files: r.get(6)?,
+                ai_trailer: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let playbooks = conn
+        .prepare(
+            "SELECT v.id, p.id, p.name, p.kind, v.first_seen, sp.link
+             FROM session_playbooks sp
+             JOIN playbook_versions v ON v.id = sp.version_id
+             JOIN playbooks p ON p.id = v.playbook_id
+             WHERE sp.session_id = ?1 ORDER BY p.kind, p.name",
+        )?
+        .query_map([id], |r| {
+            Ok(SessionPlaybook {
+                version_id: r.get(0)?,
+                playbook_id: r.get(1)?,
+                name: r.get(2)?,
+                kind: r.get(3)?,
+                first_seen: r.get(4)?,
+                link: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let intent = conn
+        .query_row(
+            "SELECT id, goal, expected_minutes, confidence, outcome FROM intents WHERE session_id = ?1",
+            [id],
+            |r| {
+                Ok(LinkedIntent {
+                    id: r.get(0)?,
+                    goal: r.get(1)?,
+                    expected_minutes: r.get(2)?,
+                    confidence: r.get(3)?,
+                    outcome: r.get(4)?,
+                })
+            },
+        )
+        .optional()?;
+    Ok(SessionDetail {
+        session,
+        file_path,
+        entrypoint,
+        input_tokens: it,
+        output_tokens: ot,
+        cache_read_tokens: crt,
+        cache_write_tokens: cwt,
+        lines_added: la,
+        lines_removed: lr,
+        notes,
+        prompts,
+        commits,
+        playbooks,
+        intent,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Review {
+    pub id: String,
+    pub outcome: Option<String>,
+    pub rating: Option<i64>,
+    pub notes: Option<String>,
+    pub tags: Vec<String>,
+}
+
+pub fn save_review(conn: &Connection, r: &Review) -> Result<()> {
+    if let Some(o) = r.outcome.as_deref()
+        && !journal::OUTCOMES.contains(&o)
+    {
+        bail!("Unknown outcome {o}");
+    }
+    if r.rating.is_some_and(|x| !(1..=5).contains(&x)) {
+        bail!("Rating must be 1–5");
+    }
+    let tags: Vec<String> = r
+        .tags
+        .iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    conn.execute(
+        "UPDATE sessions SET outcome = ?1, rating = ?2, notes = ?3, tags = ?4, reviewed_at = ?5 WHERE id = ?6",
+        params![
+            r.outcome,
+            r.rating,
+            r.notes.as_deref().filter(|n| !n.trim().is_empty()),
+            serde_json::to_string(&tags)?,
+            now_ms(),
+            r.id
+        ],
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------- overview
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Totals {
+    pub sessions: usize,
+    pub active_hours: f64,
+    pub user_turns: i64,
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub interruptions: i64,
+    pub cost_usd: f64,
+    pub cost_has_estimates: bool,
+    pub premium_requests: f64,
+    pub tokens: i64,
+    pub commits: i64,
+    pub ai_commits: i64,
+    pub rated: usize,
+    pub shipped: usize,
+    pub success_rate: Option<f64>,
+    pub avg_wait_seconds: Option<f64>,
+    pub wait_hours: f64,
+}
+
+fn totals(rows: &[SessionRow]) -> Totals {
+    let mut t = Totals {
+        sessions: rows.len(),
+        ..Default::default()
+    };
+    let mut wait_ms = 0i64;
+    let mut wait_n = 0i64;
+    for s in rows {
+        t.active_hours += s.active_ms as f64 / 3_600_000.0;
+        t.user_turns += s.user_turns;
+        t.tool_calls += s.tool_calls;
+        t.tool_errors += s.tool_errors;
+        t.interruptions += s.interruptions;
+        if let Some(c) = s.cost_usd {
+            t.cost_usd += c;
+            t.cost_has_estimates |= s.cost_is_estimate;
+        }
+        t.premium_requests += s.premium_requests.unwrap_or(0.0);
+        t.tokens += s.tokens;
+        t.commits += s.commits;
+        t.ai_commits += s.ai_commits;
+        if s.outcome.is_some() {
+            t.rated += 1;
+        }
+        if s.outcome.as_deref() == Some("shipped") {
+            t.shipped += 1;
+        }
+        wait_ms += s.wait_ms_total;
+        wait_n += s.wait_count;
+    }
+    t.success_rate = success_rate(rows.iter());
+    t.avg_wait_seconds = (wait_n > 0).then(|| wait_ms as f64 / wait_n as f64 / 1000.0);
+    t.wait_hours = wait_ms as f64 / 3_600_000.0;
+    t
+}
+
+fn success_rate<'a>(rows: impl Iterator<Item = &'a SessionRow>) -> Option<f64> {
+    let scores: Vec<f64> = rows.filter_map(SessionRow::score).collect();
+    (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupStat {
+    pub key: String,
+    pub sessions: usize,
+    pub active_hours: f64,
+    pub cost_usd: f64,
+    pub commits: i64,
+    pub rated: usize,
+    pub success_rate: Option<f64>,
+    pub avg_turns: f64,
+    pub avg_interruptions: f64,
+}
+
+fn group_by(rows: &[SessionRow], key: impl Fn(&SessionRow) -> Option<String>) -> Vec<GroupStat> {
+    let mut groups: BTreeMap<String, Vec<&SessionRow>> = BTreeMap::new();
+    for s in rows {
+        if let Some(k) = key(s) {
+            groups.entry(k).or_default().push(s);
+        }
+    }
+    let mut out: Vec<GroupStat> = groups
+        .into_iter()
+        .map(|(key, g)| {
+            let n = g.len() as f64;
+            GroupStat {
+                key,
+                sessions: g.len(),
+                active_hours: g.iter().map(|s| s.active_ms as f64 / 3_600_000.0).sum(),
+                cost_usd: g.iter().filter_map(|s| s.cost_usd).sum(),
+                commits: g.iter().map(|s| s.commits).sum(),
+                rated: g.iter().filter(|s| s.outcome.is_some()).count(),
+                success_rate: success_rate(g.iter().copied()),
+                avg_turns: g.iter().map(|s| s.user_turns as f64).sum::<f64>() / n,
+                avg_interruptions: g.iter().map(|s| s.interruptions as f64).sum::<f64>() / n,
+            }
+        })
+        .collect();
+    out.sort_by_key(|g| std::cmp::Reverse(g.sessions));
+    out
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayStat {
+    pub date: String,
+    pub sessions: usize,
+    pub active_minutes: f64,
+    pub cost_usd: f64,
+    pub shipped: usize,
+    pub commits: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    pub totals: Totals,
+    pub previous: Option<Totals>,
+    pub by_source: Vec<GroupStat>,
+    pub by_project: Vec<GroupStat>,
+    pub by_model: Vec<GroupStat>,
+    pub daily: Vec<DayStat>,
+    pub outcomes: BTreeMap<String, usize>,
+}
+
+fn local_date(ms: i64) -> Option<NaiveDate> {
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|d| d.date_naive())
+}
+
+pub fn project_name(path: &str) -> String {
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_string()
+}
+
+pub fn overview(conn: &Connection, days: i64) -> Result<Overview> {
+    let range = Range::last_days(days);
+    let rows = load_sessions(conn, range)?;
+    let previous = match range.previous() {
+        Some(p) => Some(totals(&load_sessions(conn, p)?)),
+        None => None,
+    };
+
+    let mut daily: BTreeMap<NaiveDate, DayStat> = BTreeMap::new();
+    let first_day = rows
+        .iter()
+        .filter_map(|s| s.started_at)
+        .min()
+        .and_then(local_date);
+    let start = if range.since > 0 {
+        local_date(range.since)
+    } else {
+        first_day
+    };
+    if let (Some(mut d), Some(end)) = (start, local_date(now_ms())) {
+        while d <= end {
+            daily.insert(
+                d,
+                DayStat {
+                    date: d.format("%Y-%m-%d").to_string(),
+                    sessions: 0,
+                    active_minutes: 0.0,
+                    cost_usd: 0.0,
+                    shipped: 0,
+                    commits: 0,
+                },
+            );
+            d += Duration::days(1);
+        }
+    }
+    let mut outcomes: BTreeMap<String, usize> = BTreeMap::new();
+    for s in &rows {
+        *outcomes
+            .entry(s.outcome.clone().unwrap_or_else(|| "unrated".into()))
+            .or_default() += 1;
+        if let Some(day) = s
+            .started_at
+            .and_then(local_date)
+            .and_then(|d| daily.get_mut(&d))
+        {
+            day.sessions += 1;
+            day.active_minutes += s.active_ms as f64 / 60_000.0;
+            day.cost_usd += s.cost_usd.unwrap_or(0.0);
+            day.commits += s.commits;
+            if s.outcome.as_deref() == Some("shipped") {
+                day.shipped += 1;
+            }
+        }
+    }
+
+    let mut by_project = group_by(&rows, |s| {
+        s.repo_root.clone().or_else(|| s.project_path.clone())
+    });
+    by_project.truncate(12);
+    Ok(Overview {
+        totals: totals(&rows),
+        previous,
+        by_source: group_by(&rows, |s| Some(s.source.clone())),
+        by_project,
+        by_model: group_by(&rows, |s| s.model.clone()),
+        daily: daily.into_values().collect(),
+        outcomes,
+    })
+}
+
+// --------------------------------------------------------------- scorecard
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekStat {
+    pub week_start: String,
+    pub sessions: usize,
+    pub sessions_with_commits: usize,
+    pub commits: i64,
+    pub shipped: usize,
+    pub active_hours: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Scorecard {
+    pub sessions: usize,
+    pub sessions_in_repos: usize,
+    pub sessions_with_commits: usize,
+    /// Share of sessions in a git repo that produced at least one commit.
+    pub commit_rate: Option<f64>,
+    pub commits: i64,
+    pub ai_commits: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub cost_per_commit: Option<f64>,
+    pub active_minutes_per_commit: Option<f64>,
+    pub cost_per_shipped: Option<f64>,
+    pub shipped: usize,
+    pub by_source: Vec<GroupStat>,
+    pub by_project: Vec<GroupStat>,
+    pub weekly: Vec<WeekStat>,
+}
+
+pub fn scorecard(conn: &Connection, days: i64) -> Result<Scorecard> {
+    let rows = load_sessions(conn, Range::last_days(days))?;
+    let in_repos: Vec<&SessionRow> = rows.iter().filter(|s| s.repo_root.is_some()).collect();
+    let with_commits = rows.iter().filter(|s| s.commits > 0).count();
+    let commits: i64 = rows.iter().map(|s| s.commits).sum();
+    let cost: f64 = rows.iter().filter_map(|s| s.cost_usd).sum();
+    let active_min: f64 = rows.iter().map(|s| s.active_ms as f64 / 60_000.0).sum();
+    let shipped = rows
+        .iter()
+        .filter(|s| s.outcome.as_deref() == Some("shipped"))
+        .count();
+    let per = |x: f64, n: f64| (n > 0.0).then(|| x / n);
+
+    let mut weekly: BTreeMap<NaiveDate, WeekStat> = BTreeMap::new();
+    for s in &rows {
+        let Some(d) = s.started_at.and_then(local_date) else {
+            continue;
+        };
+        let monday = d - Duration::days(d.weekday().num_days_from_monday() as i64);
+        let w = weekly.entry(monday).or_insert_with(|| WeekStat {
+            week_start: monday.format("%Y-%m-%d").to_string(),
+            sessions: 0,
+            sessions_with_commits: 0,
+            commits: 0,
+            shipped: 0,
+            active_hours: 0.0,
+        });
+        w.sessions += 1;
+        w.commits += s.commits;
+        w.active_hours += s.active_ms as f64 / 3_600_000.0;
+        if s.commits > 0 {
+            w.sessions_with_commits += 1;
+        }
+        if s.outcome.as_deref() == Some("shipped") {
+            w.shipped += 1;
+        }
+    }
+
+    let mut by_project = group_by(&rows, |s| s.repo_root.clone());
+    by_project.truncate(15);
+    Ok(Scorecard {
+        sessions: rows.len(),
+        sessions_in_repos: in_repos.len(),
+        sessions_with_commits: with_commits,
+        commit_rate: per(with_commits as f64, in_repos.len() as f64),
+        commits,
+        ai_commits: rows.iter().map(|s| s.ai_commits).sum(),
+        insertions: rows.iter().map(|s| s.insertions).sum(),
+        deletions: rows.iter().map(|s| s.deletions).sum(),
+        cost_per_commit: per(cost, commits as f64),
+        active_minutes_per_commit: per(active_min, commits as f64),
+        cost_per_shipped: per(cost, shipped as f64),
+        shipped,
+        by_source: group_by(&rows, |s| Some(s.source.clone())),
+        by_project,
+        weekly: weekly.into_values().collect(),
+    })
+}
+
+// ---------------------------------------------------------------- insights
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Insight {
+    pub id: String,
+    /// "positive", "warning" or "info".
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub evidence: String,
+}
+
+fn insight(id: &str, kind: &str, title: String, detail: String, evidence: String) -> Insight {
+    Insight {
+        id: id.into(),
+        kind: kind.into(),
+        title,
+        detail,
+        evidence,
+    }
+}
+
+struct Bucket<'a> {
+    label: &'static str,
+    rows: Vec<&'a SessionRow>,
+}
+
+impl Bucket<'_> {
+    fn rated(&self) -> usize {
+        self.rows.iter().filter(|s| s.outcome.is_some()).count()
+    }
+    fn success(&self) -> Option<f64> {
+        success_rate(self.rows.iter().copied())
+    }
+    fn avg(&self, f: impl Fn(&SessionRow) -> f64) -> f64 {
+        self.rows.iter().map(|s| f(s)).sum::<f64>() / self.rows.len().max(1) as f64
+    }
+}
+
+fn buckets<'a>(
+    rows: &'a [SessionRow],
+    labels: &[&'static str],
+    pick: impl Fn(&SessionRow) -> Option<usize>,
+) -> Vec<Bucket<'a>> {
+    let mut out: Vec<Bucket> = labels
+        .iter()
+        .map(|l| Bucket {
+            label: l,
+            rows: vec![],
+        })
+        .collect();
+    for s in rows {
+        if let Some(i) = pick(s) {
+            out[i].rows.push(s);
+        }
+    }
+    out
+}
+
+/// The best and worst rated buckets, when both have enough samples and differ
+/// by at least 20 points.
+fn success_spread<'a, 'b>(
+    bs: &'b [Bucket<'a>],
+) -> Option<(&'b Bucket<'a>, f64, &'b Bucket<'a>, f64)> {
+    let scored: Vec<_> = bs
+        .iter()
+        .filter(|b| b.rated() >= MIN_SAMPLE)
+        .filter_map(|b| b.success().map(|r| (b, r)))
+        .collect();
+    let best = scored.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let worst = scored.iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
+    (best.1 - worst.1 >= 0.2).then_some((best.0, best.1, worst.0, worst.1))
+}
+
+fn pct(x: f64) -> String {
+    format!("{:.0}%", x * 100.0)
+}
+
+pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
+    let range = Range::last_days(days);
+    let rows = load_sessions(conn, range)?;
+    let mut out = vec![];
+    if rows.is_empty() {
+        return Ok(out);
+    }
+    let rated = rows.iter().filter(|s| s.outcome.is_some()).count();
+    if rated * 2 < rows.len() {
+        out.push(insight(
+            "rate-more",
+            "info",
+            format!("Rate {} more sessions to sharpen these insights", rows.len() - rated),
+            "Most comparisons need outcomes. Mark sessions shipped, partial, abandoned or redo on the Sessions page; it takes a few seconds each.".into(),
+            format!("{rated} of {} sessions rated", rows.len()),
+        ));
+    }
+
+    // Opening prompt length.
+    let by_len = buckets(
+        &rows,
+        &["short (<80 chars)", "medium (80–300)", "detailed (300+)"],
+        |s| {
+            Some(match s.first_prompt_len {
+                0..80 => 0,
+                80..300 => 1,
+                _ => 2,
+            })
+        },
+    );
+    if let Some((best, br, worst, wr)) = success_spread(&by_len) {
+        out.push(insight(
+            "prompt-length",
+            if best.label.starts_with("detailed") { "positive" } else { "info" },
+            format!("Sessions that open with {} prompts succeed more", best.label),
+            format!(
+                "Success rate is {} for {} opening prompts versus {} for {}. Spend a minute more on the first message: goal, constraints, and how you will check the result.",
+                pct(br), best.label, pct(wr), worst.label
+            ),
+            format!("{} vs {} rated sessions", best.rated(), worst.rated()),
+        ));
+    }
+    let (short, long) = (&by_len[0], &by_len[2]);
+    if short.rows.len() >= MIN_SAMPLE && long.rows.len() >= MIN_SAMPLE {
+        let (st, lt) = (
+            short.avg(|s| s.user_turns as f64),
+            long.avg(|s| s.user_turns as f64),
+        );
+        if st >= lt * 1.5 && st - lt >= 2.0 {
+            out.push(insight(
+                "short-prompt-followups",
+                "warning",
+                "Short opening prompts lead to more back-and-forth".into(),
+                format!("Sessions with a short first prompt took {st:.1} prompts on average, against {lt:.1} for detailed ones. The follow-ups are often context you could have given up front."),
+                format!("{} short, {} detailed sessions", short.rows.len(), long.rows.len()),
+            ));
+        }
+    }
+
+    // Interruptions.
+    let by_int = buckets(
+        &rows,
+        &["no interruptions", "one interruption", "2+ interruptions"],
+        |s| Some(s.interruptions.min(2) as usize),
+    );
+    if let (Some(calm), Some(rough)) = (by_int[0].success(), by_int[2].success())
+        && by_int[0].rated() >= MIN_SAMPLE
+        && by_int[2].rated() >= MIN_SAMPLE
+        && calm - rough >= 0.2
+    {
+        out.push(insight(
+                "interruptions",
+                "warning",
+                "Sessions you interrupt twice or more rarely ship".into(),
+                format!(
+                    "Success drops from {} with no interruptions to {} with 2+. When you need to stop an agent twice, the plan was probably off; restart with a sharper prompt instead of steering mid-flight.",
+                    pct(calm), pct(rough)
+                ),
+                format!("{} vs {} rated sessions", by_int[0].rated(), by_int[2].rated()),
+            ));
+    }
+
+    // Session length.
+    let by_dur = buckets(
+        &rows,
+        &["under 20 min", "20–60 min", "over 60 min"],
+        |s| {
+            Some(match s.active_ms / 60_000 {
+                0..20 => 0,
+                20..60 => 1,
+                _ => 2,
+            })
+        },
+    );
+    if let Some((best, br, worst, wr)) = success_spread(&by_dur) {
+        out.push(insight(
+            "duration",
+            "info",
+            format!("Your sweet spot is sessions of {} active time", best.label),
+            format!(
+                "{} succeed {} of the time; {} only {}. Consider splitting work so each session fits the range that works for you.",
+                best.label, pct(br), worst.label, pct(wr)
+            ),
+            format!("{} vs {} rated sessions", best.rated(), worst.rated()),
+        ));
+    }
+
+    // Time of day.
+    let by_hour = buckets(
+        &rows,
+        &[
+            "mornings (5–12)",
+            "afternoons (12–17)",
+            "evenings (17–22)",
+            "late nights (22–5)",
+        ],
+        |s| {
+            let h = Local.timestamp_millis_opt(s.started_at?).single()?.hour();
+            Some(match h {
+                5..12 => 0,
+                12..17 => 1,
+                17..22 => 2,
+                _ => 3,
+            })
+        },
+    );
+    if let Some((best, br, worst, wr)) = success_spread(&by_hour) {
+        out.push(insight(
+            "time-of-day",
+            "info",
+            format!("You execute best in the {}", best.label),
+            format!("Success is {} in the {} versus {} in the {}. Schedule hard delegation for your strong hours.", pct(br), best.label, pct(wr), worst.label),
+            format!("{} vs {} rated sessions", best.rated(), worst.rated()),
+        ));
+    }
+
+    // Tools compared.
+    let by_source = group_by(&rows, |s| Some(s.source.clone()));
+    let comparable: Vec<_> = by_source
+        .iter()
+        .filter(|g| g.rated >= MIN_SAMPLE && g.success_rate.is_some())
+        .collect();
+    if comparable.len() >= 2 {
+        let best = comparable
+            .iter()
+            .max_by(|a, b| a.success_rate.unwrap().total_cmp(&b.success_rate.unwrap()))
+            .unwrap();
+        let worst = comparable
+            .iter()
+            .min_by(|a, b| a.success_rate.unwrap().total_cmp(&b.success_rate.unwrap()))
+            .unwrap();
+        if best.success_rate.unwrap() - worst.success_rate.unwrap() >= 0.15 {
+            out.push(insight(
+                "tool-compare",
+                "info",
+                format!("{} is landing more of your work than {}", source_label(&best.key), source_label(&worst.key)),
+                format!(
+                    "{} sessions succeed {} of the time against {} for {}. Check whether that is the tool or the kind of task you give each one.",
+                    source_label(&best.key), pct(best.success_rate.unwrap()), pct(worst.success_rate.unwrap()), source_label(&worst.key)
+                ),
+                format!("{} vs {} rated sessions", best.rated, worst.rated),
+            ));
+        }
+    }
+
+    // Response latency: the human as the bottleneck.
+    let t = totals(&rows);
+    if let Some(avg) = t.avg_wait_seconds {
+        let waits: i64 = rows.iter().map(|s| s.wait_count).sum();
+        if waits >= 10 && avg >= 120.0 {
+            out.push(insight(
+                "latency",
+                "warning",
+                format!("Agents waited {:.1} hours on you", t.wait_hours),
+                format!(
+                    "After an agent finishes a turn, your next prompt comes {:.1} minutes later on average. Batch reviews, keep the Live page open, or give longer autonomous tasks so agents don't sit idle.",
+                    avg / 60.0
+                ),
+                format!("{waits} hand-backs measured (gaps over 30 min excluded)"),
+            ));
+        } else if waits >= 10 {
+            out.push(insight(
+                "latency-good",
+                "positive",
+                format!("You respond to agents in {:.0} seconds on average", avg),
+                "Agents rarely sit idle waiting on you. If you want more throughput, run sessions in parallel rather than responding faster.".into(),
+                format!("{waits} hand-backs measured"),
+            ));
+        }
+    }
+
+    // Tool errors.
+    if t.tool_calls >= 50 {
+        let rate = t.tool_errors as f64 / t.tool_calls as f64;
+        if rate >= 0.12 {
+            out.push(insight(
+                "tool-errors",
+                "warning",
+                format!("{} of agent tool calls fail", pct(rate)),
+                "Frequent failures usually mean missing setup: commands that don't exist, wrong paths, absent env vars or tests that can't run. Put the right commands in CLAUDE.md / AGENTS.md so agents stop guessing.".into(),
+                format!("{} errors in {} tool calls", t.tool_errors, t.tool_calls),
+            ));
+        }
+    }
+
+    // Journal calibration.
+    let cal = journal::calibration(conn, range.since)?;
+    if let Some(all) = &cal.overall {
+        if all.n >= MIN_SAMPLE as i64
+            && let Some(r) = all.time_ratio
+        {
+            if r >= 1.3 {
+                out.push(insight(
+                        "calibration-time",
+                        "warning",
+                        format!("Tasks take {r:.1}× as long as you expect"),
+                        "Your estimates are consistently optimistic. Either budget more time, or scope tasks smaller before handing them off.".into(),
+                        format!("{} closed intents", all.n),
+                    ));
+            } else if r <= 0.8 {
+                out.push(insight(
+                    "calibration-fast",
+                    "positive",
+                    format!("Agents finish in {:.0}% of your estimate", r * 100.0),
+                    "You are delegating well-scoped work. You can likely hand off larger chunks."
+                        .into(),
+                    format!("{} closed intents", all.n),
+                ));
+            }
+        }
+        let high: Vec<_> = cal
+            .by_confidence
+            .iter()
+            .filter(|c| c.key == "4" || c.key == "5")
+            .collect();
+        let n_high: i64 = high.iter().map(|c| c.n).sum();
+        if n_high >= MIN_SAMPLE as i64 {
+            let rate = high
+                .iter()
+                .map(|c| c.success_rate * c.n as f64)
+                .sum::<f64>()
+                / n_high as f64;
+            if rate < 0.6 {
+                out.push(insight(
+                    "overconfident",
+                    "warning",
+                    "High-confidence tasks still fail often".into(),
+                    format!("When you rate yourself 4–5 out of 5, only {} succeed. Look at the reflections on those intents for the common surprise.", pct(rate)),
+                    format!("{n_high} high-confidence intents"),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+pub fn source_label(s: &str) -> &str {
+    match s {
+        "claude_code" => "Claude Code",
+        "copilot_cli" => "Copilot CLI",
+        "copilot_vscode" => "Copilot Chat",
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+
+    fn insert(conn: &Connection, id: &str, prompt_len: usize, outcome: Option<&str>, started: i64) {
+        conn.execute(
+            "INSERT INTO sessions (id, source, external_id, file_path, first_prompt, started_at, ended_at,
+                                   active_ms, user_turns, outcome, ingested_at)
+             VALUES (?1, 'claude_code', ?1, '/f', ?2, ?3, ?3 + 600000, 600000, 3, ?4, 0)",
+            params![id, "x".repeat(prompt_len), started, outcome],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn overview_and_insights_on_rated_sessions() {
+        let conn = db::open_in_memory().unwrap();
+        let now = now_ms();
+        for i in 0..6 {
+            insert(
+                &conn,
+                &format!("long{i}"),
+                500,
+                Some("shipped"),
+                now - (i + 1) * 3_600_000,
+            );
+            insert(
+                &conn,
+                &format!("short{i}"),
+                20,
+                Some("abandoned"),
+                now - (i + 1) * 3_600_000,
+            );
+        }
+        let ov = overview(&conn, 7).unwrap();
+        assert_eq!(ov.totals.sessions, 12);
+        assert_eq!(ov.totals.shipped, 6);
+        assert_eq!(ov.totals.success_rate, Some(0.5));
+        assert_eq!(ov.daily.len(), 8);
+
+        let ins = insights(&conn, 7).unwrap();
+        let p = ins
+            .iter()
+            .find(|i| i.id == "prompt-length")
+            .expect("prompt-length insight");
+        assert!(p.title.contains("detailed"));
+    }
+
+    #[test]
+    fn review_round_trip_and_validation() {
+        let conn = db::open_in_memory().unwrap();
+        insert(&conn, "a", 10, None, now_ms() - 1000);
+        save_review(
+            &conn,
+            &Review {
+                id: "a".into(),
+                outcome: Some("partial".into()),
+                rating: Some(3),
+                notes: Some("tests missing".into()),
+                tags: vec![" Refactor ".into(), "".into()],
+            },
+        )
+        .unwrap();
+        let d = session_detail(&conn, "a").unwrap();
+        assert_eq!(d.session.outcome.as_deref(), Some("partial"));
+        assert_eq!(d.session.tags, ["refactor"]);
+        assert!(
+            save_review(
+                &conn,
+                &Review {
+                    id: "a".into(),
+                    outcome: Some("great".into()),
+                    rating: None,
+                    notes: None,
+                    tags: vec![]
+                }
+            )
+            .is_err()
+        );
+    }
+}

@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
+
+:root {
+  color-scheme: dark;
+  background: #09090b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #09090b;
+  color: #e4e4e7;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgb(16 185 129 / 0.35);
+}
+
+/* Thin scrollbars that match the dark theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+.prose-retro h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 1.4rem 0 0.5rem;
+  color: #fafafa;
+}
+.prose-retro h2:first-child {
+  margin-top: 0;
+}
+.prose-retro p,
+.prose-retro li {
+  line-height: 1.6;
+  color: #d4d4d8;
+}
+.prose-retro ul,
+.prose-retro ol {
+  padding-left: 1.25rem;
+  margin: 0.4rem 0;
+}
+.prose-retro ul {
+  list-style: disc;
+}
+.prose-retro ol {
+  list-style: decimal;
+}
+.prose-retro strong {
+  color: #fafafa;
+}
+.prose-retro code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: #27272a;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+.prose-retro blockquote {
+  border-left: 3px solid #3f3f46;
+  padding-left: 0.75rem;
+  color: #a1a1aa;
+}
+.prose-retro table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.prose-retro th,
+.prose-retro td {
+  border: 1px solid #3f3f46;
+  padding: 0.25rem 0.5rem;
+}
