@@ -29,6 +29,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
         ..Default::default()
     };
     parse_file(main, &mut s, false)?;
+    s.subagents = paths.len() as u64 - 1;
     for sub in &paths[1..] {
         // A broken sub-agent file should not drop the whole session.
         let _ = parse_file(sub, &mut s, true);
@@ -74,10 +75,26 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                     continue;
                 }
                 s.note_time(ts);
-                let tool_uses = content_items(msg)
-                    .filter(|i| i.get("type").and_then(Value::as_str) == Some("tool_use"))
-                    .count() as u64;
-                s.tool_calls += tool_uses;
+                let mut tool_uses = 0;
+                for item in content_items(msg) {
+                    match item.get("type").and_then(Value::as_str) {
+                        Some("tool_use") => {
+                            tool_uses += 1;
+                            let name = item.get("name").and_then(Value::as_str).unwrap_or("tool");
+                            let input = &item["input"];
+                            let path = ["file_path", "path", "notebook_path"]
+                                .iter()
+                                .find_map(|k| input.get(*k).and_then(Value::as_str));
+                            s.note_tool(name, path);
+                        }
+                        Some("text") => {
+                            if let Some(t) = item.get("text").and_then(Value::as_str) {
+                                s.note_message(t);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 let ended = tool_uses == 0
                     && matches!(
                         msg.get("stop_reason").and_then(Value::as_str),
@@ -102,6 +119,12 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                 if let Some(t) = v.get("summary").and_then(Value::as_str) {
                     s.title = Some(truncate(t, 200));
                 }
+            }
+            "system"
+                if !is_subagent
+                    && v.get("subtype").and_then(Value::as_str) == Some("compact_boundary") =>
+            {
+                s.compactions += 1;
             }
             "cost-state" if !is_subagent => {
                 if let Some(c) = v.get("totalCostUSD").and_then(Value::as_f64) {
@@ -332,6 +355,10 @@ mod tests {
         assert_eq!(s.prompts[1].text, "/review auth");
         assert_eq!(s.assistant_turns, 2);
         assert_eq!(s.tool_calls, 2);
+        assert_eq!(s.tool_counts.get("Read"), Some(&1));
+        assert_eq!((s.reads, s.edits), (1, 1));
+        assert_eq!(s.subagents, 1);
+        assert_eq!(s.last_message.as_deref(), Some("done"));
         assert_eq!(s.tool_errors, 1);
         assert_eq!(s.interruptions, 1);
         assert_eq!(s.title.as_deref(), Some("Login page"));

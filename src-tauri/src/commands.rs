@@ -19,7 +19,7 @@ use crate::live::{self, LiveSummary};
 use crate::model::Source;
 use crate::playbooks::{self, PlaybookStats};
 use crate::retro::{self, RetroRow};
-use crate::{AppState, db, sources};
+use crate::{AppState, db, sources, trends};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -68,6 +68,32 @@ pub fn get_insights(state: State<AppState>, days: i64) -> CmdResult<Vec<Insight>
 #[tauri::command(async)]
 pub fn get_scorecard(state: State<AppState>, days: i64) -> CmdResult<Scorecard> {
     with_db(&state, |c| analytics::scorecard(c, days))
+}
+
+#[tauri::command(async)]
+pub fn get_usage(state: State<AppState>, days: i64) -> CmdResult<trends::Usage> {
+    with_db(&state, |c| trends::usage(c, days))
+}
+
+#[tauri::command(async)]
+pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patterns> {
+    with_db(&state, |c| trends::patterns(c, days))
+}
+
+/// Writes the filtered sessions as CSV to the Downloads folder and returns
+/// the file's path.
+#[tauri::command(async)]
+pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<String> {
+    with_db(&state, |c| {
+        let rows = analytics::list_sessions(c, &filter)?;
+        let dir = dirs::download_dir().unwrap_or_else(|| state.data_dir.clone());
+        let path = dir.join(format!(
+            "execution-ledger-sessions-{}.csv",
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        ));
+        std::fs::write(&path, analytics::sessions_csv(&rows))?;
+        Ok(path.to_string_lossy().into_owned())
+    })
 }
 
 #[tauri::command(async)]

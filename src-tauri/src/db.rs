@@ -149,6 +149,23 @@ CREATE TABLE playbook_sightings (
 );
 INSERT INTO playbook_sightings (version_id, seen_at) SELECT id, first_seen FROM playbook_versions;
 "#,
+    // Execution-quality signals. Clearing source_files makes the next scan
+    // re-parse every transcript so existing sessions get the new columns;
+    // reviews and notes are kept because the upsert never touches them.
+    r#"
+ALTER TABLE sessions ADD COLUMN tool_counts TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE sessions ADD COLUMN reads INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN edits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN shell_calls INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN edits_without_read INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN re_edits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN subagents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN corrections INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN category TEXT;
+ALTER TABLE sessions ADD COLUMN last_message TEXT;
+DELETE FROM source_files;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

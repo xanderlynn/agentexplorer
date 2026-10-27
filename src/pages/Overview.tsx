@@ -5,13 +5,10 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContaine
 import { api, type GroupStat, type Insight, type Source } from "../api";
 import type { Page } from "../App";
 import { Bar as Meter, Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
+import { chart } from "../theme";
 import { SOURCE_COLOR, compact, delta, duration, hours, money, pct, projectName } from "../format";
 
-export const tooltipStyle = {
-  contentStyle: { background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, fontSize: 12 },
-  labelStyle: { color: "#a1a1aa" },
-  itemStyle: { color: "#e4e4e7" },
-};
+export const tooltipStyle = chart.tooltip;
 
 export default function Overview({ days, setDays, onOpen, go }: { days: number; setDays: (d: number) => void; onOpen: (id: string) => void; go: (p: Page) => void }) {
   const ov = useQuery({ queryKey: ["overview", days], queryFn: () => api.overview(days) });
@@ -102,15 +99,15 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
               <AreaChart data={o.daily} margin={{ left: -20, right: 8, top: 8 }}>
                 <defs>
                   <linearGradient id="activeFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    <stop offset="0%" stopColor={chart.accent} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={chart.accent} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#27272a" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis tick={{ fill: "#71717a", fontSize: 11 }} />
+                <CartesianGrid stroke={chart.grid} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis tick={{ fill: chart.axis, fontSize: 11 }} />
                 <Tooltip {...tooltipStyle} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
-                <Area type="monotone" dataKey="activeMinutes" stroke="#10b981" fill="url(#activeFill)" strokeWidth={2} />
+                <Area type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -119,12 +116,12 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={o.daily} margin={{ left: -20, right: 8, top: 8 }}>
-                <CartesianGrid stroke="#27272a" vertical={false} />
-                <XAxis dataKey="date" tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-                <YAxis allowDecimals={false} tick={{ fill: "#71717a", fontSize: 11 }} />
-                <Tooltip {...tooltipStyle} cursor={{ fill: "#27272a" }} />
-                <Bar dataKey="sessions" name="Sessions" fill="#3f3f46" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="shipped" name="Shipped" fill="#10b981" radius={[3, 3, 0, 0]} />
+                <CartesianGrid stroke={chart.grid} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
+                <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} />
+                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} />
+                <Bar dataKey="sessions" name="Sessions" fill={chart.muted} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="shipped" name="Shipped" fill={chart.accent} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -137,8 +134,8 @@ export default function Overview({ days, setDays, onOpen, go }: { days: number; 
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={o.bySource} layout="vertical" margin={{ left: 10, right: 16 }}>
                 <XAxis type="number" hide />
-                <YAxis type="category" dataKey="key" width={95} tick={{ fill: "#a1a1aa", fontSize: 12 }} tickFormatter={(k: string) => (k === "claude_code" ? "Claude Code" : k === "copilot_cli" ? "Copilot CLI" : "Copilot Chat")} />
-                <Tooltip {...tooltipStyle} cursor={{ fill: "#27272a" }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
+                <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => (k === "claude_code" ? "Claude Code" : k === "copilot_cli" ? "Copilot CLI" : "Copilot Chat")} />
+                <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
                 <Bar dataKey="activeHours" radius={[0, 4, 4, 0]}>
                   {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? "#71717a"} />)}
                 </Bar>

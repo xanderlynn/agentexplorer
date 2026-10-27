@@ -99,16 +99,26 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             *s.model_turns.entry(model.clone()).or_default() += 1;
         }
 
-        if let Some(items) = req.get("response").and_then(Value::as_array) {
-            s.tool_calls += items
-                .iter()
-                .filter(|it| {
-                    matches!(
-                        it.get("kind").and_then(Value::as_str),
-                        Some("toolInvocation") | Some("toolInvocationSerialized")
-                    )
-                })
-                .count() as u64;
+        for item in req
+            .get("response")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            match item.get("kind").and_then(Value::as_str) {
+                Some("toolInvocation" | "toolInvocationSerialized") => {
+                    let name = item.get("toolId").and_then(Value::as_str).unwrap_or("tool");
+                    // "copilot_readFile" → "readFile" for grouping with other tools.
+                    s.note_tool(&vscode_tool_name(name), None);
+                }
+                // Plain markdown parts carry no kind.
+                None | Some("markdownContent") => {
+                    if let Some(t) = item.get("value").and_then(Value::as_str) {
+                        s.note_message(t);
+                    }
+                }
+                _ => {}
+            }
         }
         if result.and_then(|r| r.get("errorDetails")).is_some() {
             s.tool_errors += 1;
@@ -222,6 +232,17 @@ fn navigate<'a>(root: &'a mut Value, keys: &[Value]) -> Option<&'a mut Value> {
     Some(cur)
 }
 
+fn vscode_tool_name(id: &str) -> String {
+    let short = id.strip_prefix("copilot_").unwrap_or(id);
+    match short {
+        "readFile" => "read_file".into(),
+        "replaceString" | "multiReplaceString" | "insertEdit" | "applyPatch" => "edit_file".into(),
+        "createFile" => "create_file".into(),
+        "findFiles" | "findTextInFiles" | "searchCodebase" | "listDirectory" => "search".into(),
+        other => other.into(),
+    }
+}
+
 fn workspace_folder(session_file: &Path) -> Option<String> {
     let ws_dir = session_file.parent()?.parent()?;
     let text = std::fs::read_to_string(ws_dir.join("workspace.json")).ok()?;
@@ -298,7 +319,7 @@ mod tests {
         let lines = [
             r#"{"kind":0,"v":{"sessionId":"s1","creationDate":1000,"requests":[]}}"#,
             r#"{"kind":2,"k":["requests"],"v":[{"requestId":"r1","timestamp":2000,"modelId":"copilot/claude-sonnet-4.5","message":{"text":"Fix the mermaid diagram"},"response":[]}]}"#,
-            r#"{"kind":2,"k":["requests",0,"response"],"v":[{"kind":"toolInvocationSerialized"},{"kind":"markdownContent"}]}"#,
+            r#"{"kind":2,"k":["requests",0,"response"],"v":[{"kind":"toolInvocationSerialized","toolId":"copilot_readFile"},{"value":"Fixed the diagram."}]}"#,
             r#"{"kind":1,"k":["requests",0,"result"],"v":{"timings":{"totalElapsed":5000},"metadata":{"promptTokens":900,"outputTokens":120}}}"#,
             r#"{"kind":1,"k":["requests",0,"modelState"],"v":{"value":1,"completedAt":7000}}"#,
             r#"{"kind":2,"k":["requests"],"v":[{"requestId":"r2","timestamp":9000,"message":{"text":"Now the colors"},"response":[]}]}"#,
@@ -313,6 +334,8 @@ mod tests {
         assert_eq!(s.user_turns, 2);
         assert_eq!(s.assistant_turns, 1);
         assert_eq!(s.tool_calls, 1);
+        assert_eq!(s.reads, 1);
+        assert_eq!(s.last_message.as_deref(), Some("Fixed the diagram."));
         assert_eq!(s.interruptions, 0);
         // The second request has no result yet, so the agent is still working.
         assert_eq!(s.last_event, Some(LastEvent::Working));

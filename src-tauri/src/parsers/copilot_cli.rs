@@ -109,13 +109,18 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 }
                 fallback_output_tokens +=
                     d.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
+                if let Some(text) = d.get("content").and_then(Value::as_str) {
+                    s.note_message(text);
+                }
             }
             "assistant.turn_end" => {
                 s.note_turn_end(ts);
                 s.last_event = Some(LastEvent::TurnEnded);
             }
             "tool.execution_start" => {
-                s.tool_calls += 1;
+                let name = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
+                let path = d.pointer("/arguments/path").and_then(Value::as_str);
+                s.note_tool(name, path);
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
@@ -124,6 +129,8 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 }
             }
             "session.error" => s.tool_errors += 1,
+            "session.compaction_complete" => s.compactions += 1,
+            "subagent.started" => s.subagents += 1,
             "abort" => {
                 s.interruptions += 1;
                 s.note_turn_end(ts);
@@ -237,7 +244,7 @@ mod tests {
             r#"{"type":"user.message","timestamp":"2026-02-01T09:00:02Z","data":{"content":"Fix the flaky test"}}"#,
             r#"{"type":"assistant.turn_start","timestamp":"2026-02-01T09:00:03Z","data":{}}"#,
             r#"{"type":"assistant.message","timestamp":"2026-02-01T09:00:04Z","data":{"outputTokens":40}}"#,
-            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:05Z","data":{}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:05Z","data":{"toolName":"edit","arguments":{"path":"/work/api/a.rs"}}}"#,
             r#"{"type":"tool.execution_complete","timestamp":"2026-02-01T09:00:06Z","data":{"success":false}}"#,
             r#"{"type":"user.message","timestamp":"2026-02-01T09:00:07Z","data":{"content":"<skill-context>","source":"skill-x","parentAgentTaskId":"t1"}}"#,
             r#"{"type":"user.message","timestamp":"2026-02-01T09:00:07Z","data":{"content":"use tables instead","delivery":"steering","parentAgentTaskId":"t1"}}"#,
@@ -256,6 +263,7 @@ mod tests {
         assert_eq!(s.user_turns, 2);
         assert_eq!(s.assistant_turns, 1);
         assert_eq!(s.tool_calls, 1);
+        assert_eq!((s.edits, s.edits_without_read), (1, 1));
         assert_eq!(s.tool_errors, 1);
         assert_eq!(s.permission_requests, 1);
         // One steering message plus one abort.

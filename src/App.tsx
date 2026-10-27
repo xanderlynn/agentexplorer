@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { BookOpenCheck, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Trophy } from "lucide-react";
+import { BookOpenCheck, ChartColumn, Coins, Gauge, ListChecks, NotebookPen, Radio, Settings as SettingsIcon, Sparkles, Trophy } from "lucide-react";
 import { api, type LiveState } from "./api";
 import { cx } from "./components/ui";
 import { SessionDrawer } from "./components/SessionDrawer";
@@ -11,17 +11,21 @@ import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
 import Live from "./pages/Live";
 import Journal from "./pages/Journal";
+import Patterns from "./pages/Patterns";
+import Usage from "./pages/Usage";
 import Playbooks from "./pages/Playbooks";
 import Scorecard from "./pages/Scorecard";
 import Retro from "./pages/Retro";
 import Settings from "./pages/Settings";
 
-export type Page = "overview" | "live" | "sessions" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: "overview", label: "Overview", icon: Gauge },
   { id: "live", label: "Live", icon: Radio },
   { id: "sessions", label: "Sessions", icon: ListChecks },
+  { id: "patterns", label: "Patterns", icon: ChartColumn },
+  { id: "usage", label: "Usage", icon: Coins },
   { id: "journal", label: "Journal", icon: NotebookPen },
   { id: "playbooks", label: "Playbooks", icon: BookOpenCheck },
   { id: "scorecard", label: "Scorecard", icon: Trophy },
@@ -108,6 +112,8 @@ export default function App() {
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} />}
           {page === "live" && <Live onOpen={setOpenSession} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} />}
+          {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} />}
+          {page === "usage" && <Usage days={days} setDays={setDays} />}
           {page === "journal" && <Journal days={days} setDays={setDays} onOpen={setOpenSession} />}
           {page === "playbooks" && <Playbooks />}
           {page === "scorecard" && <Scorecard days={days} setDays={setDays} />}

@@ -39,6 +39,24 @@ export interface SessionRow {
   tokens: number;
   lastEvent: string | null;
   tags: string[];
+  category: string | null;
+  reads: number;
+  edits: number;
+  shellCalls: number;
+  editsWithoutRead: number;
+  reEdits: number;
+  compactions: number;
+  subagents: number;
+  corrections: number;
+  friction: Friction;
+}
+
+/** Heuristic 1–5 scores; 5 is the least friction. */
+export interface Friction {
+  requirements: number;
+  steering: number;
+  scope: number;
+  overall: number;
 }
 
 export interface SessionDetail {
@@ -52,6 +70,9 @@ export interface SessionDetail {
   linesAdded: number | null;
   linesRemoved: number | null;
   notes: string | null;
+  toolCounts: Record<string, number>;
+  lastMessage: string | null;
+  resumeCommand: string | null;
   prompts: { idx: number; ts: number | null; text: string }[];
   commits: {
     sha: string;
@@ -163,6 +184,7 @@ export interface LiveSession {
   userTurns: number;
   activeMs: number;
   avgWaitMs: number | null;
+  lastMessage: string | null;
 }
 
 export interface LiveSummary {
@@ -284,6 +306,79 @@ export interface SessionFilter {
   outcome?: Outcome | "unrated";
   search?: string;
   project?: string;
+  category?: string;
+}
+
+export interface Usage {
+  daily: { date: string; cost: Record<string, number>; input: number; output: number; cacheRead: number; cacheWrite: number }[];
+  byModel: {
+    model: string;
+    sessions: number;
+    costUsd: number;
+    tokens: number;
+    rated: number;
+    successRate: number | null;
+    avgTurns: number;
+    avgActiveMinutes: number;
+    costPerSession: number;
+    avgFriction: number;
+  }[];
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheHitRate: number | null;
+  cacheSavingsUsd: number;
+  monthToDateUsd: number;
+  projectedMonthUsd: number;
+  costPerSession: number | null;
+}
+
+export interface Benchmark {
+  label: string;
+  sessions: number;
+  successRate: number | null;
+  avgTurns: number | null;
+  correctionsPerSession: number | null;
+  interruptionsPerSession: number | null;
+  avgActiveMinutes: number | null;
+  reEditRate: number | null;
+  avgFriction: number | null;
+}
+
+export interface Patterns {
+  calendar: { date: string; sessions: number; activeMinutes: number }[];
+  heatmap: number[][];
+  categories: {
+    category: string;
+    sessions: number;
+    rated: number;
+    successRate: number | null;
+    avgActiveMinutes: number;
+    avgTurns: number;
+    avgFriction: number;
+  }[];
+  tools: { tool: string; count: number }[];
+  reads: number;
+  edits: number;
+  shellCalls: number;
+  otherToolCalls: number;
+  qualityWeekly: {
+    weekStart: string;
+    sessions: number;
+    successRate: number | null;
+    readEditRatio: number | null;
+    editsWithoutReadRate: number | null;
+    reEditRate: number | null;
+    correctionsPerSession: number;
+    avgFriction: number;
+  }[];
+  friction: Friction | null;
+  thenVsNow: [Benchmark, Benchmark] | null;
+  longest: { id: string; source: Source; title: string | null; activeMs: number; userTurns: number; outcome: Outcome | null }[];
+  withCompaction: Benchmark;
+  withoutCompaction: Benchmark;
+  withSubagents: Benchmark;
 }
 
 export const api = {
@@ -291,6 +386,9 @@ export const api = {
   insights: (days: number) => invoke<Insight[]>("get_insights", { days }),
   scorecard: (days: number) => invoke<Scorecard>("get_scorecard", { days }),
   sessions: (filter: SessionFilter) => invoke<SessionRow[]>("list_sessions", { filter }),
+  exportSessions: (filter: SessionFilter) => invoke<string>("export_sessions", { filter }),
+  usage: (days: number) => invoke<Usage>("get_usage", { days }),
+  patterns: (days: number) => invoke<Patterns>("get_patterns", { days }),
   session: (id: string) => invoke<SessionDetail>("get_session", { id }),
   saveReview: (review: { id: string; outcome: Outcome | null; rating: number | null; notes: string | null; tags: string[] }) =>
     invoke<void>("save_review", { review }),

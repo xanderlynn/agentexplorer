@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { CheckCircle2, FolderOpen, RefreshCw, XCircle } from "lucide-react";
 import { api, type IngestReport } from "../api";
+import { AppearanceSettings } from "../components/Appearance";
 import { Button, Card, ErrorNote, Field, Loading, PageHeader, SourceBadge, inputClass } from "../components/ui";
 
 export default function Settings() {
@@ -27,6 +28,7 @@ export default function Settings() {
     <>
       <PageHeader title="Settings" />
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <AppearanceSettings />
         <Card
           title="Sources"
           action={

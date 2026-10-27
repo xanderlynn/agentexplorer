@@ -230,7 +230,7 @@ export function ErrorNote({ error }: { error: unknown }) {
 }
 
 // Horizontal bar used in tables, 0..1.
-export function Bar({ value, color = "#10b981" }: { value: number | null; color?: string }) {
+export function Bar({ value, color = "var(--color-emerald-500)" }: { value: number | null; color?: string }) {
   const w = value == null ? 0 : Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">

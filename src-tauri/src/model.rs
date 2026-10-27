@@ -1,6 +1,6 @@
 //! Normalized representation of one AI session, independent of which tool wrote it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -114,6 +114,60 @@ pub struct ParsedSession {
     pub wait_samples: Vec<i64>,
     /// Set by `note_turn_end`, consumed by `note_human_prompt`.
     pub last_turn_end: Option<i64>,
+    /// Calls per tool name.
+    pub tool_counts: BTreeMap<String, u64>,
+    pub reads: u64,
+    pub edits: u64,
+    pub shell_calls: u64,
+    /// Edits to an existing file the agent had not read in this session.
+    pub edits_without_read: u64,
+    /// Edits to a file the agent had already edited in this session; a high
+    /// share suggests a fix-it-again loop.
+    pub re_edits: u64,
+    pub compactions: u64,
+    pub subagents: u64,
+    /// The agent's most recent text reply, for "what is it asking me?".
+    pub last_message: Option<String>,
+    pub read_paths: HashSet<String>,
+    pub edited_paths: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolKind {
+    Read,
+    /// Changes an existing file.
+    Edit,
+    /// Creates or overwrites a whole file; no prior read is expected.
+    Write,
+    Shell,
+    Other,
+}
+
+/// Groups tool names across Claude Code, Copilot CLI and VS Code.
+pub fn tool_kind(name: &str) -> ToolKind {
+    let n = name.to_ascii_lowercase();
+    let n = n.rsplit(['.', '/', ':']).next().unwrap_or(&n);
+    match n {
+        "read" | "view" | "grep" | "glob" | "ls" | "read_file" | "list_dir" | "file_search"
+        | "grep_search" | "semantic_search" | "codebase_search" | "notebookread" | "search" => {
+            ToolKind::Read
+        }
+        "edit"
+        | "multiedit"
+        | "str_replace"
+        | "str_replace_editor"
+        | "edit_file"
+        | "apply_patch"
+        | "notebookedit"
+        | "replace_string_in_file"
+        | "insert_edit_into_file"
+        | "multi_replace_string_in_file" => ToolKind::Edit,
+        "write" | "create" | "create_file" | "write_file" => ToolKind::Write,
+        "bash" | "shell" | "powershell" | "run_in_terminal" | "run_command" | "execute" => {
+            ToolKind::Shell
+        }
+        _ => ToolKind::Other,
+    }
 }
 
 /// Idle gaps longer than this do not count toward active time.
@@ -157,6 +211,46 @@ impl ParsedSession {
             if (0..=WAIT_SAMPLE_CAP_MS).contains(&gap) {
                 self.wait_samples.push(gap);
             }
+        }
+    }
+
+    /// Records one tool call. `path` is the file it touched, when known.
+    pub fn note_tool(&mut self, name: &str, path: Option<&str>) {
+        self.tool_calls += 1;
+        *self.tool_counts.entry(name.to_string()).or_default() += 1;
+        let path = path.map(crate::util::path_key);
+        match tool_kind(name) {
+            ToolKind::Read => {
+                self.reads += 1;
+                if let Some(p) = path {
+                    self.read_paths.insert(p);
+                }
+            }
+            kind @ (ToolKind::Edit | ToolKind::Write) => {
+                self.edits += 1;
+                if let Some(p) = path {
+                    if kind == ToolKind::Edit
+                        && !self.read_paths.contains(&p)
+                        && !self.edited_paths.contains(&p)
+                    {
+                        self.edits_without_read += 1;
+                    }
+                    if !self.edited_paths.insert(p.clone()) {
+                        self.re_edits += 1;
+                    }
+                    // The agent has seen what it wrote.
+                    self.read_paths.insert(p);
+                }
+            }
+            ToolKind::Shell => self.shell_calls += 1,
+            ToolKind::Other => {}
+        }
+    }
+
+    pub fn note_message(&mut self, text: &str) {
+        let t = text.trim();
+        if !t.is_empty() {
+            self.last_message = Some(crate::util::truncate(t, 600));
         }
     }
 

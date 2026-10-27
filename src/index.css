@@ -7,7 +7,7 @@
 
 :root {
   color-scheme: dark;
-  background: #09090b;
+  background: var(--color-zinc-950);
 }
 
 html,
@@ -18,27 +18,27 @@ body,
 
 body {
   margin: 0;
-  background: #09090b;
-  color: #e4e4e7;
+  background: var(--color-zinc-950);
+  color: var(--color-zinc-200);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: rgb(16 185 129 / 0.35);
+  background: color-mix(in oklab, var(--color-emerald-500) 35%, transparent);
 }
 
 /* Thin scrollbars that match the dark theme. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent;
+  scrollbar-color: var(--color-zinc-700) transparent;
 }
 
 .prose-retro h2 {
   font-size: 1.05rem;
   font-weight: 600;
   margin: 1.4rem 0 0.5rem;
-  color: #fafafa;
+  color: var(--color-zinc-50);
 }
 .prose-retro h2:first-child {
   margin-top: 0;
@@ -46,7 +46,7 @@ body {
 .prose-retro p,
 .prose-retro li {
   line-height: 1.6;
-  color: #d4d4d8;
+  color: var(--color-zinc-300);
 }
 .prose-retro ul,
 .prose-retro ol {
@@ -60,19 +60,19 @@ body {
   list-style: decimal;
 }
 .prose-retro strong {
-  color: #fafafa;
+  color: var(--color-zinc-50);
 }
 .prose-retro code {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  background: #27272a;
+  background: var(--color-zinc-800);
   padding: 0.1rem 0.3rem;
   border-radius: 4px;
 }
 .prose-retro blockquote {
-  border-left: 3px solid #3f3f46;
+  border-left: 3px solid var(--color-zinc-700);
   padding-left: 0.75rem;
-  color: #a1a1aa;
+  color: var(--color-zinc-400);
 }
 .prose-retro table {
   border-collapse: collapse;
@@ -80,6 +80,6 @@ body {
 }
 .prose-retro th,
 .prose-retro td {
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--color-zinc-700);
   padding: 0.25rem 0.5rem;
 }

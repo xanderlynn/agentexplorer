@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::model::{ParsedSession, Source};
 use crate::sources::{self, Root, Unit};
 use crate::util::{now_ms, path_within, truncate};
-use crate::{db, git, journal, parsers, playbooks};
+use crate::{db, git, journal, parsers, playbooks, signals};
 
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -279,9 +279,12 @@ fn upsert_session(
             assistant_turns, tool_calls, tool_errors, interruptions, permission_requests,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
             cost_is_estimate, premium_requests, lines_added, lines_removed, last_event,
-            wait_ms_total, wait_count, ingested_at
+            wait_ms_total, wait_count, ingested_at, tool_counts, reads, edits, shell_calls,
+            edits_without_read, re_edits, compactions, subagents, corrections, category,
+            last_message
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                   ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)
+                   ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
+                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)
          ON CONFLICT(id) DO UPDATE SET
             file_path = excluded.file_path, project_path = excluded.project_path,
             repo_root = excluded.repo_root, git_branch = excluded.git_branch,
@@ -299,7 +302,12 @@ fn upsert_session(
             premium_requests = excluded.premium_requests, lines_added = excluded.lines_added,
             lines_removed = excluded.lines_removed, last_event = excluded.last_event,
             wait_ms_total = excluded.wait_ms_total, wait_count = excluded.wait_count,
-            ingested_at = excluded.ingested_at",
+            ingested_at = excluded.ingested_at, tool_counts = excluded.tool_counts,
+            reads = excluded.reads, edits = excluded.edits, shell_calls = excluded.shell_calls,
+            edits_without_read = excluded.edits_without_read, re_edits = excluded.re_edits,
+            compactions = excluded.compactions, subagents = excluded.subagents,
+            corrections = excluded.corrections, category = excluded.category,
+            last_message = excluded.last_message",
         params![
             id,
             source.as_str(),
@@ -334,6 +342,20 @@ fn upsert_session(
             wait_total,
             s.wait_samples.len() as i64,
             now_ms(),
+            serde_json::to_string(&s.tool_counts)?,
+            s.reads as i64,
+            s.edits as i64,
+            s.shell_calls as i64,
+            s.edits_without_read as i64,
+            s.re_edits as i64,
+            s.compactions as i64,
+            s.subagents as i64,
+            signals::count_corrections(s.prompts.iter().map(|p| p.text.as_str())) as i64,
+            signals::categorize(
+                s.prompts.first().map(|p| p.text.as_str()).unwrap_or(""),
+                s.title.as_deref().unwrap_or("")
+            ),
+            s.last_message,
         ],
     )?;
 
@@ -417,7 +439,10 @@ mod tests {
             .prepare(
                 "SELECT source, COUNT(*), SUM(user_turns), SUM(tool_calls), SUM(tool_errors),
                         SUM(interruptions), ROUND(SUM(cost_usd), 2), SUM(active_ms) / 60000,
-                        SUM(wait_count), COUNT(repo_root), SUM(input_tokens + output_tokens)
+                        SUM(wait_count), COUNT(repo_root), SUM(input_tokens + output_tokens),
+                        SUM(reads), SUM(edits), SUM(edits_without_read), SUM(re_edits),
+                        SUM(compactions), SUM(subagents), SUM(corrections),
+                        group_concat(DISTINCT category)
                  FROM sessions GROUP BY source",
             )
             .unwrap();
@@ -436,6 +461,16 @@ mod tests {
                     r.get::<_, i64>(8)?,
                     r.get::<_, i64>(9)?,
                     r.get::<_, i64>(10)?,
+                ) + &format!(
+                    " reads={} edits={} blind_edits={} re_edits={} compactions={} subagents={} corrections={} categories={}",
+                    r.get::<_, i64>(11)?,
+                    r.get::<_, i64>(12)?,
+                    r.get::<_, i64>(13)?,
+                    r.get::<_, i64>(14)?,
+                    r.get::<_, i64>(15)?,
+                    r.get::<_, i64>(16)?,
+                    r.get::<_, i64>(17)?,
+                    r.get::<_, String>(18)?,
                 ))
             })
             .unwrap();

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Card, Empty, ErrorNote, Loading, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, Stat } from "../components/ui";
 import { compact, duration, money, pct, projectName } from "../format";
 import { GroupTable, tooltipStyle } from "./Overview";
+import { chart } from "../theme";
 
 export default function Scorecard({ days, setDays }: { days: number; setDays: (d: number) => void }) {
   const q = useQuery({ queryKey: ["scorecard", days], queryFn: () => api.scorecard(days) });
@@ -38,14 +39,14 @@ export default function Scorecard({ days, setDays }: { days: number; setDays: (d
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={s.weekly} margin={{ left: -20, right: 8, top: 8 }}>
-              <CartesianGrid stroke="#27272a" vertical={false} />
-              <XAxis dataKey="weekStart" tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} />
-              <YAxis allowDecimals={false} tick={{ fill: "#71717a", fontSize: 11 }} />
-              <Tooltip {...tooltipStyle} cursor={{ fill: "#27272a" }} labelFormatter={(l) => `Week of ${l}`} />
-              <Legend wrapperStyle={{ fontSize: 12, color: "#a1a1aa" }} />
-              <Bar dataKey="sessions" name="Sessions" fill="#3f3f46" radius={[3, 3, 0, 0]} />
+              <CartesianGrid stroke={chart.grid} vertical={false} />
+              <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} />
+              <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} />
+              <Tooltip {...tooltipStyle} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} />
+              <Legend wrapperStyle={{ fontSize: 12, color: "var(--color-zinc-400)" }} />
+              <Bar dataKey="sessions" name="Sessions" fill={chart.muted} radius={[3, 3, 0, 0]} />
               <Bar dataKey="sessionsWithCommits" name="Sessions with commits" fill="#5b9df5" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="shipped" name="Shipped" fill="#10b981" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="shipped" name="Shipped" fill={chart.accent} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

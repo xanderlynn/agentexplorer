@@ -61,6 +61,9 @@ function Row({ s, onOpen }: { s: LiveSession; onOpen: (id: string) => void }) {
             <span>· {s.userTurns} prompts · {duration(s.activeMs)} active</span>
             {s.avgWaitMs != null && <span>· you respond in {duration(s.avgWaitMs)} on average</span>}
           </div>
+          {(s.state === "waiting" || s.state === "needs_you") && s.lastMessage && (
+            <div className="mt-1.5 line-clamp-2 rounded-md border-l-2 border-amber-500/60 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-400">{s.lastMessage}</div>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <div className={cx("text-sm font-medium", st.text)}>{st.label}</div>

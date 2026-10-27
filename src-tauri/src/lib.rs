@@ -10,7 +10,9 @@ mod parsers;
 mod playbooks;
 mod pricing;
 mod retro;
+mod signals;
 mod sources;
+mod trends;
 mod util;
 mod watcher;
 
@@ -49,6 +51,9 @@ pub fn run() {
             commands::get_overview,
             commands::get_insights,
             commands::get_scorecard,
+            commands::get_usage,
+            commands::get_patterns,
+            commands::export_sessions,
             commands::list_sessions,
             commands::get_session,
             commands::save_review,

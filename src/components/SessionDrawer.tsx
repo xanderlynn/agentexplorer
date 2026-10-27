@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, GitCommitHorizontal, X } from "lucide-react";
+import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
 import { api, currentVersion, type Outcome } from "../api";
 import { compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, inputClass, Loading, OutcomePicker, Rating, SourceBadge } from "./ui";
@@ -119,6 +119,46 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
               <Metric label="Lines" value={d.linesAdded != null ? `+${d.linesAdded} −${d.linesRemoved ?? 0}` : "—"} />
             </section>
 
+            <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-medium text-zinc-200">Execution signals</h3>
+                {s.category && <span className="rounded-md bg-zinc-800 px-2 py-0.5 text-xs capitalize text-zinc-300">{s.category}</span>}
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <Score label="Requirements" value={s.friction.requirements} hint="clarity of the opening prompt" />
+                <Score label="Steering" value={s.friction.steering} hint={`${s.corrections} corrections, ${s.interruptions} interruptions`} />
+                <Score label="Scope" value={s.friction.scope} hint={`${s.userTurns} prompts, ${duration(s.activeMs)}`} />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Metric label="Reads / edits" value={`${s.reads} / ${s.edits}`} />
+                <Metric label="Blind edits" value={s.editsWithoutRead} hint="edited without reading" />
+                <Metric label="Re-edits" value={s.reEdits} hint="same file again" />
+                <Metric label="Compactions · agents" value={`${s.compactions} · ${s.subagents}`} />
+              </div>
+              {Object.keys(d.toolCounts).length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {Object.entries(d.toolCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 14)
+                    .map(([tool, n]) => (
+                      <span key={tool} className="rounded-md bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">
+                        {tool} <span className="text-zinc-500">{n}</span>
+                      </span>
+                    ))}
+                </div>
+              )}
+              <p className="mt-3 text-[11px] text-zinc-500">Scores are heuristics from the transcript; 5 is the least friction.</p>
+            </section>
+
+            {d.lastMessage && (
+              <section>
+                <h3 className="mb-2 text-sm font-medium text-zinc-200">Agent's last reply</h3>
+                <div className="whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-sm text-zinc-300">{d.lastMessage}</div>
+              </section>
+            )}
+
+            {d.resumeCommand && <ResumeCommand command={d.resumeCommand} />}
+
             <section>
               <h3 className="mb-2 text-sm font-medium text-zinc-200">Commits ({d.commits.length})</h3>
               {d.commits.length === 0 ? (
@@ -199,6 +239,40 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
         )}
       </div>
     </div>
+  );
+}
+
+function Score({ label, value, hint }: { label: string; value: number; hint: string }) {
+  const color = value >= 4 ? "text-emerald-300" : value >= 3 ? "text-amber-300" : "text-rose-300";
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className={`text-lg font-semibold tabular-nums ${color}`}>{value}<span className="text-xs text-zinc-500">/5</span></div>
+      <div className="text-[11px] text-zinc-500">{hint}</div>
+    </div>
+  );
+}
+
+function ResumeCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-medium text-zinc-200">Pick it back up</h3>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 font-mono text-xs text-zinc-300" title={command}>{command}</code>
+        <Button
+          size="sm"
+          onClick={() =>
+            navigator.clipboard.writeText(command).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            )
+          }
+        >
+          <Copy size={13} /> {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+    </section>
   );
 }
 

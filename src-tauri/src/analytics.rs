@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::journal::{self, outcome_score};
+use crate::signals::{self, Friction};
 use crate::util::now_ms;
 
 const DAY_MS: i64 = 86_400_000;
@@ -73,6 +74,16 @@ pub struct SessionRow {
     pub tokens: i64,
     pub last_event: Option<String>,
     pub tags: Vec<String>,
+    pub category: Option<String>,
+    pub reads: i64,
+    pub edits: i64,
+    pub shell_calls: i64,
+    pub edits_without_read: i64,
+    pub re_edits: i64,
+    pub compactions: i64,
+    pub subagents: i64,
+    pub corrections: i64,
+    pub friction: Friction,
 }
 
 impl SessionRow {
@@ -89,7 +100,8 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        COALESCE(c.n, 0), COALESCE(c.ins, 0), COALESCE(c.del, 0), COALESCE(c.ai, 0),
        s.wait_ms_total, s.wait_count, length(COALESCE(s.first_prompt, '')),
        s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
-       s.last_event, s.tags
+       s.last_event, s.tags, s.category, s.reads, s.edits, s.shell_calls,
+       s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai
@@ -97,7 +109,21 @@ LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletio
 
 fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     let tags: String = r.get(31)?;
+    let first_prompt: Option<String> = r.get(3)?;
+    let first_prompt_len: i64 = r.get(28)?;
+    let corrections: i64 = r.get(40)?;
+    let interruptions: i64 = r.get(15)?;
+    let user_turns: i64 = r.get(11)?;
+    let active_ms: i64 = r.get(10)?;
     Ok(SessionRow {
+        friction: signals::friction(
+            first_prompt.as_deref().unwrap_or(""),
+            first_prompt_len as usize,
+            corrections,
+            interruptions,
+            user_turns,
+            active_ms / 60_000,
+        ),
         id: r.get(0)?,
         source: r.get(1)?,
         title: r.get(2)?,
@@ -130,6 +156,15 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         tokens: r.get(29)?,
         last_event: r.get(30)?,
         tags: serde_json::from_str(&tags).unwrap_or_default(),
+        category: r.get(32)?,
+        reads: r.get(33)?,
+        edits: r.get(34)?,
+        shell_calls: r.get(35)?,
+        edits_without_read: r.get(36)?,
+        re_edits: r.get(37)?,
+        compactions: r.get(38)?,
+        subagents: r.get(39)?,
+        corrections,
     })
 }
 
@@ -153,6 +188,7 @@ pub struct SessionFilter {
     pub outcome: Option<String>,
     pub search: Option<String>,
     pub project: Option<String>,
+    pub category: Option<String>,
 }
 
 pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<SessionRow>> {
@@ -161,8 +197,24 @@ pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<Session
         .as_deref()
         .map(str::to_lowercase)
         .filter(|s| !s.is_empty());
+    // Search every prompt, not just the opening one.
+    let prompt_hits: std::collections::HashSet<String> = match &needle {
+        Some(n) => {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT session_id FROM prompts WHERE instr(lower(text), ?1) > 0",
+            )?;
+            stmt.query_map([n], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        }
+        None => Default::default(),
+    };
     let rows = load_sessions(conn, Range::last_days(f.days))?
         .into_iter()
+        .filter(|s| {
+            f.category
+                .as_deref()
+                .is_none_or(|c| c.is_empty() || s.category.as_deref() == Some(c))
+        })
         .filter(|s| f.source.as_deref().is_none_or(|src| src == s.source))
         .filter(|s| match f.outcome.as_deref() {
             None | Some("") => true,
@@ -176,13 +228,14 @@ pub fn list_sessions(conn: &Connection, f: &SessionFilter) -> Result<Vec<Session
         })
         .filter(|s| {
             needle.as_deref().is_none_or(|n| {
-                [&s.title, &s.first_prompt, &s.project_path, &s.git_branch]
-                    .iter()
-                    .any(|field| {
-                        field
-                            .as_deref()
-                            .is_some_and(|v| v.to_lowercase().contains(n))
-                    })
+                prompt_hits.contains(&s.id)
+                    || [&s.title, &s.first_prompt, &s.project_path, &s.git_branch]
+                        .iter()
+                        .any(|field| {
+                            field
+                                .as_deref()
+                                .is_some_and(|v| v.to_lowercase().contains(n))
+                        })
             })
         })
         .take(2000)
@@ -245,6 +298,10 @@ pub struct SessionDetail {
     pub lines_added: Option<i64>,
     pub lines_removed: Option<i64>,
     pub notes: Option<String>,
+    pub tool_counts: BTreeMap<String, i64>,
+    pub last_message: Option<String>,
+    /// A command that reopens the session in its tool, when it has one.
+    pub resume_command: Option<String>,
     pub prompts: Vec<PromptRow>,
     pub commits: Vec<CommitRow>,
     pub playbooks: Vec<SessionPlaybook>,
@@ -256,25 +313,36 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     let Some(session) = conn.query_row(&sql, [id], map_row).optional()? else {
         bail!("Session not found");
     };
-    let (file_path, entrypoint, it, ot, crt, cwt, la, lr, notes) = conn.query_row(
+    struct Extra {
+        file_path: String,
+        entrypoint: Option<String>,
+        tokens: [i64; 4],
+        lines: (Option<i64>, Option<i64>),
+        notes: Option<String>,
+        tool_counts: String,
+        last_message: Option<String>,
+        external_id: String,
+    }
+    let x = conn.query_row(
         "SELECT file_path, entrypoint, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, lines_added, lines_removed, notes
+                cache_write_tokens, lines_added, lines_removed, notes, tool_counts,
+                last_message, external_id
          FROM sessions WHERE id = ?1",
         [id],
         |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-                r.get(6)?,
-                r.get(7)?,
-                r.get(8)?,
-            ))
+            Ok(Extra {
+                file_path: r.get(0)?,
+                entrypoint: r.get(1)?,
+                tokens: [r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?],
+                lines: (r.get(6)?, r.get(7)?),
+                notes: r.get(8)?,
+                tool_counts: r.get(9)?,
+                last_message: r.get(10)?,
+                external_id: r.get(11)?,
+            })
         },
     )?;
+    let resume_command = resume_command(&session, &x.external_id);
     let prompts = conn
         .prepare("SELECT idx, ts, text FROM prompts WHERE session_id = ?1 ORDER BY idx")?
         .query_map([id], |r| {
@@ -339,20 +407,37 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         .optional()?;
     Ok(SessionDetail {
         session,
-        file_path,
-        entrypoint,
-        input_tokens: it,
-        output_tokens: ot,
-        cache_read_tokens: crt,
-        cache_write_tokens: cwt,
-        lines_added: la,
-        lines_removed: lr,
-        notes,
+        file_path: x.file_path,
+        entrypoint: x.entrypoint,
+        input_tokens: x.tokens[0],
+        output_tokens: x.tokens[1],
+        cache_read_tokens: x.tokens[2],
+        cache_write_tokens: x.tokens[3],
+        lines_added: x.lines.0,
+        lines_removed: x.lines.1,
+        notes: x.notes,
+        tool_counts: serde_json::from_str(&x.tool_counts).unwrap_or_default(),
+        last_message: x.last_message,
+        resume_command,
         prompts,
         commits,
         playbooks,
         intent,
     })
+}
+
+/// Claude Code resumes from the session's folder; Copilot CLI by id.
+/// Copilot Chat in VS Code has no resume command.
+fn resume_command(s: &SessionRow, external_id: &str) -> Option<String> {
+    let quote = |p: &str| format!("\"{}\"", p.replace('"', "\\\""));
+    match s.source.as_str() {
+        "claude_code" => Some(match &s.project_path {
+            Some(p) => format!("cd {} && claude --resume {external_id}", quote(p)),
+            None => format!("claude --resume {external_id}"),
+        }),
+        "copilot_cli" => Some(format!("copilot --resume {external_id}")),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -986,6 +1071,113 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
         }
     }
 
+    // Corrections: the human had to say "no, that's not it".
+    let by_corr = buckets(
+        &rows,
+        &["no corrections", "one correction", "2+ corrections"],
+        |s| Some(s.corrections.min(2) as usize),
+    );
+    if let (Some(clean), Some(rough)) = (by_corr[0].success(), by_corr[2].success())
+        && by_corr[0].rated() >= MIN_SAMPLE
+        && by_corr[2].rated() >= MIN_SAMPLE
+        && clean - rough >= 0.2
+    {
+        out.push(insight(
+            "corrections",
+            "warning",
+            "Sessions you have to correct twice rarely recover".into(),
+            format!(
+                "Success is {} with no corrections and {} after two or more. After the second \"no, that's not it\", start a fresh session with what you learned instead of steering further.",
+                pct(clean),
+                pct(rough)
+            ),
+            format!("{} vs {} rated sessions", by_corr[0].rated(), by_corr[2].rated()),
+        ));
+    }
+
+    // Context compaction: the session outgrew its context window.
+    let by_compact = buckets(&rows, &["no compaction", "compacted"], |s| {
+        Some(usize::from(s.compactions > 0))
+    });
+    if let (Some(clean), Some(compacted)) = (by_compact[0].success(), by_compact[1].success())
+        && by_compact[0].rated() >= MIN_SAMPLE
+        && by_compact[1].rated() >= MIN_SAMPLE
+        && clean - compacted >= 0.15
+    {
+        out.push(insight(
+            "compaction",
+            "warning",
+            "Sessions that hit context compaction succeed less".into(),
+            format!(
+                "{} succeed without compaction versus {} once the context fills up. Split big tasks so each fits one context window.",
+                pct(clean),
+                pct(compacted)
+            ),
+            format!("{} vs {} rated sessions", by_compact[0].rated(), by_compact[1].rated()),
+        ));
+    }
+
+    // Agent edit hygiene.
+    let edits: i64 = rows.iter().map(|s| s.edits).sum();
+    if edits >= 40 {
+        let blind = rows.iter().map(|s| s.edits_without_read).sum::<i64>() as f64 / edits as f64;
+        let re = rows.iter().map(|s| s.re_edits).sum::<i64>() as f64 / edits as f64;
+        if blind >= 0.25 {
+            out.push(insight(
+                "blind-edits",
+                "warning",
+                format!("{} of agent edits change files it hasn't read", pct(blind)),
+                "Edits made without reading the file first are more likely to be wrong. Point the agent at the relevant files in your prompt, or add \"read before editing\" to your instructions file.".into(),
+                format!("{edits} edits"),
+            ));
+        }
+        if re >= 0.35 {
+            out.push(insight(
+                "re-edits",
+                "warning",
+                format!("{} of edits rework a file already changed in the session", pct(re)),
+                "Repeated edits to the same file usually mean a fix-try-fix loop. Ask for a plan before code, or give the agent a test to run so it can check itself.".into(),
+                format!("{edits} edits"),
+            ));
+        }
+    }
+
+    // Task categories.
+    let mut cats: BTreeMap<String, Vec<&SessionRow>> = BTreeMap::new();
+    for s in &rows {
+        if let Some(c) = &s.category {
+            cats.entry(c.clone()).or_default().push(s);
+        }
+    }
+    let cat_rates: Vec<(String, usize, f64)> = cats
+        .iter()
+        .filter_map(|(c, g)| {
+            let rated = g.iter().filter(|s| s.outcome.is_some()).count();
+            let rate = success_rate(g.iter().copied())?;
+            (rated >= MIN_SAMPLE).then(|| (c.clone(), rated, rate))
+        })
+        .collect();
+    if let (Some(best), Some(worst)) = (
+        cat_rates.iter().max_by(|a, b| a.2.total_cmp(&b.2)),
+        cat_rates.iter().min_by(|a, b| a.2.total_cmp(&b.2)),
+    ) && best.2 - worst.2 >= 0.25
+    {
+        out.push(insight(
+            "categories",
+            "info",
+            format!("You delegate {} work well and {} work poorly", best.0, worst.0),
+            format!(
+                "{} sessions succeed {} of the time; {} sessions {}. Give {} tasks more structure (a failing test, a spec, or smaller steps), or do more of them yourself.",
+                best.0,
+                pct(best.2),
+                worst.0,
+                pct(worst.2),
+                worst.0
+            ),
+            format!("{} vs {} rated sessions", best.1, worst.1),
+        ));
+    }
+
     // Journal calibration.
     let cal = journal::calibration(conn, range.since)?;
     if let Some(all) = &cal.overall {
@@ -1035,6 +1227,60 @@ pub fn insights(conn: &Connection, days: i64) -> Result<Vec<Insight>> {
         }
     }
     Ok(out)
+}
+
+fn csv_field(v: &str) -> String {
+    if v.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", v.replace('"', "\"\""))
+    } else {
+        v.to_string()
+    }
+}
+
+pub fn sessions_csv(rows: &[SessionRow]) -> String {
+    let mut out = String::from(
+        "started,tool,project,branch,title,category,model,active_minutes,prompts,corrections,\
+         interruptions,tool_calls,tool_errors,commits,cost_usd,cost_is_estimate,outcome,rating,\
+         friction_requirements,friction_steering,friction_scope\n",
+    );
+    for s in rows {
+        let started = s
+            .started_at
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|d| d.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+        let fields = [
+            started,
+            source_label(&s.source).to_string(),
+            s.repo_root
+                .as_deref()
+                .or(s.project_path.as_deref())
+                .unwrap_or("")
+                .to_string(),
+            s.git_branch.clone().unwrap_or_default(),
+            s.title.clone().unwrap_or_default(),
+            s.category.clone().unwrap_or_default(),
+            s.model.clone().unwrap_or_default(),
+            (s.active_ms / 60_000).to_string(),
+            s.user_turns.to_string(),
+            s.corrections.to_string(),
+            s.interruptions.to_string(),
+            s.tool_calls.to_string(),
+            s.tool_errors.to_string(),
+            s.commits.to_string(),
+            s.cost_usd.map(|c| format!("{c:.4}")).unwrap_or_default(),
+            s.cost_is_estimate.to_string(),
+            s.outcome.clone().unwrap_or_default(),
+            s.rating.map(|r| r.to_string()).unwrap_or_default(),
+            s.friction.requirements.to_string(),
+            s.friction.steering.to_string(),
+            s.friction.scope.to_string(),
+        ];
+        let line: Vec<String> = fields.iter().map(|f| csv_field(f)).collect();
+        out.push_str(&line.join(","));
+        out.push('\n');
+    }
+    out
 }
 
 pub fn source_label(s: &str) -> &str {

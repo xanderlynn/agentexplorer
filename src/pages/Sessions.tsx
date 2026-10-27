@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { Download, Search } from "lucide-react";
 import { api, OUTCOMES, type Outcome, type Source } from "../api";
-import { Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
-import { OUTCOME_LABEL, SOURCE_LABEL, dateTime, duration, money, projectName } from "../format";
+import { Button, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
+import { OUTCOME_LABEL, SOURCE_LABEL, TASK_TYPES, dateTime, duration, money, projectName } from "../format";
 
 type SortKey = "startedAt" | "activeMs" | "userTurns" | "interruptions" | "costUsd" | "commits";
 
@@ -11,9 +12,12 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
   const [source, setSource] = useState<Source | "">("");
   const [outcome, setOutcome] = useState<Outcome | "unrated" | "">("");
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+  const [exported, setExported] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "startedAt", desc: true });
 
-  const filter = { days, source: source || undefined, outcome: outcome || undefined, search: search || undefined };
+  const filter = { days, source: source || undefined, outcome: outcome || undefined, search: search || undefined, category: category || undefined };
+  const exportCsv = useMutation({ mutationFn: () => api.exportSessions(filter), onSuccess: setExported });
   const q = useQuery({ queryKey: ["sessions", filter], queryFn: () => api.sessions(filter), placeholderData: (prev) => prev });
 
   const rows = useMemo(() => {
@@ -39,7 +43,7 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[16rem] flex-1">
           <Search size={14} className="absolute left-2.5 top-2.5 text-zinc-500" />
-          <input className={`${inputClass} pl-8`} placeholder="Search titles, prompts, projects, branches" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input className={`${inputClass} pl-8`} placeholder="Search every prompt, titles, projects, branches" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <select className={inputBase} value={source} onChange={(e) => setSource(e.target.value as Source | "")}>
           <option value="">All tools</option>
@@ -50,8 +54,21 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
           <option value="unrated">Unrated</option>
           {OUTCOMES.map((o) => <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>)}
         </select>
+        <select className={inputBase} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">Any category</option>
+          {TASK_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <Button variant="ghost" busy={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
+          <Download size={14} /> Export CSV
+        </Button>
       </div>
 
+      {exported && (
+        <p className="mb-3 text-xs text-zinc-500">
+          Saved to <button className="font-mono text-zinc-300 underline-offset-2 hover:underline" onClick={() => revealItemInDir(exported).catch(() => {})}>{exported}</button>
+        </p>
+      )}
+      <ErrorNote error={exportCsv.error} />
       {q.isLoading && <Loading />}
       <ErrorNote error={q.error} />
       {q.data && rows.length === 0 && <Empty title="No sessions match">Try a wider date range or clear the filters.</Empty>}
@@ -77,7 +94,7 @@ export default function Sessions({ days, setDays, onOpen }: { days: number; setD
                     <div className="truncate text-zinc-100">{s.title ?? "Untitled"}</div>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
                       <SourceBadge source={s.source} />
-                      <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}</span>
+                      <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}{s.category ? ` · ${s.category}` : ""}</span>
                     </div>
                   </td>
                   <td className="whitespace-nowrap text-zinc-400">{dateTime(s.startedAt)}</td>
