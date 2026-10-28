@@ -457,7 +457,9 @@ mod tests {
             let mut permissions = std::fs::metadata(&script).unwrap().permissions();
             permissions.set_mode(0o700);
             std::fs::set_permissions(&script, permissions).unwrap();
-            script.to_string_lossy().into_owned()
+            // Git runs these config values through the shell, so quote the
+            // path: a checkout folder may contain spaces.
+            format!("'{}'", script.display())
         }
     }
 

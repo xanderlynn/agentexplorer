@@ -8,9 +8,23 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+The first public release of Tilly. Everything listed under 0.1.1 and 0.1.0 is included.
+
+### Added
+
+- **Portable downloads.** A ZIP for each platform that runs without installing: `Tilly.app` for macOS and `Tilly.exe` for Windows. Your data still lives in the usual app-data folder.
+- **Build provenance.** Every download, the checksums and the SBOM carry a GitHub attestation, so you can check a file was built from this repository: `gh attestation verify <file> --repo xanderlynn/tilly`.
+
+### Security
+
+- Tilly's database, archived transcripts, alert sounds and images, retro working folder and CSV exports are now readable only by your user account.
+- Reading git history no longer runs diff or text-conversion programs that a repository's own settings name.
+- The app can only reveal files in Finder or Explorer; it can no longer open arbitrary links or programs.
+- Updated dependencies, including OpenSSL (used only on Linux).
+
 ## [0.1.1] - 2026-10-28
 
-The first public release of Tilly. Everything listed under 0.1.0 is included.
+Built but never published; its changes first ship in 0.1.2.
 
 ### Added
 
