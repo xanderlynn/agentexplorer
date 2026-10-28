@@ -24,12 +24,17 @@ jobs:
       - name: npm runtime dependencies
         run: node scripts/check-licenses.mjs
       - name: Rust dependencies
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        with:
-          manifest-path: src-tauri/Cargo.toml
-          # Licenses, and known vulnerabilities from the RustSec database
-          # for the platforms Tilly ships on.
-          command: check licenses advisories
+        shell: bash
+        run: |
+          version=0.20.2
+          target=x86_64-unknown-linux-musl
+          archive="cargo-deny-${version}-${target}.tar.gz"
+          url="https://github.com/EmbarkStudios/cargo-deny/releases/download/${version}/${archive}"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/$archive" "$url"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/cargo-deny-${version}-${target}/cargo-deny" \
+            --manifest-path src-tauri/Cargo.toml check licenses advisories
       - name: npm runtime vulnerabilities
         run: npm audit --omit=dev --audit-level=low
 
