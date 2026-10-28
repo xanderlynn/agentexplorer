@@ -53,7 +53,7 @@ pub fn typescript() -> String {
     let _ = writeln!(
         ts,
         "export type LiveStatus = {};\n",
-        union(statuses.iter().map(|s| id_of(s)))
+        union(statuses.iter().map(id_of))
     );
     ts += "/** The part of the control center a status belongs to. */\n";
     let mut groups: Vec<String> = statuses.iter().map(|s| id_of(s.group())).collect();
@@ -69,7 +69,7 @@ pub fn typescript() -> String {
     let _ = writeln!(
         ts,
         "export type LiveAgentStatus = {};\n",
-        union(AgentLiveStatus::ALL.iter().map(|s| id_of(s)))
+        union(AgentLiveStatus::ALL.iter().map(id_of))
     );
     ts += "/** Below this many samples a rate is noise: shown greyed out or not at all. */\n";
     let _ = writeln!(ts, "export const MIN_SAMPLE = {MIN_SAMPLE};");
