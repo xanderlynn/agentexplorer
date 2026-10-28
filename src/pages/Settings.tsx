@@ -140,8 +140,6 @@ export default function Settings() {
           </div>
         </Card>
 
-        <Licenses />
-
         <Card title="Data">
           <p className="text-sm text-zinc-400">Everything lives in one SQLite database on this computer.</p>
           <div className="mt-2 flex items-center justify-between gap-3">
@@ -151,6 +149,7 @@ export default function Settings() {
             </Button>
           </div>
         </Card>
+        <Licenses />
       </div>
       <ErrorNote error={set.error ?? toggleSource.error} />
     </>
@@ -199,7 +198,7 @@ function Licenses() {
       .then(setText)
       .catch((e) => setError(String(e)));
   return (
-    <Card title="About and licenses">
+    <Card title="About and licenses" className="xl:col-span-2">
       <p className="text-sm text-zinc-400">Governess is MIT licensed. It is built on open-source software under permissive licenses (MIT, Apache-2.0, BSD, ISC and similar).</p>
       <div className="mt-3">
         {text == null ? (
