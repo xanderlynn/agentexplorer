@@ -199,7 +199,7 @@ function Licenses() {
       .catch((e) => setError(String(e)));
   return (
     <Card title="About and licenses" className="xl:col-span-2">
-      <p className="text-sm text-zinc-400">Governess is MIT licensed. It is built on open-source software under permissive licenses (MIT, Apache-2.0, BSD, ISC and similar).</p>
+      <p className="text-sm text-zinc-400">Tilly is MIT licensed. It is built on open-source software under permissive licenses (MIT, Apache-2.0, BSD, ISC and similar).</p>
       <div className="mt-3">
         {text == null ? (
           <Button size="sm" onClick={load}>Show third-party notices</Button>

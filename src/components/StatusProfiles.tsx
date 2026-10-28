@@ -206,7 +206,7 @@ export function StatusProfiles() {
           <input type="time" className={cx(inputBase, "h-8 w-[8rem] px-2")} value={q.end} disabled={!q.enabled} onChange={(e) => save({ ...profile, quietHours: { ...q, end: e.target.value } })} aria-label="Quiet hours end" />
         </Control>
         <Control label="Only in the background">
-          <Switch checked={profile.onlyUnfocused} onChange={(on) => save({ ...profile, onlyUnfocused: on })} label="Only play sounds while Governess is in the background" />
+          <Switch checked={profile.onlyUnfocused} onChange={(on) => save({ ...profile, onlyUnfocused: on })} label="Only play sounds while Tilly is in the background" />
           <span className="text-xs text-zinc-500">Silent while you're looking</span>
         </Control>
       </div>

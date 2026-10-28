@@ -3,9 +3,9 @@ mod commands;
 mod retro;
 mod sound;
 
-// The engine lives in governess-core; these keep `crate::analytics` and
+// The engine lives in tilly-core; these keep `crate::analytics` and
 // friends working in the app's own modules.
-pub(crate) use governess_core::{
+pub(crate) use tilly_core::{
     alerts, analytics, db, experiments, ingest, journal, live, model, playbooks, sources,
     status_alerts, toolkit, trends, util, watcher,
 };
@@ -23,7 +23,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
 }
 
-use governess_core::LEGACY_IDENTIFIER;
+use tilly_core::LEGACY_IDENTIFIERS;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,13 +32,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let legacy = data_dir.with_file_name(LEGACY_IDENTIFIER);
-            if !data_dir.exists() && legacy.is_dir() {
-                // Same parent folder, so this is a cheap rename. On failure
-                // the app starts fresh and the old folder is left untouched.
-                if let Err(e) = std::fs::rename(&legacy, &data_dir) {
-                    eprintln!("could not move {}: {e}", legacy.display());
-                }
+            // Coming from an earlier name: move the newest old data folder.
+            // Same parent folder, so this is a cheap rename. On failure the
+            // app starts fresh and the old folder is left untouched.
+            let legacy = LEGACY_IDENTIFIERS
+                .iter()
+                .map(|id| data_dir.with_file_name(id))
+                .find(|p| p.is_dir());
+            if let Some(legacy) = legacy.filter(|_| !data_dir.exists())
+                && let Err(e) = std::fs::rename(&legacy, &data_dir)
+            {
+                eprintln!("could not move {}: {e}", legacy.display());
             }
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("ledger.sqlite3");
@@ -133,7 +137,7 @@ pub fn run() {
         .expect("error while building tauri application")
         // `_app` is only used on macOS.
         .run(|_app, event| match event {
-            // Closing the window keeps Governess running in the tray; only
+            // Closing the window keeps Tilly running in the tray; only
             // Quit (which passes an exit code) ends it.
             tauri::RunEvent::ExitRequested {
                 api, code: None, ..

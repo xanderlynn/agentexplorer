@@ -150,7 +150,7 @@ export default function App() {
         <div className="mb-6 flex items-center gap-2.5 px-2">
           <Logo />
           <div>
-            <div className="text-sm font-semibold tracking-tight text-zinc-50">Governess</div>
+            <div className="text-sm font-semibold tracking-tight text-zinc-50">Tilly</div>
             <div className="text-xs text-zinc-500">Keeps your agents in line</div>
           </div>
         </div>

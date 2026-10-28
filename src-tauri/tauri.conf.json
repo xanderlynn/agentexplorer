@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Governess",
+  "productName": "Tilly",
   "version": "0.1.0",
-  "identifier": "com.xanderlynn.governess",
+  "identifier": "com.xanderlynn.tilly",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Governess",
+        "title": "Tilly",
         "width": 1360,
         "height": 880,
         "minWidth": 960,

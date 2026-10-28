@@ -34,6 +34,8 @@ export const THEMES: ThemeDef[] = [
 // `onAccent` is the text colour on a solid accent button: dark on light hues
 // (emerald, cyan, amber), white on deep ones: whichever reads better.
 export const ACCENTS: { id: string; label: string; scale: Scale; onAccent: string }[] = [
+  // Tilly's brand accent, between the logo's pink and purple.
+  { id: "tilly", label: "Tilly", scale: ["#fdf4ff", "#fae8ff", "#f5d0fe", "#f0abfc", "#e879f9", "#d946ef", "#c026d3", "#a21caf", "#86198f", "#701a75", "#4a044e"], onAccent: "#ffffff" },
   { id: "emerald", label: "Emerald", scale: ["#ecfdf5", "#d1fae5", "#a7f3d0", "#6ee7b7", "#34d399", "#10b981", "#059669", "#047857", "#065f46", "#064e3b", "#022c22"], onAccent: "#04130d" },
   { id: "blue", label: "Blue", scale: ["#eff6ff", "#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a", "#172554"], onAccent: "#ffffff" },
   { id: "violet", label: "Violet", scale: ["#f5f3ff", "#ede9fe", "#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95", "#2e1065"], onAccent: "#ffffff" },
@@ -53,6 +55,8 @@ const STATUS: Record<string, Scale> = {
   green: ["#f0fdf4", "#dcfce7", "#bbf7d0", "#86efac", "#4ade80", "#22c55e", "#16a34a", "#15803d", "#166534", "#14532d", "#052e16"],
   orange: ["#fff7ed", "#ffedd5", "#fed7aa", "#fdba74", "#fb923c", "#f97316", "#ea580c", "#c2410c", "#9a3412", "#7c2d12", "#431407"],
   violet: ["#f5f3ff", "#ede9fe", "#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95", "#2e1065"],
+  // Scheduled: a calm blue-violet, clear of the pink-purple brand accent.
+  indigo: ["#eef2ff", "#e0e7ff", "#c7d2fe", "#a5b4fc", "#818cf8", "#6366f1", "#4f46e5", "#4338ca", "#3730a3", "#312e81", "#1e1b4b"],
 };
 
 export const DENSITIES = [
@@ -74,7 +78,7 @@ export interface Appearance {
   corners: string;
 }
 
-const DEFAULT_APPEARANCE: Appearance = { theme: "midnight", accent: "emerald", density: "comfortable", corners: "rounded" };
+const DEFAULT_APPEARANCE: Appearance = { theme: "midnight", accent: "tilly", density: "comfortable", corners: "rounded" };
 
 /** Ready-made combinations offered as one-click skins. */
 export const PRESETS: { label: string; appearance: Appearance }[] = [

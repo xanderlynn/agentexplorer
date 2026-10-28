@@ -60,7 +60,7 @@ for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
 }
 
 const rule = "-".repeat(78);
-let out = `Governess includes the following third-party software.\n${entries.length} packages.\n\n`;
+let out = `Tilly includes the following third-party software.\n${entries.length} packages.\n\n`;
 for (const [text, names] of groups) out += `${rule}\n${names.join("\n")}\n${rule}\n\n${text}\n\n`;
 // public/ holds only generated files, so it may not exist in a fresh clone.
 mkdirSync(join(root, "public"), { recursive: true });

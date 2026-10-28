@@ -127,9 +127,9 @@ pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patt
 pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<String> {
     with_db(&state, |c| {
         let rows = analytics::filter_sessions(c, &filter)?;
-        let dir = governess_core::util::download_dir().unwrap_or_else(|| state.data_dir.clone());
+        let dir = tilly_core::util::download_dir().unwrap_or_else(|| state.data_dir.clone());
         let path = dir.join(format!(
-            "governess-sessions-{}.csv",
+            "tilly-sessions-{}.csv",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         ));
         std::fs::write(&path, analytics::sessions_csv(&rows))?;

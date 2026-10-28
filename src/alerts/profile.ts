@@ -35,7 +35,7 @@ export interface AlertProfile {
   volume: number;
   muted: boolean;
   quietHours: { enabled: boolean; start: string; end: string };
-  /** Only play sounds while Governess is in the background. */
+  /** Only play sounds while Tilly is in the background. */
   onlyUnfocused: boolean;
   rules: Partial<Record<StatusKey, StatusRule>>;
 }

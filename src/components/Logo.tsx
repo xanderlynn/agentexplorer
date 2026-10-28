@@ -1,14 +1,17 @@
-/** The Governess umbrella. Drawn in theme colours, so it follows the accent. */
+/** Tilly's mark: a "t" with a bow on the brand's pink-to-purple tile. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="190 150 680 640" aria-hidden>
-      <path
-        d="M222 560 C222 380 352 262 512 262 C672 262 802 380 802 560 Q 729.5 512 657 560 Q 584.5 512 512 560 Q 439.5 512 367 560 Q 294.5 512 222 560 Z"
-        fill="var(--color-emerald-500)"
-      />
-      <circle cx="512" cy="250" r="22" fill="var(--color-zinc-100)" />
-      <path d="M512 552 L512 742 A62 62 0 0 1 388 742" fill="none" stroke="var(--color-zinc-100)" strokeWidth="48" strokeLinecap="round" />
-      <path d="M770 170 Q778 222 830 230 Q778 238 770 290 Q762 238 710 230 Q762 222 770 170 Z" fill="var(--color-amber-300)" />
+    <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden>
+      <defs>
+        <linearGradient id="tilly-logo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#EC4899" />
+          <stop offset="1" stopColor="#8B5CF6" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="1024" rx="230" fill="url(#tilly-logo)" />
+      <path d="M452 300 H572 V420 H700 V530 H572 V700 Q572 770 650 762 H700 V870 Q452 900 452 712 V530 H330 V420 H452 Z" fill="#ffffff" />
+      <path d="M512 296 Q400 150 330 214 Q284 284 512 296 Z M512 296 Q624 150 694 214 Q740 284 512 296 Z" fill="#F9A8D4" />
+      <circle cx="512" cy="290" r="40" fill="#ffffff" />
     </svg>
   );
 }

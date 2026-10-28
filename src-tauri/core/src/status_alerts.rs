@@ -234,7 +234,7 @@ pub struct Profile {
     pub volume: f32,
     pub muted: bool,
     pub quiet_hours: QuietHours,
-    /// Only play sounds while Governess's window is not in front.
+    /// Only play sounds while Tilly's window is not in front.
     pub only_unfocused: bool,
     pub rules: BTreeMap<String, Rule>,
 }

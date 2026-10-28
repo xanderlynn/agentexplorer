@@ -1,6 +1,6 @@
-<p align="center"><img src="public/governess.svg" width="128" alt="Governess logo: a green umbrella with a small sparkle"></p>
+<p align="center"><img src="public/tilly.svg" width="128" alt="Tilly logo: a white lowercase t with a bow on a pink-to-purple tile"></p>
 
-# Governess
+# Tilly
 
 *Keeps your agents in line, and you improving.*
 
@@ -42,18 +42,24 @@ Copilot inline completions are not logged to disk, so they can't be tracked.
 
 ## Privacy
 
-- Everything lives in a single SQLite file in the app data folder (`~/Library/Application Support/com.xanderlynn.governess` on macOS, `%APPDATA%\com.xanderlynn.governess` on Windows). Data from the app's earlier name, Execution Ledger, moves there on first launch.
+- Everything lives in a single SQLite file in the app data folder (`~/Library/Application Support/com.xanderlynn.tilly` on macOS, `%APPDATA%\com.xanderlynn.tilly` on Windows). Data from the app's earlier names, Governess and Execution Ledger, moves there on first launch, and so does a saved API key.
 - Nothing leaves the machine unless you click **Generate retro**. That sends the period's metrics, session titles, opening prompts (truncated) and your notes to Claude. **Preview what's sent** shows the exact text first.
 - The retro uses your installed `claude` CLI and your existing subscription by default. If you choose the Anthropic API engine instead, the key is stored in the OS keychain, never in the database.
 
 ## Install
 
-Download the latest installer from the **Build installers** workflow run's artifacts, or from a release:
+Download the latest release from the [Releases page](https://github.com/xanderlynn/tilly/releases/latest):
 
-- macOS: `Governess_<version>_universal.dmg`
-- Windows: `Governess_<version>_x64_en-US.msi` or `…_x64-setup.exe`
+| Platform | File |
+| --- | --- |
+| macOS 11 or later, Apple Silicon and Intel | `Tilly_<version>_universal.dmg` |
+| Windows 10 and 11, x64 | `Tilly_<version>_x64-setup.exe` (or `…_x64_en-US.msi` for managed installs) |
 
-The installers are not code-signed yet, so the OS warns on first launch. On macOS, right-click the app and choose **Open**. On Windows, choose **More info → Run anyway**.
+Each release lists SHA-256 checksums in `SHA256SUMS.txt`; check a download with `shasum -a 256 <file>` (macOS) or `Get-FileHash <file>` (Windows).
+
+Until the installers are code-signed, the OS warns on first launch. On macOS, right-click Tilly in Applications and choose **Open**, then **Open** again. On Windows, choose **More info → Run anyway**.
+
+Tilly lives in the menu bar (macOS) or the system tray (Windows). Closing the window keeps it running so it can alert you; choose **Quit Tilly** from the tray menu to stop it.
 
 ## Develop
 
@@ -75,17 +81,17 @@ cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings
 To check the parsers against your own logs (read-only, into a throwaway database):
 
 ```bash
-cd src-tauri && cargo test --release -p governess-core real_logs -- --ignored --nocapture
+cd src-tauri && cargo test --release -p tilly-core real_logs -- --ignored --nocapture
 ```
 
 ### Layout
 
-Governess runs in the tray. It keeps collecting, tracking statuses and alerting (notifications and sounds) with its window closed; the window is created when you open it and freed when you close it, which is most of the app's memory. Start it with `--background` to go straight to the tray, as at login. The live state is pushed to the window when it changes; nothing polls.
+Tilly runs in the tray. It keeps collecting, tracking statuses and alerting (notifications and sounds) with its window closed; the window is created when you open it and freed when you close it, which is most of the app's memory. Start it with `--background` to go straight to the tray, as at login. The live state is pushed to the window when it changes; nothing polls.
 
 ```text
 src/                       React UI (pages/, components/, api.ts = typed command wrappers)
 src-tauri/
-  core/src/                governess-core: the engine, no UI dependency (shared with a future headless collector)
+  core/src/                tilly-core: the engine, no UI dependency (shared with a future headless collector)
     parsers/               one parser per tool → a normalized ParsedSession, read incrementally
     sources.rs             where each tool's logs live, grouping files into sessions
     ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
@@ -103,17 +109,28 @@ src-tauri/
 
 ## Releases and signing
 
-`.github/workflows/build.yml` builds a universal macOS `.dmg` and Windows `.msi`/`.exe` on every push to `main`; they appear as workflow artifacts. Pushing a tag such as `v0.2.0` also attaches them to a draft GitHub Release.
+Versions follow [semver](https://semver.org). `0.x` releases are early: anything may change between minor versions.
 
-To sign, add the Apple (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) and/or Windows signing secrets, then pass them to the `tauri-action` step as environment variables. See the [Tauri signing guides](https://tauri.app/distribute/sign/macos/).
+To release:
+
+```bash
+npm run release -- 0.2.0          # bumps every manifest, commits "Release v0.2.0", tags v0.2.0
+git push && git push origin v0.2.0
+```
+
+The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and the Windows `-setup.exe` and `.msi` into a **draft** GitHub Release, then adds `SHA256SUMS.txt` and notes listing the commits since the previous tag. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
+
+Every push to `main` also builds installers as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
+
+**Signing.** macOS signing and notarization turn on by themselves once these repository secrets exist: `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and `APPLE_TEAM_ID`. They need an Apple Developer account. For Windows, Azure Trusted Signing is the low-cost option; see the [Tauri signing guides](https://tauri.app/distribute/sign/macos/) for both.
 
 ## Logo
 
-`public/governess.svg` is the source for the app icons. After editing it, run `npx tauri icon public/governess.svg` and delete the `android`, `ios` and `64x64.png` outputs, which the desktop builds don't use.
+`public/tilly.svg` is the source for the app icons. After editing it, run `npx tauri icon public/tilly.svg` and delete the `android`, `ios` and `64x64.png` outputs, which the desktop builds don't use. The macOS menu-bar icon, `src-tauri/icons/tray-template@2x.png`, is the same mark in black on transparent (macOS recolours it for light and dark menu bars).
 
 ## License and dependencies
 
-Governess is MIT licensed, and the dependency tree is kept permissive and small:
+Tilly is MIT licensed, and the dependency tree is kept permissive and small:
 
 - **Policy:** only permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode and similar). MPL-2.0 is allowed only for a few crates that come with Tauri and are used unmodified. `src-tauri/deny.toml` and `scripts/check-licenses.mjs` enforce this in CI, so a restrictive dependency fails the build.
 - **Notices:** `npm run build` generates `third-party-notices.txt` with every shipped package's license text. It's bundled with the app and viewable under Settings → About and licenses.

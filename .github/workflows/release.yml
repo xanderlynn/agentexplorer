@@ -1,0 +1,141 @@
+name: Release
+
+# Pushing a tag like v0.2.0 (see scripts/release.mjs) builds the macOS and
+# Windows installers into a draft GitHub Release, then adds checksums and
+# notes. Review the draft, then publish it.
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon + Intel)
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - name: Windows x64
+            os: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          for v in "$(node -p "require('./package.json').version")" \
+                   "$(node -p "require('./src-tauri/tauri.conf.json').version")"; do
+            if [ "${GITHUB_REF_NAME#v}" != "$v" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $v; use npm run release"
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-${{ matrix.os }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # macOS signing and notarization turn on when the Apple secrets exist;
+      # without them the app is built unsigned (Gatekeeper warns on first
+      # open). See README › Releases and signing.
+      - name: Enable macOS signing
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        shell: bash
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No Apple signing secrets: building unsigned."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
+            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build installers into the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Tilly ${{ github.ref_name }}
+          releaseBody: Notes are added when every installer is built.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  finish:
+    name: Checksums and notes
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe'
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
+
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          range=${prev:+$prev..}$GITHUB_REF_NAME
+          {
+            echo "## Download"
+            echo ""
+            echo "| Platform | File |"
+            echo "| --- | --- |"
+            echo "| macOS (Apple Silicon and Intel) | \`Tilly_${GITHUB_REF_NAME#v}_universal.dmg\` |"
+            echo "| Windows 10 and 11 (x64) | \`Tilly_${GITHUB_REF_NAME#v}_x64-setup.exe\` (or the \`.msi\`) |"
+            echo ""
+            echo "Check a download with \`shasum -a 256 <file>\` against \`SHA256SUMS.txt\`."
+            echo ""
+            echo "## Changes"
+            echo ""
+            git log --no-merges --format='- %s' "$range" | grep -v '^- Release v' || echo "- First release"
+            if [ -n "$prev" ]; then
+              echo ""
+              echo "**Full changelog:** https://github.com/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_REF_NAME"
+            fi
+          } > notes.md
+          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md

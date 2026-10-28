@@ -52,14 +52,17 @@ impl Ingestor {
         self.data_dir.join("retro-runs")
     }
 
-    /// Retro runs from both the current data folder and the one used before
-    /// the rename, whose transcripts still carry the old path.
-    fn retro_workdirs(&self) -> [String; 2] {
-        let legacy = self
-            .data_dir
-            .with_file_name(crate::LEGACY_IDENTIFIER)
-            .join("retro-runs");
-        [self.retro_workdir(), legacy].map(|p| p.to_string_lossy().into_owned())
+    /// Retro runs from the current data folder and the ones used before each
+    /// rename, whose transcripts still carry the old path.
+    fn retro_workdirs(&self) -> Vec<String> {
+        std::iter::once(self.retro_workdir())
+            .chain(
+                crate::LEGACY_IDENTIFIERS
+                    .iter()
+                    .map(|id| self.data_dir.with_file_name(id).join("retro-runs")),
+            )
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
     }
 
     pub fn enabled_roots(&self, conn: &Connection) -> Vec<Root> {

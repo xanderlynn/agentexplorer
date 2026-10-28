@@ -1,4 +1,4 @@
-//! Governess as a background app: it lives in the tray, keeps collecting,
+//! Tilly as a background app: it lives in the tray, keeps collecting,
 //! tracking statuses and alerting with no window open, and creates the
 //! window only while you look at it. Closing the window frees the web view,
 //! which is most of the app's memory.
@@ -58,14 +58,14 @@ pub fn window_closed(_app: &AppHandle) {
 
 pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, "status", "Nothing running", false, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Open Governess", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Governess", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Tilly", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Tilly", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[&status, &PredefinedMenuItem::separator(app)?, &open, &quit],
     )?;
     let mut tray = TrayIconBuilder::with_id(TRAY)
-        .tooltip("Governess")
+        .tooltip("Tilly")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -83,6 +83,17 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 open_window(tray.app_handle());
             }
         });
+    // macOS draws a one-colour template icon to match the menu bar, light
+    // or dark; Windows keeps the colour icon, which reads on any taskbar.
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray
+            .icon(tauri::image::Image::from_bytes(include_bytes!(
+                "../icons/tray-template@2x.png"
+            ))?)
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -143,7 +154,7 @@ impl AppSink {
                 .notification()
                 .builder()
                 .title(format!("and {} more", alerts.len() - MAX_NOTES))
-                .body("Open Governess to see them all.")
+                .body("Open Tilly to see them all.")
                 .show();
         }
     }
@@ -171,7 +182,7 @@ impl watcher::Sink for AppSink {
             let _ = status.0.set_text(&text);
         }
         if let Some(tray) = self.app.tray_by_id(TRAY) {
-            let _ = tray.set_tooltip(Some(format!("Governess · {text}")));
+            let _ = tray.set_tooltip(Some(format!("Tilly · {text}")));
             // The count beside the icon in the macOS menu bar.
             let _ = tray.set_title((awaiting > 0).then(|| awaiting.to_string()));
         }
