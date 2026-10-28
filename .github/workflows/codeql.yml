@@ -1,14 +1,12 @@
 name: CodeQL
 
+# Code scanning gates each release instead of each pull request: the Rust
+# scan compiles the whole app and takes about ten minutes. release.yml calls
+# this before building, so a serious finding stops the release. Run it by
+# hand from the Actions tab to scan main at any time.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -53,3 +51,28 @@ jobs:
 
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          output: sarif
+
+      # Findings are uploaded to the Security tab either way. These ones stop
+      # the release: anything CodeQL rates an error, and security findings
+      # rated high or critical (security severity 7.0 or more).
+      - name: Fail on serious findings
+        shell: bash
+        run: |
+          serious=$(jq -r '
+            .runs[]
+            | ([.tool.driver.rules[]?, .tool.extensions[]?.rules[]?]
+               | map({key: .id, value: (((.properties["security-severity"] // "0") | tonumber) >= 7
+                                         or (.defaultConfiguration.level // "") == "error")})
+               | from_entries) as $serious
+            | .results[]?
+            | select(.level == "error" or $serious[.ruleId])
+            | "\(.ruleId): \(.message.text) (\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine))"
+          ' sarif/*.sarif)
+          if [ -n "$serious" ]; then
+            echo "::error::CodeQL found serious issues; fix them before releasing:"
+            echo "$serious"
+            exit 1
+          fi
+          echo "No serious findings."
