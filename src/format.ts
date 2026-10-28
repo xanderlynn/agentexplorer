@@ -53,6 +53,14 @@ export const STYLE_LABEL: Record<string, string> = {
   iterative: "Iterative",
 };
 
+/** Filter options for "which tool": all, then each source. */
+export const SOURCE_OPTIONS: { value: Source | "all"; label: string }[] = [
+  { value: "all", label: "All tools" },
+  { value: "claude_code", label: "Claude Code" },
+  { value: "copilot_cli", label: "Copilot CLI" },
+  { value: "copilot_vscode", label: "Copilot Chat" },
+];
+
 export const sourceLabel = (s: string) => SOURCE_LABEL[s as Source] ?? s;
 
 export function projectName(path: string | null | undefined): string {
@@ -121,3 +129,45 @@ export function delta(current: number | null | undefined, previous: number | nul
 }
 
 export const TASK_TYPES = ["feature", "bugfix", "refactor", "tests", "docs", "research", "infra", "review", "other"];
+
+/** What each kind of agent is for, so a roster reads like a team. */
+const ROLES: Record<string, [string, string]> = {
+  "general-purpose": ["Generalist", "Multi-step research and changes"],
+  explore: ["Scout", "Searches and reads the codebase"],
+  plan: ["Architect", "Designs the approach before any code"],
+  task: ["Runner", "Runs builds, tests and commands"],
+  "code-review": ["Reviewer", "Checks changes for problems"],
+  "rubber-duck": ["Sounding board", "Talks a problem through"],
+  "claude-code-guide": ["Guide", "Answers questions about the tools"],
+  fork: ["Fork", "A copy of the lead, with its context"],
+};
+
+/** [title, what it is for] for an agent type from Claude Code or Copilot. */
+export function roleOf(role: string): [string, string] {
+  const key = role.toLowerCase().replace(/ agent$/, "").trim().replace(/\s+/g, "-");
+  if (ROLES[key]) return ROLES[key];
+  const words = role.replace(/[-_]/g, " ").replace(/ agent$/i, "");
+  return [words.charAt(0).toUpperCase() + words.slice(1), "Custom agent"];
+}
+
+
+/** An agent's own name, or its role's title. */
+export const agentName = (a: { name: string | null; role: string }) => a.name ?? roleOf(a.role)[0];
+
+/** Reads the common cron shapes aloud; anything else stays as written. */
+export function cronText(cron: string): string {
+  const [min, hour, dom, mon, dow] = cron.trim().split(/\s+/);
+  const every = min?.match(/^\*\/(\d+)$/);
+  if (every && hour === "*" && dom === "*" && mon === "*" && dow === "*") return `every ${every[1]} min`;
+  if (/^\d+$/.test(min ?? "") && /^\d+$/.test(hour ?? "") && dom === "*" && mon === "*") {
+    const at = `${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+    if (dow === "*") return `every day at ${at}`;
+    if (dow === "1-5") return `weekdays at ${at}`;
+  }
+  return cron;
+}
+
+/** A scheduled job still to come in a live session. */
+export function upcoming(j: { cancelled: boolean; recurring: boolean; at: number | null }, live: boolean) {
+  return live && !j.cancelled && (j.recurring || (j.at != null && j.at > Date.now()));
+}

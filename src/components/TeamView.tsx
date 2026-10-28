@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { CalendarClock, ChevronDown } from "lucide-react";
 import type { ScheduledWork, SessionRow, Team, TeamAgent, TeamMessage } from "../api";
-import { SOURCE_LABEL, ago, compact, dateTime, duration } from "../format";
+import { SOURCE_LABEL, agentName, ago, compact, cronText, dateTime, duration, roleOf, upcoming } from "../format";
 import { AGENT_STATUS, STATUS } from "../status";
 import { StatusBadge } from "./status";
 import { Legend, cx } from "./ui";
@@ -34,25 +34,6 @@ const KIND_VERB: Record<TeamMessage["kind"] | "ask", string> = {
   message: "messaged",
 };
 
-/** What each kind of agent is for, so the roster reads like a team. */
-const ROLES: Record<string, [string, string]> = {
-  "general-purpose": ["Generalist", "Multi-step research and changes"],
-  explore: ["Scout", "Searches and reads the codebase"],
-  plan: ["Architect", "Designs the approach before any code"],
-  task: ["Runner", "Runs builds, tests and commands"],
-  "code-review": ["Reviewer", "Checks changes for problems"],
-  "rubber-duck": ["Sounding board", "Talks a problem through"],
-  "claude-code-guide": ["Guide", "Answers questions about the tools"],
-  fork: ["Fork", "A copy of the lead, with its context"],
-};
-
-export function roleOf(role: string): [string, string] {
-  const key = role.toLowerCase().replace(/ agent$/, "").trim().replace(/\s+/g, "-");
-  if (ROLES[key]) return ROLES[key];
-  const words = role.replace(/[-_]/g, " ").replace(/ agent$/i, "");
-  return [words.charAt(0).toUpperCase() + words.slice(1), "Custom agent"];
-}
-
 function members(team: Team, s: SessionRow): Member[] {
   const out: Member[] = [
     { id: YOU, label: "You", title: "Manager", blurb: "Sets the goal, reviews, unblocks", color: "var(--color-zinc-300)", depth: 0 },
@@ -65,39 +46,23 @@ function members(team: Team, s: SessionRow): Member[] {
       depth: 0,
     },
   ];
+  const add = (a: TeamAgent, depth: number) => {
+    const [title, blurb] = roleOf(a.role);
+    out.push({ id: a.id, label: agentName(a), title, blurb, color: PALETTE[(out.length - 2) % PALETTE.length], depth, agent: a });
+  };
   // Each agent follows whoever handed it the work.
   const visit = (parent: string, depth: number) => {
     for (const a of team.agents.filter((a) => a.parent === parent)) {
-      const [title, blurb] = roleOf(a.role);
-      out.push({ id: a.id, label: a.name ?? title, title, blurb, color: PALETTE[(out.length - 2) % PALETTE.length], depth, agent: a });
+      add(a, depth);
       visit(a.id, depth + 1);
     }
   };
   visit(LEAD, 1);
   const known = new Set(out.map((m) => m.id));
-  for (const a of team.agents.filter((a) => !known.has(a.id))) {
-    const [title, blurb] = roleOf(a.role);
-    out.push({ id: a.id, label: a.name ?? title, title, blurb, color: PALETTE[(out.length - 2) % PALETTE.length], depth: 1, agent: a });
-  }
+  for (const a of team.agents.filter((a) => !known.has(a.id))) add(a, 1);
   return out;
 }
 
-/** Reads the common cron shapes aloud; anything else stays as written. */
-export function cronText(cron: string): string {
-  const [min, hour, dom, mon, dow] = cron.trim().split(/\s+/);
-  const every = min?.match(/^\*\/(\d+)$/);
-  if (every && hour === "*" && dom === "*" && mon === "*" && dow === "*") return `every ${every[1]} min`;
-  if (/^\d+$/.test(min ?? "") && /^\d+$/.test(hour ?? "") && dom === "*" && mon === "*") {
-    const at = `${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
-    if (dow === "*") return `every day at ${at}`;
-    if (dow === "1-5") return `weekdays at ${at}`;
-  }
-  return cron;
-}
-
-function upcoming(j: ScheduledWork, live: boolean) {
-  return live && !j.cancelled && (j.recurring || (j.at != null && j.at > Date.now()));
-}
 
 /** The most agents at work at the same moment. */
 function peakParallel(agents: TeamAgent[]): number {

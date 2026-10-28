@@ -94,13 +94,14 @@ export function Stat({
   );
 }
 
-function Sparkline({ values, className }: { values: (number | null)[]; className?: string }) {
+/** `fromZero` draws counts against zero rather than stretching their range. */
+export function Sparkline({ values, className, fromZero }: { values: (number | null)[]; className?: string; fromZero?: boolean }) {
   const pts = values.map((v, i) => [i, v] as const).filter((p): p is readonly [number, number] => p[1] != null);
   if (pts.length < 2) return null;
   const w = 72;
   const h = 22;
   const max = Math.max(...pts.map((p) => p[1]));
-  const min = Math.min(...pts.map((p) => p[1]));
+  const min = fromZero ? 0 : Math.min(...pts.map((p) => p[1]));
   const span = max - min || 1;
   const x = (i: number) => (i / (values.length - 1)) * w;
   const y = (v: number) => h - 2 - ((v - min) / span) * (h - 4);

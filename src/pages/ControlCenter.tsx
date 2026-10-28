@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowRight, ChevronDown, Radio, Star, TriangleAlert, X } from "lucide-react";
-import { api, isActive, isAwaiting, useLive, type LiveSession, type LiveSummary, type Source } from "../api";
+import { api, useLive, type LiveSession, type LiveSummary, type Source } from "../api";
 import { StatusAvatar, StatusBadge, TeamStack } from "../components/status";
 import { Swimlanes } from "../components/Swimlanes";
 import { Card, Empty, ErrorNote, Meter, PageHeader, Segmented, SourceBadge, Stat, cx } from "../components/ui";
-import { MODE_LABEL, SMART_ZONE_DEFAULT, SOURCE_LABEL, compact, duration, projectName } from "../format";
+import { MODE_LABEL, SMART_ZONE_DEFAULT, SOURCE_LABEL, SOURCE_OPTIONS, compact, duration, projectName } from "../format";
 import { MIN_N } from "../stats";
-import { STATUS, STATUS_ORDER } from "../status";
+import { STATUS, isActive, isAwaiting, urgency } from "../status";
 import { chart } from "../theme";
 
 type ToolFilter = Source | "all";
@@ -16,14 +16,36 @@ type ToolFilter = Source | "all";
 type Focus = "awaiting" | "working" | "completed" | "agents" | null;
 const FOCUS_LABEL: Record<Exclude<Focus, null>, string> = { awaiting: "Awaiting you", working: "Working", completed: "Completed today", agents: "Sessions with sub-agents" };
 
-/** Re-renders every second so wait timers tick between polls. */
-function useNow(ms = 1000) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), ms);
-    return () => clearInterval(t);
-  }, [ms]);
-  return now;
+// One clock for every timer on the page. Only the small labels that show a
+// running time subscribe to it, so the page itself re-renders once per poll,
+// not once a second.
+let clockNow = Date.now();
+const clockSubs = new Set<() => void>();
+let clockTimer: ReturnType<typeof setInterval> | undefined;
+function subscribeClock(fn: () => void) {
+  clockSubs.add(fn);
+  clockTimer ??= setInterval(() => {
+    clockNow = Date.now();
+    clockSubs.forEach((f) => f());
+  }, 1000);
+  return () => {
+    clockSubs.delete(fn);
+    if (clockSubs.size === 0) {
+      clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+  };
+}
+const useClock = () => useSyncExternalStore(subscribeClock, () => clockNow);
+
+/** Time since `from`, ticking every second. */
+function Since({ from }: { from: number }) {
+  return <>{duration(Math.max(0, useClock() - from))}</>;
+}
+
+/** Time until `to`, ticking every second. */
+function Until({ to }: { to: number }) {
+  return <>{duration(Math.max(0, to - useClock()))}</>;
 }
 
 /**
@@ -35,7 +57,9 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
   const [tool, setTool] = useState<ToolFilter>("all");
   const [teamsOnly, setTeamsOnly] = useState(false);
   const [focus, setFocus] = useState<Focus>(null);
-  const now = useNow();
+  // Context past this is flagged on each card.
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
   const open = (s: LiveSession) => (s.agents.length ? onOpenTeam(s.id) : onOpen(s.id));
 
   const header = (
@@ -47,12 +71,7 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
           <Segmented
             value={tool}
             onChange={setTool}
-            options={[
-              { value: "all", label: "All tools" },
-              { value: "claude_code", label: "Claude Code" },
-              { value: "copilot_cli", label: "Copilot CLI" },
-              { value: "copilot_vscode", label: "Copilot Chat" },
-            ]}
+            options={SOURCE_OPTIONS}
           />
           <label className="flex items-center gap-1.5 text-xs text-zinc-400">
             <input type="checkbox" className="accent-emerald-500" checked={teamsOnly} onChange={(e) => setTeamsOnly(e.target.checked)} />
@@ -73,8 +92,8 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
   const sessions = d.sessions.filter(keep);
   const awaiting = sessions
     .filter((s) => isAwaiting(s.status))
-    .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.statusSince - b.statusSince);
-  const working = sessions.filter((s) => isActive(s.status)).sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || b.endedAt - a.endedAt);
+    .sort((a, b) => urgency(a.status) - urgency(b.status) || a.statusSince - b.statusSince);
+  const working = sessions.filter((s) => isActive(s.status)).sort((a, b) => urgency(a.status) - urgency(b.status) || b.endedAt - a.endedAt);
   const scheduled = sessions.filter((s) => s.status === "scheduled");
   const idle = sessions.filter((s) => s.status === "stale" || s.status === "done" || s.status === "ended");
   const completed = d.completedToday.filter(keep);
@@ -83,7 +102,7 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
     <>
       {header}
       <div className="space-y-6" onKeyDown={moveFocus}>
-        <Kpis d={d} now={now} focus={focus} setFocus={setFocus} />
+        <Kpis d={d} focus={focus} setFocus={setFocus} />
         {focus && (
           <div className="flex items-center gap-2 text-xs text-zinc-400">
             Showing
@@ -103,7 +122,7 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
           ) : (
             <ul className="space-y-2">
               {awaiting.map((s) => (
-                <AwaitingRow key={s.id} s={s} now={now} onOpen={() => open(s)} />
+                <AwaitingRow key={s.id} s={s} onOpen={() => open(s)} />
               ))}
             </ul>
           )}
@@ -112,13 +131,13 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
         <div className={cx("grid gap-4", focus === "working" || focus === "completed" ? "" : "lg:grid-cols-3")}>
           {show("working") && <Column title="Working" count={working.length} empty="No agent is working right now.">
             {working.map((s) => (
-              <SessionCard key={s.id} s={s} now={now} onOpen={() => open(s)} />
+              <SessionCard key={s.id} s={s} zone={zone} onOpen={() => open(s)} />
             ))}
             {idle.length > 0 && <IdleFooter sessions={idle} onOpen={open} />}
           </Column>}
           {focus == null && <Column title="Scheduled" count={scheduled.length} empty="Nothing scheduled. Jobs an agent sets up with a cron or wake-up show here.">
             {scheduled.map((s) => (
-              <SessionCard key={s.id} s={s} now={now} onOpen={() => open(s)} />
+              <SessionCard key={s.id} s={s} zone={zone} onOpen={() => open(s)} />
             ))}
           </Column>}
           {show("completed") && <Column title="Completed today" count={completed.length} empty="Nothing finished yet today.">
@@ -153,16 +172,17 @@ function moveFocus(e: React.KeyboardEvent<HTMLDivElement>) {
   }
 }
 
-function Kpis({ d, now, focus, setFocus }: { d: LiveSummary; now: number; focus: Focus; setFocus: (f: Focus) => void }) {
+function Kpis({ d, focus, setFocus }: { d: LiveSummary; focus: Focus; setFocus: (f: Focus) => void }) {
   const pick = (f: Exclude<Focus, null>) => () => setFocus(focus === f ? null : f);
   // Only the buckets up to now, last 3 hours, for sparklines.
   const recent = d.buckets.slice(-12);
-  const longest = d.sessions.filter((s) => isAwaiting(s.status)).reduce((m, s) => Math.max(m, now - s.statusSince), 0);
+  // The earliest a waiting session started waiting: the longest wait.
+  const oldest = d.sessions.filter((s) => isAwaiting(s.status)).reduce((m, s) => Math.min(m, s.statusSince), Infinity);
   const share = d.agentMsToday + d.waitMsToday > 0 ? d.waitMsToday / (d.agentMsToday + d.waitMsToday) : null;
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
       <Stat label="Working" value={d.working} spark={recent.map((b) => b.working)} hint={`busiest 15 min today: ${d.peakParallelToday}`} onClick={pick("working")} />
-      <Stat label="Awaiting you" value={d.awaiting} spark={recent.map((b) => b.awaiting)} hint={longest ? `longest ${duration(longest)}` : "nothing waiting"} onClick={pick("awaiting")} />
+      <Stat label="Awaiting you" value={d.awaiting} spark={recent.map((b) => b.awaiting)} hint={Number.isFinite(oldest) ? <>longest <Since from={oldest} /></> : "nothing waiting"} onClick={pick("awaiting")} />
       <Stat label="Completed today" value={d.completedToday.length} spark={recent.map((b) => b.done)} hint={`${d.turnsToday} agent turns`} onClick={pick("completed")} />
       <Stat
         label="Sub-agents"
@@ -186,11 +206,7 @@ function Kpis({ d, now, focus, setFocus }: { d: LiveSummary; now: number; focus:
   );
 }
 
-function since(now: number, t: number) {
-  return duration(Math.max(0, now - t));
-}
-
-function AwaitingRow({ s, now, onOpen }: { s: LiveSession; now: number; onOpen: () => void }) {
+function AwaitingRow({ s, onOpen }: { s: LiveSession; onOpen: () => void }) {
   const t = STATUS[s.status];
   const note = s.status === "maybe_blocked" && s.pendingTool ? `Waiting on ${s.pendingTool} — check the terminal for a permission prompt.` : s.lastMessage;
   return (
@@ -205,7 +221,9 @@ function AwaitingRow({ s, now, onOpen }: { s: LiveSession; now: number; onOpen: 
           <div className="truncate text-sm font-medium text-zinc-100">{s.title ?? "Untitled session"}</div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <StatusBadge status={s.status} />
-            <span className={cx("text-sm font-semibold tabular-nums", t.text)}>{since(now, s.statusSince)}</span>
+            <span className={cx("text-sm font-semibold tabular-nums", t.text)}>
+              <Since from={s.statusSince} />
+            </span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
             <SourceBadge source={s.source} />
@@ -234,16 +252,20 @@ function Column({ title, count, empty, children }: { title: string; count: numbe
   );
 }
 
-function SessionCard({ s, now, onOpen }: { s: LiveSession; now: number; onOpen: () => void }) {
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
+function SessionCard({ s, zone, onOpen }: { s: LiveSession; zone: number; onOpen: () => void }) {
   const running = s.agents.filter((a) => a.status === "running" || a.status === "quiet").length;
   return (
     <button data-card onClick={onOpen} className="block w-full rounded-lg border border-zinc-800 bg-zinc-900/70 p-2.5 text-left hover:border-zinc-700 focus-visible:outline-2 focus-visible:outline-emerald-500">
       <div className="flex items-center justify-between gap-2">
         <StatusBadge status={s.status} size="xs" />
         <span className="text-xs tabular-nums text-zinc-500">
-          {s.status === "scheduled" && s.nextRun ? `next in ${duration(s.nextRun - now)}` : since(now, s.statusSince)}
+          {s.status === "scheduled" && s.nextRun ? (
+            <>
+              next in <Until to={s.nextRun} />
+            </>
+          ) : (
+            <Since from={s.statusSince} />
+          )}
         </span>
       </div>
       <div className="mt-1.5 truncate text-sm text-zinc-100">{s.title ?? "Untitled session"}</div>
@@ -335,8 +357,8 @@ function TodayCharts({ d, onOpen }: { d: LiveSummary; onOpen: (id: string) => vo
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={series} margin={{ left: -24, right: 4, top: 6 }}>
                 <CartesianGrid stroke={chart.grid} vertical={false} />
-                <XAxis dataKey="t" tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={40} />
-                <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="t" {...chart.axisProps} minTickGap={40} />
+                <YAxis allowDecimals={false} {...chart.axisProps} />
                 <Tooltip {...chart.tooltip} />
                 <Area type="stepAfter" dataKey="working" name="Working" stroke="var(--color-green-400)" fill="var(--color-green-500)" fillOpacity={0.2} isAnimationActive={false} />
                 <Area type="stepAfter" dataKey="awaiting" name="Awaiting you" stroke="var(--color-amber-400)" fill="var(--color-amber-500)" fillOpacity={0.15} strokeDasharray="4 2" isAnimationActive={false} />
@@ -353,8 +375,8 @@ function TodayCharts({ d, onOpen }: { d: LiveSummary; onOpen: (id: string) => vo
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hist} margin={{ left: -24, right: 4, top: 6 }}>
                   <CartesianGrid stroke={chart.grid} vertical={false} />
-                  <XAxis dataKey="bucket" tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="bucket" {...chart.axisProps} />
+                  <YAxis allowDecimals={false} {...chart.axisProps} />
                   <Tooltip {...chart.tooltip} formatter={(v) => [v, "replies"]} />
                   <Bar dataKey="n" fill="var(--color-amber-500)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
                 </BarChart>

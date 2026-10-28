@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
-import { api, isAwaiting, useLive } from "../api";
+import { api, useLive } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { StatusBadge } from "../components/status";
-import { STATUS } from "../status";
+import { STATUS, isAwaiting, mostUrgent } from "../status";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
@@ -58,7 +58,7 @@ export default function Today({
           onClick={() => go("control")}
           className={cx("mb-4 flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm ring-1 ring-inset", STATUS.asking.bg, STATUS.asking.ring)}
         >
-          <StatusBadge status={waiting.some((s) => s.status === "needs_permission") ? "needs_permission" : "asking"} />
+          <StatusBadge status={mostUrgent(waiting.map((s) => s.status)) ?? "asking"} />
           <span className="flex-1 text-zinc-100">
             {waiting.length} agent{waiting.length === 1 ? "" : "s"} awaiting you · longest {duration(Math.max(...waiting.map((s) => Date.now() - s.statusSince)))}
           </span>

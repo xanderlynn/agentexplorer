@@ -138,6 +138,27 @@ pub struct Finish<'a> {
     pub handed_back: bool,
 }
 
+impl Agent {
+    /// running | quiet | done | failed | stopped: running agents silent for
+    /// longer than `quiet_after_ms` are quiet.
+    pub fn live_status(&self, now: i64, quiet_after_ms: i64) -> &'static str {
+        match self.status {
+            Status::Running
+                if self
+                    .last_seen
+                    .or(self.started_at)
+                    .is_some_and(|t| now - t > quiet_after_ms) =>
+            {
+                "quiet"
+            }
+            Status::Running => "running",
+            Status::Done => "done",
+            Status::Failed => "failed",
+            Status::Stopped => "stopped",
+        }
+    }
+}
+
 impl Team {
     fn index(&self, key: &str) -> Option<usize> {
         self.agents

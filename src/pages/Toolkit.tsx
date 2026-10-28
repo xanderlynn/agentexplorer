@@ -2,9 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Source, type ToolkitItem, type ToolkitOutcomes } from "../api";
-import { roleOf } from "../components/TeamView";
-import { Card, Empty, ErrorNote, Heuristic, Legend, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat, cx } from "../components/ui";
-import { SOURCE_COLOR, SOURCE_LABEL, compact, pct } from "../format";
+import { Card, Empty, ErrorNote, Heuristic, Legend, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Sparkline, Stat, cx } from "../components/ui";
+import { SOURCE_COLOR, SOURCE_LABEL, SOURCE_OPTIONS, compact, pct, roleOf } from "../format";
 import { MIN_N } from "../stats";
 import { chart } from "../theme";
 
@@ -15,13 +14,6 @@ const KINDS: { value: Kind; label: string; noun: string; uses: string }[] = [
   { value: "tools", label: "Tools", noun: "tool", uses: "Calls" },
   { value: "mcp", label: "MCP servers", noun: "MCP server", uses: "Calls" },
   { value: "skills", label: "Skills", noun: "skill", uses: "Runs" },
-];
-
-const SOURCES: { value: Source | "all"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "claude_code", label: "Claude Code" },
-  { value: "copilot_cli", label: "Copilot CLI" },
-  { value: "copilot_vscode", label: "Copilot Chat" },
 ];
 
 const LINE_COLORS = ["var(--color-emerald-500)", "#38bdf8", "#a78bfa", "#fb923c", "#f472b6"];
@@ -58,7 +50,7 @@ export default function Toolkit({ days, setDays }: { days: number; setDays: (d: 
       subtitle="The agents, tools, MCP servers and skills you work with: how often, how that is changing, and how those sessions went."
       actions={
         <div className="flex flex-wrap gap-2">
-          <Segmented options={SOURCES} value={source} onChange={setSource} />
+          <Segmented options={SOURCE_OPTIONS} value={source} onChange={setSource} />
           <Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />
         </div>
       }
@@ -133,8 +125,8 @@ function OverTime({ kind, items, weeks }: { kind: Kind; items: ToolkitItem[]; we
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ left: -18, right: 8, top: 8 }}>
             <CartesianGrid stroke={chart.grid} vertical={false} />
-            <XAxis dataKey="week" tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-            <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
+            <XAxis dataKey="week" {...chart.axisProps} />
+            <YAxis allowDecimals={false} {...chart.axisProps} />
             <Tooltip {...chart.tooltip} formatter={(v, name) => [v, label(kind, String(name))]} labelFormatter={(w) => `Week of ${w}`} />
             {top.map((it, i) => (
               <Line key={it.key} type="linear" dataKey={it.key} stroke={LINE_COLORS[i]} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -146,18 +138,6 @@ function OverTime({ kind, items, weeks }: { kind: Kind; items: ToolkitItem[]; we
         <Legend items={top.map((it, i) => [label(kind, it.key), LINE_COLORS[i]])} />
       </div>
     </Card>
-  );
-}
-
-function Spark({ values }: { values: number[] }) {
-  const max = Math.max(1, ...values);
-  const w = 72;
-  const h = 18;
-  const pts = values.map((v, i) => `${(i / Math.max(1, values.length - 1)) * w},${h - (v / max) * (h - 2) - 1}`).join(" ");
-  return (
-    <svg width={w} height={h} aria-hidden>
-      <polyline points={pts} fill="none" stroke="var(--color-emerald-500)" strokeWidth={1.5} />
-    </svg>
   );
 }
 
@@ -217,7 +197,7 @@ function ItemTable({ kind, items, uses }: { kind: Kind; items: ToolkitItem[]; us
               </td>
               <td className="text-right tabular-nums text-zinc-300">{it.sessions}</td>
               <td className="text-right tabular-nums text-zinc-400">{compact(it.uses)}</td>
-              <td className="pl-4"><Spark values={it.weekly} /></td>
+              <td className="pl-4"><Sparkline values={it.weekly} fromZero /></td>
               <td className="pr-3"><Rate rate={it.with.success} n={it.with.rated} /></td>
               <td className="pr-3"><Rate rate={it.without.success} n={it.without.rated} /></td>
               <td className="text-right"><Diff item={it} /></td>

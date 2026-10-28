@@ -282,7 +282,6 @@ impl ParsedSession {
         }
         self.turn_tools.clear();
         self.stretch = None;
-        self.pending.clear();
     }
 
     pub fn note_pending(&mut self, id: &str, tool: &str) {

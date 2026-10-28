@@ -2,6 +2,7 @@
 // Field names mirror the Rust structs (serde camelCase).
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import { isActive, isAwaiting } from "./status";
 
 export type Source = "claude_code" | "copilot_cli" | "copilot_vscode";
 export type Outcome = "shipped" | "partial" | "abandoned" | "redo";
@@ -255,13 +256,20 @@ export interface Scorecard {
 /** One status per session; see live.rs `status_for`. */
 export type LiveStatus = "working" | "long_task" | "maybe_blocked" | "needs_permission" | "asking" | "done" | "failed" | "scheduled" | "stale" | "ended";
 
-/** The agent is stopped until you reply, approve something, or look at a failure. */
-export const isAwaiting = (s: LiveStatus) => s === "asking" || s === "needs_permission" || s === "maybe_blocked" || s === "failed";
-export const isActive = (s: LiveStatus) => s === "working" || s === "long_task";
 
-/** Live sessions, polled every 5 s. Every caller shares the one poll. */
+/**
+ * Live sessions. Every caller shares one poll: every 5 s while an agent is
+ * working or waiting on you, every 15 s when nothing is going on. File
+ * changes also refresh it at once (see App).
+ */
 export const useLive = () =>
-  useQuery({ queryKey: ["live"], queryFn: () => api.live(), refetchInterval: 5000, refetchIntervalInBackground: true, staleTime: 0 });
+  useQuery({
+    queryKey: ["live"],
+    queryFn: () => api.live(),
+    refetchInterval: (q) => (q.state.data?.sessions.some((s) => isActive(s.status) || isAwaiting(s.status)) ? 5000 : 15_000),
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+  });
 
 export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
 
@@ -272,7 +280,6 @@ export interface LiveAgent {
   task: string;
   status: LiveAgentStatus;
   startedAt: number | null;
-  lastSeen: number | null;
   tokens: number;
 }
 
@@ -285,12 +292,9 @@ export interface LiveSession {
   status: LiveStatus;
   /** When it entered its current status. */
   statusSince: number;
-  /** Since its latest activity, including sub-agents. */
-  quietMs: number;
   endedAt: number;
   userTurns: number;
   activeMs: number;
-  avgWaitMs: number | null;
   lastMessage: string | null;
   pendingTool: string | null;
   outcome: Outcome | null;
@@ -316,7 +320,6 @@ export interface LiveSummary {
   working: number;
   awaiting: number;
   agentsRunning: number;
-  oldestWaitMs: number | null;
   replyMedianMs: number | null;
   replyP75Ms: number | null;
   replyN: number;
@@ -335,8 +338,6 @@ export interface LiveSummary {
 export interface AlertAsset {
   id: string;
   kind: "sound" | "image";
-  mime: string;
-  bytes: number;
 }
 
 export interface TeamSession {

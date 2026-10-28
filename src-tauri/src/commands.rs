@@ -195,7 +195,7 @@ pub fn delete_alert_asset(state: State<AppState>, id: String) -> CmdResult<()> {
     crate::alerts::delete(&state.data_dir, &id).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_teams(state: State<AppState>) -> CmdResult<Vec<live::TeamSession>> {
     with_db(&state, live::teams)
 }

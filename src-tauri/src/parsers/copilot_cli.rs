@@ -2,7 +2,6 @@
 //! plus a `workspace.yaml` with the folder, branch and a session name.
 
 use std::collections::HashMap;
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -12,34 +11,89 @@ use crate::model::{LastEvent, ParsedSession, Prompt, TokenUsage};
 use crate::team::{Finish, Handoff, Kind, LEAD, Status, Team};
 use crate::util::{parse_ts, truncate};
 
-use super::{MAX_PROMPT_CHARS, open_lines};
+use super::{MAX_PROMPT_CHARS, read_from};
 
+/// A session parsed so far and where its events file was read up to.
+#[derive(Clone, Default)]
+pub struct State {
+    s: ParsedSession,
+    offset: u64,
+    current_model: String,
+    fallback_output_tokens: u64,
+    shutdown_seen: bool,
+    premium: f64,
+    /// read_agent call id → the agent it reads, to attribute its report.
+    reads: HashMap<String, String>,
+}
+
+impl State {
+    pub fn rewritten(&self, paths: &[PathBuf]) -> bool {
+        paths.first().is_some_and(|p| super::shrank(p, self.offset))
+    }
+}
+
+#[cfg(test)]
 pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
+    update(paths, &mut State::default())
+}
+
+/// Reads the events appended since `st` was last updated and returns the
+/// session as it stands now.
+pub fn update(paths: &[PathBuf], st: &mut State) -> Result<Option<ParsedSession>> {
     let Some(events) = paths.first() else {
         return Ok(None);
     };
     let dir = events.parent().unwrap_or(Path::new("."));
-    let mut s = ParsedSession {
-        external_id: dir
+    if st.offset == 0 {
+        st.s.external_id = dir
             .file_name()
             .map(|x| x.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        entrypoint: Some("cli".into()),
-        ..Default::default()
-    };
+            .unwrap_or_default();
+        st.s.entrypoint = Some("cli".into());
+    }
+    let offset = read_from(events, st.offset, |line| read_line(st, line))?;
+    st.offset = offset;
+
+    // Totals and the workspace file are applied to a copy, so the state can
+    // keep growing without counting anything twice.
+    let mut s = st.s.clone();
     read_workspace(&dir.join("workspace.yaml"), &mut s);
+    if !st.shutdown_seen && st.fallback_output_tokens > 0 {
+        let model = if st.current_model.is_empty() {
+            "unknown".to_string()
+        } else {
+            st.current_model.clone()
+        };
+        s.add_tokens(
+            &model,
+            &TokenUsage {
+                output: st.fallback_output_tokens,
+                ..Default::default()
+            },
+        );
+    }
+    if st.premium > 0.0 {
+        s.premium_requests = Some(st.premium);
+    }
+    if s.title.is_none() {
+        s.title = s.prompts.first().map(|p| truncate(&p.text, 120));
+    }
+    Ok((!s.is_empty()).then_some(s))
+}
 
-    let mut current_model = String::new();
-    let mut fallback_output_tokens: u64 = 0;
-    let mut shutdown_seen = false;
-    let mut premium = 0.0;
-    // read_agent call id → the agent it reads, to attribute its report.
-    let mut reads: HashMap<String, String> = HashMap::new();
-
-    for line in open_lines(events)?.lines() {
-        let Ok(line) = line else { break };
-        let Ok(v) = serde_json::from_str::<Value>(&line) else {
-            continue;
+fn read_line(st: &mut State, line: &str) {
+    let State {
+        s,
+        current_model,
+        fallback_output_tokens,
+        shutdown_seen,
+        premium,
+        reads,
+        ..
+    } = st;
+    {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return;
         };
         let ts = v
             .get("timestamp")
@@ -65,7 +119,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     s.git_branch.get_or_insert_with(|| b.to_string());
                 }
                 if let Some(m) = d.get("selectedModel").and_then(Value::as_str) {
-                    current_model = m.to_string();
+                    *current_model = m.to_string();
                 }
                 if kind != "session.context_changed" {
                     s.last_event = Some(LastEvent::TurnEnded);
@@ -73,7 +127,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             }
             "session.model_change" => {
                 if let Some(m) = d.get("newModel").and_then(Value::as_str) {
-                    current_model = m.to_string();
+                    *current_model = m.to_string();
                 }
             }
             "user.message" => {
@@ -83,7 +137,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     .and_then(Value::as_str)
                     .is_some_and(|x| !x.is_empty())
                 {
-                    continue;
+                    return;
                 }
                 let text = d
                     .get("content")
@@ -91,7 +145,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     .unwrap_or("")
                     .trim();
                 if text.is_empty() {
-                    continue;
+                    return;
                 }
                 // A "steering" message corrects the agent mid-turn.
                 if d.get("delivery").and_then(Value::as_str) == Some("steering") {
@@ -114,7 +168,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 if !current_model.is_empty() {
                     *s.model_turns.entry(current_model.clone()).or_default() += 1;
                 }
-                fallback_output_tokens +=
+                *fallback_output_tokens +=
                     d.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
                 if let Some(text) = d.get("content").and_then(Value::as_str) {
                     s.note_message(text);
@@ -134,7 +188,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     .filter(|x| !x.is_empty());
                 note_team_tool(
                     &mut s.team,
-                    &mut reads,
+                    reads,
                     parent.unwrap_or(LEAD),
                     call,
                     tool,
@@ -149,7 +203,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     s.team.span(p, None, ts);
                     // Sub-agent work is reported by subagent.* events; counting
                     // its tool calls here would not match Claude Code's numbers.
-                    continue;
+                    return;
                 }
                 let mut name = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
                 // str_replace_editor multiplexes view/create/str_replace.
@@ -169,7 +223,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
-                note_team_result(&mut s.team, &reads, d, ts);
+                note_team_result(&mut s.team, reads, d, ts);
                 if let Some(id) = d.get("toolCallId").and_then(Value::as_str) {
                     s.note_resolved(id);
                 }
@@ -271,8 +325,8 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             "session.shutdown" => {
                 // Each process run reports its own totals, so a resumed session
                 // has several shutdowns to add up.
-                shutdown_seen = true;
-                premium += d
+                *shutdown_seen = true;
+                *premium += d
                     .get("totalPremiumRequests")
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
@@ -305,28 +359,6 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             _ => {}
         }
     }
-
-    if !shutdown_seen && fallback_output_tokens > 0 {
-        let model = if current_model.is_empty() {
-            "unknown".to_string()
-        } else {
-            current_model
-        };
-        s.add_tokens(
-            &model,
-            &TokenUsage {
-                output: fallback_output_tokens,
-                ..Default::default()
-            },
-        );
-    }
-    if premium > 0.0 {
-        s.premium_requests = Some(premium);
-    }
-    if s.title.is_none() {
-        s.title = s.prompts.first().map(|p| truncate(&p.text, 120));
-    }
-    Ok((!s.is_empty()).then_some(s))
 }
 
 /// `workspace.yaml` is flat `key: value` pairs; a full YAML parser is overkill.
@@ -440,7 +472,24 @@ mod tests {
         ];
         std::fs::write(&events, lines.join("\n")).unwrap();
 
-        let s = parse(&[events]).unwrap().unwrap();
+        let s = parse(std::slice::from_ref(&events)).unwrap().unwrap();
+        // Read as it grows, a line at a time, it comes out the same.
+        let grown = dir.path().join("g").join("events.jsonl");
+        std::fs::create_dir_all(grown.parent().unwrap()).unwrap();
+        let mut st = State::default();
+        let mut last = None;
+        for l in lines {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&grown)
+                .unwrap();
+            writeln!(f, "{l}").unwrap();
+            last = update(std::slice::from_ref(&grown), &mut st).unwrap();
+        }
+        let mut last = last.unwrap();
+        last.external_id = s.external_id.clone();
+        assert_eq!(super::super::digest(&last), super::super::digest(&s));
         let a = &s.team.agents[0];
         assert_eq!(
             (a.role.as_str(), a.name.as_deref(), a.status),

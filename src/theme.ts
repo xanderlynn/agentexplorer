@@ -138,6 +138,8 @@ export const chart = {
   muted: "var(--color-zinc-700)",
   accent: "var(--color-emerald-500)",
   accentSoft: "var(--color-emerald-700)",
+  /** Axis styling shared by every chart: small labels, no lines. */
+  axisProps: { tick: { fill: "var(--color-zinc-500)", fontSize: 11 }, tickLine: false, axisLine: false },
   tooltip: {
     contentStyle: {
       background: "var(--color-zinc-900)",

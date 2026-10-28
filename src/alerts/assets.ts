@@ -14,25 +14,20 @@ function toDataUrl(bytes: ArrayBuffer, mime: string): string {
 
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 
-export function imageUrl(id: string): Promise<string> {
-  let p = images.get(id);
+/** Loads a file once; a failed load is forgotten so it can be retried. */
+function cached<T>(map: Map<string, Promise<T>>, id: string, load: (bytes: ArrayBuffer) => T | Promise<T>): Promise<T> {
+  let p = map.get(id);
   if (!p) {
-    p = api.readAlertAsset(id).then((b) => toDataUrl(b, MIME[id.split(".").pop() ?? ""] ?? "image/png"));
-    p.catch(() => images.delete(id));
-    images.set(id, p);
+    p = api.readAlertAsset(id).then(load);
+    p.catch(() => map.delete(id));
+    map.set(id, p);
   }
   return p;
 }
 
-export function soundBuffer(id: string): Promise<AudioBuffer> {
-  let p = sounds.get(id);
-  if (!p) {
-    p = api.readAlertAsset(id).then((b) => audio().decodeAudioData(b.slice(0)));
-    p.catch(() => sounds.delete(id));
-    sounds.set(id, p);
-  }
-  return p;
-}
+export const imageUrl = (id: string) => cached(images, id, (b) => toDataUrl(b, MIME[id.split(".").pop() ?? ""] ?? "image/png"));
+
+const soundBuffer = (id: string) => cached(sounds, id, (b) => audio().decodeAudioData(b.slice(0)));
 
 export async function playFile(id: string, volume: number) {
   const ac = audio();

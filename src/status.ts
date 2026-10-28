@@ -99,7 +99,7 @@ export const STATUS: Record<StatusKey, StatusToken> = {
     label: "Failed",
     help: "The latest turn ended in an error or hit the output limit.",
     icon: CircleX,
-    group: "failed",
+    group: "awaiting",
     text: "text-rose-300",
     bg: "bg-rose-500/15",
     ring: "ring-rose-500/40",
@@ -156,5 +156,17 @@ export const AGENT_STATUS: Record<LiveAgentStatus, StatusToken> = {
   stopped: { ...STATUS.stale, label: "No report", help: "Never reported back.", icon: CircleStop },
 };
 
-/** Awaiting statuses first, most urgent first; then active, then the rest. */
-export const STATUS_ORDER: LiveStatus[] = ["needs_permission", "asking", "maybe_blocked", "failed", "working", "long_task", "scheduled", "done", "ended", "stale"];
+/**
+ * Most urgent first: what needs you, then what is running, then the rest.
+ * Sorts the queue, picks the one sound in a burst, and colours the badge.
+ */
+const URGENCY: StatusKey[] = ["needs_permission", "asking", "failed", "maybe_blocked", "agent_failed", "working", "long_task", "scheduled", "done", "agent_done", "ended", "stale"];
+
+export const urgency = (k: StatusKey) => URGENCY.indexOf(k);
+
+/** The most urgent of some statuses. */
+export const mostUrgent = <K extends StatusKey>(keys: K[]): K | undefined => [...keys].sort((a, b) => urgency(a) - urgency(b))[0];
+
+/** Same groups as live.rs `group`. */
+export const isAwaiting = (s: LiveStatus) => STATUS[s].group === "awaiting";
+export const isActive = (s: LiveStatus) => STATUS[s].group === "active";

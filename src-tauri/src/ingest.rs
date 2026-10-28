@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rayon::prelude::*;
@@ -28,14 +28,22 @@ pub struct IngestReport {
     pub changed: bool,
 }
 
+/// Sessions not touched by the watcher for this long drop their parse
+/// state; the next change reads them whole once.
+const RESUME_TTL: Duration = Duration::from_secs(10 * 60);
+
 pub struct Ingestor {
     pub data_dir: PathBuf,
+    /// Parse state for sessions the watcher saw change, so the next change
+    /// reads only the lines appended since. Keyed by unit.
+    resume: Mutex<HashMap<String, (Instant, parsers::Resume)>>,
 }
 
 impl Ingestor {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
+            resume: Mutex::new(HashMap::new()),
         }
     }
 
@@ -68,7 +76,7 @@ impl Ingestor {
             .iter()
             .flat_map(sources::discover)
             .collect();
-        let (mut report, _) = self.ingest_units(conn, &units, force)?;
+        let (mut report, _) = self.ingest_units(conn, &units, force, false)?;
         // Sessions parsed before the current signals existed, whose original
         // transcript has since been deleted, are re-read from the archive.
         let stale: Vec<(String, String)> = {
@@ -86,7 +94,7 @@ impl Ingestor {
             })
             .collect();
         if !from_archive.is_empty() {
-            let (r, _) = self.ingest_units(conn, &from_archive, false)?;
+            let (r, _) = self.ingest_units(conn, &from_archive, false, false)?;
             report.updated += r.updated;
             report.errors.extend(r.errors);
         }
@@ -134,24 +142,28 @@ impl Ingestor {
             }
         }
         let units: Vec<Unit> = by_key.into_values().collect();
-        let (report, changed) = self.ingest_units(conn, &units, false)?;
+        let (report, changed) = self.ingest_units(conn, &units, false, true)?;
         if !changed.is_empty() {
             self.postprocess(conn, Some(&changed))?;
         }
         Ok(report)
     }
 
+    /// `keep` saves each parse's state for the next pass: worth it for the
+    /// few sessions the watcher sees changing, not for a full scan.
     fn ingest_units(
         &self,
         conn: &mut Connection,
         units: &[Unit],
         force: bool,
+        keep: bool,
     ) -> Result<(IngestReport, Vec<String>)> {
         let started = Instant::now();
-        let known: HashMap<String, String> = {
-            let mut stmt = conn.prepare("SELECT unit_key, fingerprint FROM source_files")?;
-            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?
+        let known = |key: &str| -> Option<String> {
+            conn.prepare_cached("SELECT fingerprint FROM source_files WHERE unit_key = ?1")
+                .ok()?
+                .query_row([key], |r| r.get(0))
+                .ok()
         };
         let mut report = IngestReport {
             scanned: units.len(),
@@ -162,24 +174,48 @@ impl Ingestor {
             .iter()
             .filter_map(|u| {
                 let fp = u.fingerprint();
-                (force || known.get(&u.key()) != Some(&fp)).then_some((u, fp))
+                (force || known(&u.key()).as_deref() != Some(fp.as_str())).then_some((u, fp))
             })
             .collect();
 
+        let todo: Vec<_> = {
+            let mut saved = self.resume.lock().expect("resume lock");
+            saved.retain(|_, (used, _)| used.elapsed() < RESUME_TTL);
+            todo.into_iter()
+                .map(|(u, fp)| {
+                    let resume = if force {
+                        None
+                    } else {
+                        saved.remove(&u.key()).map(|x| x.1)
+                    };
+                    (u, fp, resume)
+                })
+                .collect()
+        };
         let repo_cache: Mutex<HashMap<String, Option<String>>> = Mutex::new(HashMap::new());
         let parsed: Vec<_> = todo
             .into_par_iter()
-            .map(|(unit, fp)| {
-                let result = parsers::parse(unit.source, &unit.paths).map(|opt| {
-                    opt.map(|mut s| {
-                        s.close_open_turn();
-                        let repo = s
-                            .project_path
-                            .as_deref()
-                            .and_then(|p| cached_repo_root(&repo_cache, p));
-                        (s, repo)
-                    })
-                });
+            .map(|(unit, fp, resume)| {
+                let had_state = resume.is_some();
+                let result =
+                    parsers::parse_from(unit.source, &unit.paths, resume).map(|(opt, next)| {
+                        if let Some(next) = next
+                            && (keep || had_state)
+                        {
+                            self.resume
+                                .lock()
+                                .expect("resume lock")
+                                .insert(unit.key(), (Instant::now(), next));
+                        }
+                        opt.map(|mut s| {
+                            s.close_open_turn();
+                            let repo = s
+                                .project_path
+                                .as_deref()
+                                .and_then(|p| cached_repo_root(&repo_cache, p));
+                            (s, repo)
+                        })
+                    });
                 (unit, fp, result)
             })
             .collect();
@@ -429,11 +465,26 @@ fn upsert_session(
         ],
     )?;
 
-    conn.execute("DELETE FROM prompts WHERE session_id = ?1", [&id])?;
+    // Prompts only grow while an agent works, so only new ones are written;
+    // if the last stored one differs, the session was re-read and all are.
+    let (stored, last): (i64, Option<String>) = conn.query_row(
+        "SELECT COUNT(*), (SELECT text FROM prompts WHERE session_id = ?1 ORDER BY idx DESC LIMIT 1)
+         FROM prompts WHERE session_id = ?1",
+        [&id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let mut keep = (stored as usize).min(s.prompts.len());
+    if keep > 0 && last.as_deref() != Some(s.prompts[keep - 1].text.as_str()) {
+        keep = 0;
+    }
+    conn.execute(
+        "DELETE FROM prompts WHERE session_id = ?1 AND idx >= ?2",
+        params![id, keep as i64],
+    )?;
     let mut stmt = conn.prepare_cached(
         "INSERT INTO prompts (session_id, idx, ts, text) VALUES (?1, ?2, ?3, ?4)",
     )?;
-    for (i, p) in s.prompts.iter().enumerate() {
+    for (i, p) in s.prompts.iter().enumerate().skip(keep) {
         stmt.execute(params![id, i as i64, p.ts, p.text])?;
     }
     Ok(id)

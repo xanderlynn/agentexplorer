@@ -19,43 +19,31 @@ pub struct AlertAsset {
     pub id: String,
     /// sound | image
     pub kind: &'static str,
-    pub mime: &'static str,
-    pub bytes: usize,
 }
 
 /// The file type, from its first bytes.
-fn sniff(b: &[u8]) -> Option<(&'static str, &'static str, &'static str)> {
+fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
     let riff = |tag: &[u8]| b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == tag;
     Some(if b.starts_with(&[0x89, b'P', b'N', b'G']) {
-        ("image", "image/png", "png")
+        ("image", "png")
     } else if b.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        ("image", "image/jpeg", "jpg")
+        ("image", "jpg")
     } else if b.starts_with(b"GIF8") {
-        ("image", "image/gif", "gif")
+        ("image", "gif")
     } else if riff(b"WEBP") {
-        ("image", "image/webp", "webp")
+        ("image", "webp")
     } else if riff(b"WAVE") {
-        ("sound", "audio/wav", "wav")
+        ("sound", "wav")
     } else if b.starts_with(b"OggS") {
-        ("sound", "audio/ogg", "ogg")
+        ("sound", "ogg")
     } else if b.starts_with(b"ID3") || (b.len() > 1 && b[0] == 0xFF && b[1] & 0xE0 == 0xE0) {
-        ("sound", "audio/mpeg", "mp3")
+        ("sound", "mp3")
     } else {
         return None;
     })
 }
 
-fn asset_of(id: &str, bytes: &[u8]) -> Option<AlertAsset> {
-    let (kind, mime, _) = sniff(bytes)?;
-    Some(AlertAsset {
-        id: id.to_string(),
-        kind,
-        mime,
-        bytes: bytes.len(),
-    })
-}
-
-pub fn dir(data_dir: &Path) -> PathBuf {
+fn dir(data_dir: &Path) -> PathBuf {
     data_dir.join("alerts")
 }
 
@@ -73,7 +61,7 @@ fn path_for(data_dir: &Path, id: &str) -> Result<PathBuf> {
 }
 
 pub fn import(data_dir: &Path, bytes: &[u8]) -> Result<AlertAsset> {
-    let Some((kind, _, ext)) = sniff(bytes) else {
+    let Some((kind, ext)) = sniff(bytes) else {
         bail!("Use a PNG, JPEG, GIF or WebP image, or a WAV, MP3 or OGG sound.");
     };
     let limit = if kind == "sound" {
@@ -96,7 +84,7 @@ pub fn import(data_dir: &Path, bytes: &[u8]) -> Result<AlertAsset> {
         std::fs::create_dir_all(dir(data_dir))?;
         std::fs::write(&path, bytes)?;
     }
-    Ok(asset_of(&id, bytes).expect("sniffed above"))
+    Ok(AlertAsset { id, kind })
 }
 
 pub fn read(data_dir: &Path, id: &str) -> Result<Vec<u8>> {
@@ -120,7 +108,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
         let a = import(dir.path(), &png).unwrap();
-        assert_eq!((a.kind, a.mime), ("image", "image/png"));
+        assert_eq!(a.kind, "image");
         assert!(a.id.ends_with(".png"));
         // Same bytes, same file.
         assert_eq!(import(dir.path(), &png).unwrap().id, a.id);

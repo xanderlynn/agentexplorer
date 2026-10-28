@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
-import { api, isActive, isAwaiting, useLive, type LiveSession, type LiveStatus, type SessionFilter } from "./api";
+import { api, useLive, type LiveSession, type LiveStatus, type SessionFilter } from "./api";
 import { useProfile } from "./alerts/profile";
 import { useStatusAlerts } from "./alerts/useStatusAlerts";
-import { STATUS } from "./status";
+import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
 import { SessionDrawer } from "./components/SessionDrawer";
@@ -63,6 +63,9 @@ const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Pag
 const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p));
 
 
+/** Queries that show live state and refetch as soon as data changes. */
+const LIVE_QUERIES = new Set(["live", "teams", "timelines", "session"]);
+
 function readStored<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -119,8 +122,13 @@ export default function App() {
   useEffect(() => store("days", days), [days]);
 
   // The Rust ingester emits this after every pass that changed something.
+  // Live views refetch now; everything else is marked stale and refetches
+  // the next time it is shown, so a busy agent doesn't re-run every query.
   useEffect(() => {
-    const un = listen("data-changed", () => qc.invalidateQueries());
+    const un = listen("data-changed", () => {
+      qc.invalidateQueries({ predicate: (q) => LIVE_QUERIES.has(String(q.queryKey[0])) });
+      qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])), refetchType: "none" });
+    });
     return () => {
       un.then((f) => f());
     };
@@ -136,7 +144,7 @@ export default function App() {
 
   const awaiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
   // The badge takes the most urgent waiting status's colour.
-  const urgent = awaiting.some((s) => s.status === "needs_permission") ? STATUS.needs_permission : STATUS.asking;
+  const urgent = STATUS[mostUrgent(awaiting.map((s) => s.status)) ?? "asking"];
   const go = (p: Page) => {
     setDrill(null);
     setPage(p);

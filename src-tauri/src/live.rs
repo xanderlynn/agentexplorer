@@ -89,10 +89,16 @@ fn is_live(status: &str) -> bool {
     !matches!(status, "stale" | "ended")
 }
 
-/// Sub-agents can still be at work: the session is live and has been
-/// active recently. Otherwise unreported agents are marked stopped.
-fn agents_live(status: &str, quiet_ms: i64) -> bool {
-    is_live(status) && quiet_ms < STALE_AFTER_MS
+/// The part of the control center a status belongs to. Mirrored by
+/// `group` in src/status.ts.
+pub fn group(status: &str) -> &'static str {
+    match status {
+        "asking" | "needs_permission" | "maybe_blocked" | "failed" => "awaiting",
+        "working" | "long_task" => "active",
+        "done" | "ended" => "completed",
+        "scheduled" => "scheduled",
+        _ => "idle",
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -105,7 +111,6 @@ pub struct LiveAgent {
     /// running | quiet | done | failed | stopped
     pub status: String,
     pub started_at: Option<i64>,
-    pub last_seen: Option<i64>,
     pub tokens: u64,
 }
 
@@ -120,12 +125,9 @@ pub struct LiveSession {
     pub status: String,
     /// When it entered its current status, as near as the logs tell.
     pub status_since: i64,
-    /// Since the latest activity, including its sub-agents.
-    pub quiet_ms: i64,
     pub ended_at: i64,
     pub user_turns: i64,
     pub active_ms: i64,
-    pub avg_wait_ms: Option<i64>,
     /// The agent's latest reply: what it is asking when it waits on you.
     pub last_message: Option<String>,
     pub pending_tool: Option<String>,
@@ -165,7 +167,6 @@ pub struct LiveSummary {
     pub working: usize,
     pub awaiting: usize,
     pub agents_running: usize,
-    pub oldest_wait_ms: Option<i64>,
     /// How long you took to answer an agent today: median, 75th percentile, n.
     pub reply_median_ms: Option<i64>,
     pub reply_p75_ms: Option<i64>,
@@ -201,20 +202,51 @@ fn team_seen(team: &Team) -> Option<i64> {
         .max()
 }
 
-/// A stored team, with unreported agents marked stopped once the session
-/// is over.
+/// The session's status from its stored signals, with its team settled to
+/// match: unreported agents are marked stopped once it goes quiet. The
+/// control center, the Teams page and the session drawer all use this, so
+/// they agree. Returns the status and how long it has been quiet.
+fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (&'static str, i64) {
+    let seen = team_seen(team);
+    let quiet_ms = (now - seen.map_or(ended, |s| s.max(ended))).max(0);
+    let status = status_for(Signals {
+        quiet_ms,
+        team_busy: seen.is_some_and(|s| now - s < TEAM_BUSY_MS),
+        upcoming_jobs: upcoming(team, now).0 > 0,
+        ..sig
+    });
+    team.settle(is_live(status) && quiet_ms < STALE_AFTER_MS);
+    (status, quiet_ms)
+}
+
+/// A stored team without its message log, which the live views never show.
+fn team_lite(json: &str) -> Team {
+    #[derive(Default, serde::Deserialize)]
+    #[serde(default)]
+    struct Lite {
+        agents: Vec<crate::team::Agent>,
+        scheduled: Vec<crate::team::Scheduled>,
+    }
+    let l: Lite = serde_json::from_str(json).unwrap_or_default();
+    Team {
+        agents: l.agents,
+        scheduled: l.scheduled,
+        ..Default::default()
+    }
+}
+
+/// A stored team, settled for the session's current status.
 pub fn team_of(json: &str, last_event: Option<&str>, ended_at: i64) -> Team {
     let mut t: Team = serde_json::from_str(json).unwrap_or_default();
-    let now = now_ms();
-    let latest = team_seen(&t).map_or(ended_at, |s| s.max(ended_at));
-    let quiet_ms = (now - latest).max(0);
-    let status = status_for(Signals {
-        last_event,
-        quiet_ms,
-        team_busy: team_seen(&t).is_some_and(|s| now - s < TEAM_BUSY_MS),
-        ..Default::default()
-    });
-    t.settle(agents_live(status, quiet_ms));
+    derive(
+        &mut t,
+        Signals {
+            last_event,
+            ..Default::default()
+        },
+        ended_at,
+        now_ms(),
+    );
     t
 }
 
@@ -243,7 +275,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     let since = midnight.min(now - LIVE_WINDOW_MS);
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
-                active_ms, wait_ms_total, wait_count, last_message, outcome, timeline, last_context,
+                active_ms, last_message, outcome, timeline, last_context,
                 team, pending_tool, turn_started_at, failed, rating,
                 input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
          FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 300",
@@ -252,30 +284,25 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         .query_map([since], |r| {
             let last_event: Option<String> = r.get(5)?;
             let ended: i64 = r.get(6)?;
-            let wait_total: i64 = r.get(9)?;
-            let wait_count: i64 = r.get(10)?;
-            let last_message: Option<String> = r.get(11)?;
+            let last_message: Option<String> = r.get(9)?;
             let spans: Vec<(i64, i64, u8)> =
-                serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default();
-            let mut team: Team = serde_json::from_str(&r.get::<_, String>(15)?).unwrap_or_default();
-            let pending_tool: Option<String> = r.get(16)?;
-            let turn_started: Option<i64> = r.get(17)?;
-            let failed: bool = r.get(18)?;
-
-            let seen = team_seen(&team);
-            let latest = seen.map_or(ended, |s| s.max(ended));
-            let quiet_ms = (now - latest).max(0);
+                serde_json::from_str(&r.get::<_, String>(11)?).unwrap_or_default();
+            let mut team = team_lite(&r.get::<_, String>(13)?);
+            let pending_tool: Option<String> = r.get(14)?;
+            let turn_started: Option<i64> = r.get(15)?;
             let (scheduled, next_run) = upcoming(&team, now);
-            let status = status_for(Signals {
-                last_event: last_event.as_deref(),
-                quiet_ms,
-                pending_tool: pending_tool.as_deref(),
-                last_message: last_message.as_deref(),
-                failed,
-                team_busy: seen.is_some_and(|s| now - s < TEAM_BUSY_MS),
-                upcoming_jobs: scheduled > 0,
-            });
-            team.settle(agents_live(status, quiet_ms));
+            let (status, _) = derive(
+                &mut team,
+                Signals {
+                    last_event: last_event.as_deref(),
+                    pending_tool: pending_tool.as_deref(),
+                    last_message: last_message.as_deref(),
+                    failed: r.get(16)?,
+                    ..Default::default()
+                },
+                ended,
+                now,
+            );
             let status_since = match status {
                 "working" | "long_task" => turn_started.unwrap_or(ended),
                 _ => ended,
@@ -288,21 +315,8 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                     name: a.name.clone(),
                     role: a.role.clone(),
                     task: a.task.clone(),
-                    status: match a.status {
-                        AgentStatus::Running
-                            if a.last_seen
-                                .or(a.started_at)
-                                .is_some_and(|t| now - t > AGENT_QUIET_AFTER_MS) =>
-                        {
-                            "quiet".into()
-                        }
-                        AgentStatus::Running => "running".into(),
-                        AgentStatus::Done => "done".into(),
-                        AgentStatus::Failed => "failed".into(),
-                        AgentStatus::Stopped => "stopped".into(),
-                    },
+                    status: a.live_status(now, AGENT_QUIET_AFTER_MS).into(),
                     started_at: a.started_at,
-                    last_seen: a.last_seen,
                     tokens: a.tokens,
                 })
                 .collect();
@@ -314,18 +328,16 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 git_branch: r.get(4)?,
                 status: status.to_string(),
                 status_since,
-                quiet_ms,
                 ended_at: ended,
                 user_turns: r.get(7)?,
                 active_ms: r.get(8)?,
-                avg_wait_ms: (wait_count > 0).then(|| wait_total / wait_count),
                 last_message,
                 pending_tool,
-                outcome: r.get(12)?,
-                rating: r.get(19)?,
+                outcome: r.get(10)?,
+                rating: r.get(17)?,
                 mode: last_mode(&spans),
-                context: r.get(14)?,
-                tokens: r.get(20)?,
+                context: r.get(12)?,
+                tokens: r.get(18)?,
                 agents,
                 scheduled,
                 next_run,
@@ -376,15 +388,13 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             buckets[bucket_of(s.ended_at)].done += 1;
         }
         // A session working or awaiting you right now counts up to now.
-        if matches!(s.status.as_str(), "working" | "long_task") {
-            work[bucket_of(s.status_since)..]
-                .iter_mut()
-                .for_each(|x| *x = true);
-        } else if matches!(
-            s.status.as_str(),
-            "asking" | "needs_permission" | "maybe_blocked"
-        ) {
-            wait[bucket_of(s.status_since)..]
+        let now_in = match group(&s.status) {
+            "active" => Some(&mut work),
+            "awaiting" => Some(&mut wait),
+            _ => None,
+        };
+        if let Some(lane) = now_in {
+            lane[bucket_of(s.status_since)..]
                 .iter_mut()
                 .for_each(|x| *x = true);
         }
@@ -412,15 +422,10 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         reply_histogram[i] += 1;
     }
 
-    let awaiting = |s: &LiveSession| {
-        matches!(
-            s.status.as_str(),
-            "asking" | "needs_permission" | "maybe_blocked"
-        )
-    };
+    let awaiting = |s: &LiveSession| group(&s.status) == "awaiting";
     let (mut live, mut completed) = (Vec::new(), Vec::new());
     for (s, _, _) in all.drain(..) {
-        let done = matches!(s.status.as_str(), "done" | "ended");
+        let done = group(&s.status) == "completed";
         if done && s.ended_at >= midnight {
             completed.push(s);
         } else if now - s.ended_at < LIVE_WINDOW_MS || (is_live(&s.status) && s.status != "done") {
@@ -429,21 +434,13 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     }
 
     Ok(LiveSummary {
-        working: live
-            .iter()
-            .filter(|s| matches!(s.status.as_str(), "working" | "long_task"))
-            .count(),
+        working: live.iter().filter(|s| group(&s.status) == "active").count(),
         awaiting: live.iter().filter(|s| awaiting(s)).count(),
         agents_running: live
             .iter()
             .flat_map(|s| &s.agents)
             .filter(|a| matches!(a.status.as_str(), "running" | "quiet"))
             .count(),
-        oldest_wait_ms: live
-            .iter()
-            .filter(|s| awaiting(s))
-            .map(|s| now - s.status_since)
-            .max(),
         reply_median_ms: percentile(&replies, 0.5),
         reply_p75_ms: percentile(&replies, 0.75),
         reply_n: replies.len(),

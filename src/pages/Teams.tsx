@@ -2,19 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { CalendarClock } from "lucide-react";
 import { api, type AgentStatus, type TeamSession } from "../api";
 import { StatusDot } from "../components/status";
-import { cronText, roleOf } from "../components/TeamView";
 import { AGENT_STATUS, STATUS } from "../status";
 import { Card, Empty, ErrorNote, Loading, PageHeader, SourceBadge, Stat, cx } from "../components/ui";
-import { ago, compact, dateTime, duration, projectName } from "../format";
-
-const isLive = (t: TeamSession) => t.team.live;
+import { agentName, ago, compact, cronText, dateTime, duration, projectName, roleOf, upcoming } from "../format";
 
 /**
  * Every session that worked as a team: who is at work right now, what is
  * scheduled, and recent teams with their roles. Each opens on its Team tab.
  */
 export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
-  const q = useQuery({ queryKey: ["teams"], queryFn: api.teams, refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ["teams"], queryFn: api.teams });
   if (q.isLoading)
     return (
       <>
@@ -25,9 +22,7 @@ export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
   const teams = q.data ?? [];
 
   const working = teams.flatMap((t) => t.team.agents.filter((a) => a.status === "running").map((a) => ({ t, a })));
-  const jobs = teams.filter(isLive).flatMap((t) =>
-    t.team.scheduled.filter((j) => !j.cancelled && (j.recurring || (j.at != null && j.at > Date.now()))).map((j) => ({ t, j })),
-  );
+  const jobs = teams.flatMap((t) => t.team.scheduled.filter((j) => upcoming(j, t.team.live)).map((j) => ({ t, j })));
   const agents = teams.flatMap((t) => t.team.agents);
   const reported = agents.filter((a) => a.status === "done").length;
   const finished = agents.filter((a) => a.status !== "running").length;
@@ -65,7 +60,7 @@ export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
                   <li key={`${t.id}-${a.id}`}>
                     <button className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-sm hover:bg-zinc-800/40" onClick={() => onOpen(t.id)}>
                       <StatusDot token={AGENT_STATUS.running} />
-                      <span className="shrink-0 text-zinc-100">{a.name ?? roleOf(a.role)[0]}</span>
+                      <span className="shrink-0 text-zinc-100">{agentName(a)}</span>
                       <span className="min-w-0 flex-1 truncate text-zinc-400">{a.task}</span>
                       <span className="shrink-0 text-xs text-zinc-500">
                         {t.title ?? projectName(t.projectPath)}
@@ -148,7 +143,7 @@ function TeamRow({ t, onOpen }: { t: TeamSession; onOpen: (id: string) => void }
         </div>
         <div className="flex shrink-0 items-center gap-0.5" aria-label={`${agents.length} agents`}>
           {agents.slice(0, 12).map((a) => (
-            <span key={a.id} title={`${a.name ?? roleOf(a.role)[0]}: ${a.task}`}>
+            <span key={a.id} title={`${agentName(a)}: ${a.task}`}>
               <StatusDot token={AGENT_STATUS[a.status]} />
             </span>
           ))}

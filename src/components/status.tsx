@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import type { LiveAgent } from "../api";
 import { imageUrl } from "../alerts/assets";
 import { ruleFor, useProfile } from "../alerts/profile";
+import { agentName } from "../format";
 import { AGENT_STATUS, STATUS, type StatusKey, type StatusToken } from "../status";
-import { roleOf } from "./TeamView";
 import { cx } from "./ui";
 
 /** Icon and label together: status never rests on colour alone. */
@@ -85,7 +85,7 @@ export function TeamStack({ agents, max = 6 }: { agents: LiveAgent[]; max?: numb
       {shown.map((a) => {
         const t = AGENT_STATUS[a.status];
         const Icon = t.icon;
-        const who = a.name ?? roleOf(a.role)[0];
+        const who = agentName(a);
         return (
           <span key={a.id} role="listitem" className={cx("relative flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ring-1 ring-inset", t.bg, t.text, t.ring)} title={`${who} · ${t.label}: ${a.task}`}>
             <span aria-hidden>{who.charAt(0).toUpperCase()}</span>

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import type { LiveAgentStatus, LiveSession, LiveStatus } from "../api";
 import { projectName } from "../format";
-import { STATUS, type StatusKey } from "../status";
+import { STATUS, mostUrgent, type StatusKey } from "../status";
 import { inQuietHours, ruleFor, type AlertProfile } from "./profile";
 import { soundFor } from "./player";
 
@@ -18,8 +18,7 @@ interface Seen {
 
 /** Forget a session after this many polls without it (about 5 minutes). */
 const FORGET_AFTER = 60;
-/** Most urgent first; only statuses with a sound compete. */
-const URGENCY: StatusKey[] = ["needs_permission", "asking", "failed", "maybe_blocked", "agent_failed", "done", "agent_done", "scheduled"];
+
 
 /** Notifications at once beyond this are folded into "and N more". */
 const MAX_NOTES = 3;
@@ -76,9 +75,8 @@ export function useStatusAlerts(sessions: LiveSession[] | undefined, profile: Al
 
     const p = profileRef.current;
     // The most urgent status with a sound wins; the rest of a burst is dropped.
-    const rank = (k: StatusKey) => (URGENCY.includes(k) ? URGENCY.indexOf(k) : URGENCY.length);
-    const loudest = fired.filter((f) => ruleFor(p, f.key).sound).sort((a, b) => rank(a.key) - rank(b.key))[0];
-    if (loudest) soundFor(p, loudest.key);
+    const loudest = mostUrgent(fired.filter((f) => ruleFor(p, f.key).sound).map((f) => f.key));
+    if (loudest) soundFor(p, loudest);
 
     const notes = fired.filter((f) => ruleFor(p, f.key).notify);
     // Quiet hours hold notifications too; mute is for sounds only.
