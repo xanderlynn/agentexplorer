@@ -27,13 +27,14 @@ type CommitLink = (
 pub const COMMIT_WINDOW_MS: i64 = 30 * 60 * 1000;
 
 /// Runs git in a repository taken from a session log. A repository's own
-/// config can name a program for git to run (core.fsmonitor), and an agent
-/// working there could have set it, so that is switched off for every call.
+/// config can name programs for git to run, so fsmonitor and external diff
+/// configuration are disabled for every call.
 pub fn git(repo: &str, args: &[&str]) -> Result<String> {
     let out = quiet_command("git")
-        .args(["-c", "core.fsmonitor=false", "-C"])
+        .args(["-c", "core.fsmonitor=false", "-c", "diff.external=", "-C"])
         .arg(repo)
         .args(args)
+        .env_remove("GIT_EXTERNAL_DIFF")
         .output()?;
     if !out.status.success() {
         bail!(
@@ -86,6 +87,8 @@ fn read_commits(repo: &str, since_ms: i64) -> Result<Vec<Commit>> {
             "log",
             "--all",
             "--no-merges",
+            "--no-textconv",
+            "--no-ext-diff",
             &since,
             "--format=%x1e%H%x1f%ct%x1f%ae%x1f%s%x1f%b%x1d",
             "--numstat",
@@ -392,6 +395,125 @@ fn owning_session(sessions: &[(String, i64, i64)], t: i64) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::process::Command;
+
+    #[cfg(unix)]
+    struct MaliciousDiffRepo {
+        dir: tempfile::TempDir,
+    }
+
+    #[cfg(unix)]
+    impl MaliciousDiffRepo {
+        fn new() -> Self {
+            let dir = tempfile::Builder::new()
+                .prefix(".git-history-security-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            let repo = Self { dir };
+            repo.git(&["init", "-q"]);
+            repo.git(&["config", "user.email", "test@example.com"]);
+            repo.git(&["config", "user.name", "Test"]);
+            std::fs::write(repo.path().join(".gitattributes"), "*.danger diff=evil\n").unwrap();
+            std::fs::write(repo.path().join("payload.danger"), "one\n").unwrap();
+            repo.git(&["add", "."]);
+            repo.git(&["commit", "-qm", "one"]);
+            std::fs::write(repo.path().join("payload.danger"), "two\n").unwrap();
+            repo.git(&["commit", "-qam", "two"]);
+            repo
+        }
+
+        fn path(&self) -> &Path {
+            self.dir.path()
+        }
+
+        fn git(&self, args: &[&str]) {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(self.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        fn executable(&self, name: &str, marker: &Path, body: &str) -> String {
+            let script = self.path().join(name);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\nprintf invoked > '{}'\n{body}\n",
+                    marker.display()
+                ),
+            )
+            .unwrap();
+            let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(&script, permissions).unwrap();
+            script.to_string_lossy().into_owned()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_does_not_run_repo_textconv() {
+        let repo = MaliciousDiffRepo::new();
+        let marker = repo.path().join("textconv-ran");
+        let script = repo.executable("textconv.sh", &marker, "cat \"$1\"");
+        repo.git(&["config", "diff.evil.textconv", &script]);
+
+        repo.git(&["log", "--textconv", "-p", "-1"]);
+        assert!(marker.exists(), "malicious textconv fixture was not active");
+        std::fs::remove_file(&marker).unwrap();
+
+        read_commits(repo.path().to_str().unwrap(), 0).unwrap();
+        assert!(!marker.exists(), "history inspection executed textconv");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_does_not_run_external_or_driver_diff_commands() {
+        let repo = MaliciousDiffRepo::new();
+        let external_marker = repo.path().join("external-ran");
+        let external = repo.executable("external.sh", &external_marker, "exit 0");
+        repo.git(&["config", "diff.external", &external]);
+
+        repo.git(&["log", "--ext-diff", "-p", "-1"]);
+        assert!(
+            external_marker.exists(),
+            "malicious external diff fixture was not active"
+        );
+        std::fs::remove_file(&external_marker).unwrap();
+        read_commits(repo.path().to_str().unwrap(), 0).unwrap();
+        assert!(
+            !external_marker.exists(),
+            "history inspection executed diff.external"
+        );
+
+        repo.git(&["config", "--unset", "diff.external"]);
+        let driver_marker = repo.path().join("driver-ran");
+        let driver = repo.executable("driver.sh", &driver_marker, "exit 0");
+        repo.git(&["config", "diff.evil.command", &driver]);
+        repo.git(&["log", "--ext-diff", "-p", "-1"]);
+        assert!(
+            driver_marker.exists(),
+            "malicious diff driver fixture was not active"
+        );
+        std::fs::remove_file(&driver_marker).unwrap();
+
+        read_commits(repo.path().to_str().unwrap(), 0).unwrap();
+        assert!(
+            !driver_marker.exists(),
+            "history inspection executed a diff driver command"
+        );
+    }
 
     #[test]
     fn parses_git_log_records() {

@@ -132,7 +132,7 @@ pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResu
             "tilly-sessions-{}.csv",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         ));
-        std::fs::write(&path, analytics::sessions_csv(&rows))?;
+        tilly_core::util::write_private(&path, analytics::sessions_csv(&rows))?;
         Ok(path.to_string_lossy().into_owned())
     })
 }

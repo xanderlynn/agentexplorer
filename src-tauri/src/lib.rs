@@ -44,7 +44,7 @@ pub fn run() {
             {
                 eprintln!("could not move {}: {e}", legacy.display());
             }
-            std::fs::create_dir_all(&data_dir)?;
+            tilly_core::util::create_private_dir(&data_dir)?;
             let db_path = data_dir.join("ledger.sqlite3");
             let conn = db::open(&db_path)?;
             app.manage(AppState {
