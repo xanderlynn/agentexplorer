@@ -36,8 +36,6 @@ fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
         ("sound", "wav")
     } else if b.starts_with(b"OggS") {
         ("sound", "ogg")
-    } else if b.starts_with(b"ID3") || (b.len() > 1 && b[0] == 0xFF && b[1] & 0xE0 == 0xE0) {
-        ("sound", "mp3")
     } else {
         return None;
     })
@@ -52,7 +50,7 @@ fn path_for(data_dir: &Path, id: &str) -> Result<PathBuf> {
     let ok = id.split_once('.').is_some_and(|(h, ext)| {
         h.len() == 16
             && h.chars().all(|c| c.is_ascii_hexdigit())
-            && ["png", "jpg", "gif", "webp", "wav", "ogg", "mp3"].contains(&ext)
+            && ["png", "jpg", "gif", "webp", "wav", "ogg"].contains(&ext)
     });
     if !ok {
         bail!("Unknown alert file");
@@ -62,7 +60,7 @@ fn path_for(data_dir: &Path, id: &str) -> Result<PathBuf> {
 
 pub fn import(data_dir: &Path, bytes: &[u8]) -> Result<AlertAsset> {
     let Some((kind, ext)) = sniff(bytes) else {
-        bail!("Use a PNG, JPEG, GIF or WebP image, or a WAV, MP3 or OGG sound.");
+        bail!("Use a PNG, JPEG, GIF or WebP image, or a WAV or Ogg sound.");
     };
     let limit = if kind == "sound" {
         MAX_SOUND_BYTES

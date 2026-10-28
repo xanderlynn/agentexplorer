@@ -58,12 +58,12 @@ jobs:
 
       - name: rustfmt
         working-directory: src-tauri
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace

@@ -101,7 +101,7 @@ pub fn group(status: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveAgent {
     pub id: String,
@@ -114,7 +114,7 @@ pub struct LiveAgent {
     pub tokens: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveSession {
     pub id: String,

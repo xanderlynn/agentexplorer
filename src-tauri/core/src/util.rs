@@ -21,6 +21,11 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
     out
 }
 
+/// The user's Downloads folder, where exports go.
+pub fn download_dir() -> Option<PathBuf> {
+    dirs::download_dir()
+}
+
 pub fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

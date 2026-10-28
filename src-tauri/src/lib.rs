@@ -1,25 +1,14 @@
-mod alerts;
-mod analytics;
+mod background;
 mod commands;
-mod db;
-mod experiments;
-mod git;
-mod ingest;
-mod journal;
-mod live;
-mod model;
-mod parsers;
-mod playbooks;
-mod pricing;
 mod retro;
-mod signals;
-mod sources;
-mod stats;
-mod team;
-mod toolkit;
-mod trends;
-mod util;
-mod watcher;
+mod sound;
+
+// The engine lives in governess-core; these keep `crate::analytics` and
+// friends working in the app's own modules.
+pub(crate) use governess_core::{
+    alerts, analytics, db, experiments, ingest, journal, live, model, playbooks, sources,
+    status_alerts, toolkit, trends, util, watcher,
+};
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -34,9 +23,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
 }
 
-/// The app's identifier before it was renamed from Execution Ledger. Its data
-/// folder is moved to the new one on first launch.
-pub const LEGACY_IDENTIFIER: &str = "com.xanderlynn.executionledger";
+use governess_core::LEGACY_IDENTIFIER;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -61,8 +48,25 @@ pub fn run() {
                 db_path: db_path.clone(),
                 data_dir: data_dir.clone(),
             });
-            watcher::start(app.handle().clone(), db_path, data_dir);
+            background::build_tray(app.handle())?;
+            // `--background` starts in the tray with no window, as at login.
+            if std::env::args().any(|a| a == "--background") {
+                background::window_closed(app.handle());
+            } else {
+                background::open_window(app.handle());
+            }
+            watcher::start(
+                background::AppSink::new(app.handle().clone(), data_dir.clone()),
+                db_path,
+                data_dir,
+            );
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == background::MAIN && matches!(event, tauri::WindowEvent::Destroyed)
+            {
+                background::window_closed(window.app_handle());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_overview,
@@ -97,6 +101,8 @@ pub fn run() {
             commands::import_alert_asset,
             commands::read_alert_asset,
             commands::delete_alert_asset,
+            commands::get_alert_profile,
+            commands::play_alert_sound,
             commands::get_toolkit,
             commands::rescan,
             commands::get_sources,
@@ -123,6 +129,20 @@ pub fn run() {
             commands::set_api_key,
             commands::clear_api_key,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            // Closing the window keeps Governess running in the tray; only
+            // Quit (which passes an exit code) ends it.
+            tauri::RunEvent::ExitRequested {
+                api, code: None, ..
+            } => api.prevent_exit(),
+            // macOS: clicking the Dock icon with no window open.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => background::open_window(app),
+            _ => {}
+        });
 }

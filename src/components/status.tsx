@@ -53,7 +53,7 @@ function useImage(id: string | null) {
  */
 export function StatusAvatar({ status, size = 40 }: { status: StatusKey; size?: number }) {
   const { profile } = useProfile();
-  const image = useImage(ruleFor(profile, status).image);
+  const image = useImage(profile ? ruleFor(profile, status).image : null);
   const [broken, setBroken] = useState<string | null>(null);
   const url = image && image !== broken ? image : null;
   const t = STATUS[status];

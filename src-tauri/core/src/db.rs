@@ -259,7 +259,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-#[cfg(test)]
+/// A fresh database in memory, for tests.
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     configure(&conn)?;

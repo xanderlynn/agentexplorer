@@ -1,9 +1,7 @@
 import { api } from "../api";
-import { audio } from "./tones";
 
-// Imported files are read once and kept for the session.
+// Imported images are read once and kept for the session.
 const images = new Map<string, Promise<string>>();
-const sounds = new Map<string, Promise<AudioBuffer>>();
 
 function toDataUrl(bytes: ArrayBuffer, mime: string): string {
   let bin = "";
@@ -26,15 +24,3 @@ function cached<T>(map: Map<string, Promise<T>>, id: string, load: (bytes: Array
 }
 
 export const imageUrl = (id: string) => cached(images, id, (b) => toDataUrl(b, MIME[id.split(".").pop() ?? ""] ?? "image/png"));
-
-const soundBuffer = (id: string) => cached(sounds, id, (b) => audio().decodeAudioData(b.slice(0)));
-
-export async function playFile(id: string, volume: number) {
-  const ac = audio();
-  const src = ac.createBufferSource();
-  src.buffer = await soundBuffer(id);
-  const gain = ac.createGain();
-  gain.gain.value = volume;
-  src.connect(gain).connect(ac.destination);
-  src.start();
-}

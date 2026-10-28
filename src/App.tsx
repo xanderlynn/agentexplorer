@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Bot, ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
-import { api, useLive, type LiveSession, type LiveStatus, type SessionFilter } from "./api";
-import { useProfile } from "./alerts/profile";
-import { useStatusAlerts } from "./alerts/useStatusAlerts";
+import { useLive, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
 import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
@@ -64,7 +62,7 @@ const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p)
 
 
 /** Queries that show live state and refetch as soon as data changes. */
-const LIVE_QUERIES = new Set(["live", "teams", "session"]);
+const LIVE_QUERIES = new Set(["teams", "session"]);
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -120,22 +118,23 @@ export default function App() {
   // Live views refetch now; everything else is marked stale and refetches
   // the next time it is shown, so a busy agent doesn't re-run every query.
   useEffect(() => {
+    // The live summary arrives whole whenever it changes.
+    const unLive = listen<LiveSummary>("live", (e) => qc.setQueryData(["live"], e.payload));
     const un = listen("data-changed", () => {
       qc.invalidateQueries({ predicate: (q) => LIVE_QUERIES.has(String(q.queryKey[0])) });
       qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])), refetchType: "none" });
     });
     return () => {
+      unLive.then((f) => f());
       un.then((f) => f());
     };
   }, [qc]);
 
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  // Keep polling while the window is hidden: that is when a notification matters.
+  // Sounds and notifications are played by the app itself (see
+  // src-tauri/src/background.rs), so they work with this window closed.
   const live = useLive();
-  const { profile } = useProfile();
-  // Finished sessions move to completedToday; the alerts need to see them arrive there.
+  // Finished sessions move to completedToday; the review prompt watches both.
   const tracked = useMemo(() => live.data && [...live.data.sessions, ...live.data.completedToday], [live.data]);
-  useStatusAlerts(tracked, profile, settings.data?.values["notify.waiting"] !== "false");
 
   const awaiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
   // The badge takes the most urgent waiting status's colour.

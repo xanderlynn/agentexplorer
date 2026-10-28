@@ -127,7 +127,7 @@ pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patt
 pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<String> {
     with_db(&state, |c| {
         let rows = analytics::filter_sessions(c, &filter)?;
-        let dir = dirs::download_dir().unwrap_or_else(|| state.data_dir.clone());
+        let dir = governess_core::util::download_dir().unwrap_or_else(|| state.data_dir.clone());
         let path = dir.join(format!(
             "governess-sessions-{}.csv",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
@@ -181,6 +181,32 @@ pub fn import_alert_asset(
             .map_err(|_| "Expected the file's bytes".to_string())?,
     };
     crate::alerts::import(&state.data_dir, &bytes).map_err(err)
+}
+
+/// Your status profile, or the defaults when `default` (for Reset).
+#[tauri::command(async)]
+pub fn get_alert_profile(
+    state: State<AppState>,
+    default: bool,
+) -> CmdResult<crate::status_alerts::Profile> {
+    if default {
+        return Ok(Default::default());
+    }
+    with_db(&state, |c| {
+        Ok(crate::status_alerts::Profile::parse(
+            db::get_setting(c, crate::status_alerts::PROFILE_KEY)?.as_deref(),
+        ))
+    })
+}
+
+/// Plays a sound the way an alert would, for the Test buttons in Settings.
+#[tauri::command(async)]
+pub fn play_alert_sound(
+    state: State<AppState>,
+    sound: crate::status_alerts::Sound,
+    volume: f32,
+) -> CmdResult<()> {
+    crate::sound::play(&sound, volume, &state.data_dir).map_err(err)
 }
 
 #[tauri::command(async)]

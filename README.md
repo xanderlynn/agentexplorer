@@ -16,7 +16,7 @@ The app is organised around a daily and a weekly loop, in seven areas (press ⌘
 
 | Area | What you get |
 | --- | --- |
-| **Agents** | The landing page. **Control center:** every live Claude Code and Copilot session by status (your turn, needs permission, might need approval, failed, working, long task, scheduled, completed, idle), an *Awaiting you* queue sorted by wait time, working / scheduled / completed-today columns with each session's sub-agents, live stats (working now, awaiting you, completed today, sub-agents, time waiting on you, your reply time), today's swimlanes, concurrency and reply-time charts. **Teams:** sessions that used sub-agents, roles and how often they report back. You choose a sound (built-in tones or your own WAV/MP3/OGG) and an image for each status in Settings, with volume, mute, quiet hours and desktop notifications. |
+| **Agents** | The landing page. **Control center:** every live Claude Code and Copilot session by status (your turn, needs permission, might need approval, failed, working, long task, scheduled, completed, idle), an *Awaiting you* queue sorted by wait time, working / scheduled / completed-today columns with each session's sub-agents, live stats (working now, awaiting you, completed today, sub-agents, time waiting on you, your reply time), today's swimlanes, concurrency and reply-time charts. **Teams:** sessions that used sub-agents, roles and how often they report back. You choose a sound (built-in tones or your own WAV or Ogg) and an image for each status in Settings, with volume, mute, quiet hours and desktop notifications. |
 | **Today** | Planning and review: a pointer to anything awaiting you, recent sessions to rate in one tap, running experiments, goals, planned tasks, unusual sessions. |
 | **Sessions** | Every session from every tool, searchable across all prompts, filterable, exportable to CSV. Charts and insights elsewhere open here with the matching filter. The session view puts everything on one page: its live status and key numbers at the top; what the lead last said or is waiting on, the team (each sub-agent's status and task), one timeline of the lead's work and waits on you with each sub-agent below it, and folded detail (roster with briefs and reports, the hand-off flow, flow score and tool use, your prompts) on the left; your review, the resume command, commits and playbooks on the right. It works for Claude Code and Copilot (CLI and VS Code). |
 | **Outcomes** | **Summary:** KPIs with 12-week sparklines, your usual range and sample size; insights that open the sessions behind them; why sessions go wrong, grouped by cause. **Delivery & reality:** sessions to commits, rework within 7 days of shipping, "felt faster" against evidence, your estimate ratio, agent-to-human time, and a delegation-fit matrix (task type × tool). |
@@ -68,32 +68,37 @@ Checks:
 
 ```bash
 npm run build                      # typecheck + bundle the frontend
-cd src-tauri && cargo test         # Rust unit tests
-cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd src-tauri && cargo test --workspace         # Rust unit tests (app + core)
+cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 To check the parsers against your own logs (read-only, into a throwaway database):
 
 ```bash
-cd src-tauri && cargo test --release real_logs -- --ignored --nocapture
+cd src-tauri && cargo test --release -p governess-core real_logs -- --ignored --nocapture
 ```
 
 ### Layout
 
+Governess runs in the tray. It keeps collecting, tracking statuses and alerting (notifications and sounds) with its window closed; the window is created when you open it and freed when you close it, which is most of the app's memory. Start it with `--background` to go straight to the tray, as at login. The live state is pushed to the window when it changes; nothing polls.
+
 ```text
-src/                     React UI (pages/, components/, api.ts = typed command wrappers)
-src-tauri/src/
-  parsers/               one parser per tool → a normalized ParsedSession
-  sources.rs             where each tool's logs live, grouping files into sessions
-  ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
-  watcher.rs             filesystem events + periodic full scans
-  git.rs                 links sessions to the commits they produced
-  playbooks.rs           instruction-file and prompt-template versions
-  journal.rs             intents, outcomes, calibration
-  analytics.rs           overview, scorecard, insights
-  live.rs                live session states
-  retro.rs               the weekly retro (claude CLI or Anthropic API)
-  commands.rs            the Tauri command surface
+src/                       React UI (pages/, components/, api.ts = typed command wrappers)
+src-tauri/
+  core/src/                governess-core: the engine, no UI dependency (shared with a future headless collector)
+    parsers/               one parser per tool → a normalized ParsedSession, read incrementally
+    sources.rs             where each tool's logs live, grouping files into sessions
+    ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
+    watcher.rs             filesystem events, periodic scans, live state pushed to a Sink
+    live.rs                each session's status and today's live stats
+    status_alerts.rs       which status changes to announce, per your profile
+    team.rs, toolkit.rs    sub-agents and their messages; agents, tools, MCP servers, skills
+    analytics.rs, trends.rs, experiments.rs, journal.rs, playbooks.rs, git.rs
+  src/                     the desktop app
+    background.rs          tray, window lifecycle, and the Sink: window events, notifications, sounds
+    sound.rs               alert tones (synthesised) and your WAV/Ogg files
+    retro.rs               the weekly retro (claude CLI or Anthropic API)
+    commands.rs            the Tauri command surface
 ```
 
 ## Releases and signing

@@ -2,7 +2,7 @@
 // Field names mirror the Rust structs (serde camelCase).
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
-import { isActive, isAwaiting } from "./status";
+import type { AlertProfile, SoundChoice } from "./alerts/profile";
 
 export type Source = "claude_code" | "copilot_cli" | "copilot_vscode";
 export type Outcome = "shipped" | "partial" | "abandoned" | "redo";
@@ -260,18 +260,11 @@ export type LiveStatus = "working" | "long_task" | "maybe_blocked" | "needs_perm
 
 
 /**
- * Live sessions. Every caller shares one poll: every 5 s while an agent is
- * working or waiting on you, every 15 s when nothing is going on. File
- * changes also refresh it at once (see App).
+ * Live sessions. The app pushes a new summary whenever it changes (the
+ * "live" event, wired in App), so this fetches once when the window opens
+ * and never polls.
  */
-export const useLive = () =>
-  useQuery({
-    queryKey: ["live"],
-    queryFn: () => api.live(),
-    refetchInterval: (q) => (q.state.data?.sessions.some((s) => isActive(s.status) || isAwaiting(s.status)) ? 5000 : 15_000),
-    refetchIntervalInBackground: true,
-    staleTime: 0,
-  });
+export const useLive = () => useQuery({ queryKey: ["live"], queryFn: () => api.live(), staleTime: Infinity });
 
 export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
 
@@ -813,6 +806,8 @@ export const api = {
   importAlertAsset: (bytes: Uint8Array) => invoke<AlertAsset>("import_alert_asset", bytes),
   readAlertAsset: (id: string) => invoke<ArrayBuffer>("read_alert_asset", { id }),
   deleteAlertAsset: (id: string) => invoke<void>("delete_alert_asset", { id }),
+  alertProfile: (defaults: boolean) => invoke<AlertProfile>("get_alert_profile", { default: defaults }),
+  playAlertSound: (sound: NonNullable<SoundChoice>, volume: number) => invoke<void>("play_alert_sound", { sound, volume }),
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   clearApiKey: () => invoke<void>("clear_api_key"),
 };

@@ -1,9 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { ImagePlus, Play, RotateCcw, X } from "lucide-react";
 import { api } from "../api";
-import { DEFAULT_PROFILE, ruleFor, useProfile, type AlertProfile, type SoundChoice, type StatusRule } from "../alerts/profile";
-import { playChoice } from "../alerts/player";
-import { TONES, type Tone } from "../alerts/tones";
+import { TONES, ruleFor, useProfile, type AlertProfile, type SoundChoice, type StatusRule, type Tone } from "../alerts/profile";
 import { STATUS, type StatusKey } from "../status";
 import { StatusAvatar } from "./status";
 import { Button, Card, ErrorNote, cx, inputBase } from "./ui";
@@ -61,7 +59,7 @@ function Row({ status, profile, save }: { status: StatusKey; profile: AlertProfi
   const r = ruleFor(profile, status);
   const set = (patch: Partial<StatusRule>) => save({ ...profile, rules: { ...profile.rules, [status]: { ...r, ...patch } } });
   const image = useImport("image/png,image/jpeg,image/gif,image/webp", (id) => set({ image: id }));
-  const sound = useImport("audio/wav,audio/mpeg,audio/ogg,.wav,.mp3,.ogg", (id) => set({ sound: { kind: "file", id } }));
+  const sound = useImport("audio/wav,audio/ogg,.wav,.ogg", (id) => set({ sound: { kind: "file", id } }));
   const value = r.sound == null ? "none" : r.sound.kind === "tone" ? r.sound.tone : "file";
 
   return (
@@ -113,7 +111,7 @@ function Row({ status, profile, save }: { status: StatusKey; profile: AlertProfi
           <button
             type="button"
             disabled={!r.sound}
-            onClick={() => playChoice(r.sound, profile.volume * r.volume)}
+            onClick={() => r.sound && api.playAlertSound(r.sound, profile.volume * r.volume).catch(() => {})}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-30"
             aria-label={`Play ${t.label} sound`}
           >
@@ -178,16 +176,16 @@ function Control({ label, children, grow }: { label: string; children: ReactNode
  * quiet hours.
  */
 export function StatusProfiles() {
-  const { profile, loaded, save } = useProfile();
+  const { profile, save, reset } = useProfile();
   const [open, setOpen] = useState(false);
-  if (!loaded) return null;
+  if (!profile) return null;
   const q = profile.quietHours;
   return (
     <Card
       className="xl:col-span-2"
       title="Status sounds and images"
       action={
-        <Button size="sm" variant="ghost" onClick={() => save(DEFAULT_PROFILE)}>
+        <Button size="sm" variant="ghost" onClick={() => void reset()}>
           <RotateCcw size={13} /> Reset to defaults
         </Button>
       }
@@ -244,7 +242,7 @@ export function StatusProfiles() {
       })}
 
       <p className="mt-4 border-t border-zinc-800 pt-3 text-xs text-zinc-500">
-        Images: PNG, JPEG, GIF or WebP up to 2 MB. Sounds: WAV, MP3 or OGG up to 1 MB. Files stay on this computer. Quiet hours hold notifications as well as sounds.
+        Images: PNG, JPEG, GIF or WebP up to 2 MB. Sounds: WAV or Ogg up to 1 MB. Files stay on this computer. Quiet hours hold notifications as well as sounds.
       </p>
     </Card>
   );
