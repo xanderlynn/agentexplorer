@@ -1,3 +1,4 @@
+mod alerts;
 mod analytics;
 mod commands;
 mod db;
@@ -93,6 +94,9 @@ pub fn run() {
             commands::save_review,
             commands::get_live,
             commands::list_teams,
+            commands::import_alert_asset,
+            commands::read_alert_asset,
+            commands::delete_alert_asset,
             commands::get_toolkit,
             commands::rescan,
             commands::get_sources,

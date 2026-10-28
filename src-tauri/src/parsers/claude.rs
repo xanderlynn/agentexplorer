@@ -157,6 +157,7 @@ fn parse_file(path: &Path, s: &mut ParsedSession, agent: Option<&str>) -> Result
                             }
                             if let Some(tid) = item.get("id").and_then(Value::as_str) {
                                 s.tool_names.insert(tid.to_string(), name.to_string());
+                                s.note_pending(tid, name);
                             }
                             let input = &item["input"];
                             let path = ["file_path", "path", "notebook_path"]
@@ -172,11 +173,14 @@ fn parse_file(path: &Path, s: &mut ParsedSession, agent: Option<&str>) -> Result
                         _ => {}
                     }
                 }
+                let stop = msg.get("stop_reason").and_then(Value::as_str);
                 let ended = tool_uses == 0
-                    && matches!(
-                        msg.get("stop_reason").and_then(Value::as_str),
-                        Some("end_turn" | "stop_sequence" | "max_tokens")
-                    );
+                    && matches!(stop, Some("end_turn" | "stop_sequence" | "max_tokens"));
+                // Each lead reply decides it afresh, so a later good turn clears it.
+                let error = v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true);
+                if error || ended {
+                    s.failed = error || stop == Some("max_tokens");
+                }
                 if ended {
                     s.note_turn_end(ts);
                 }
@@ -436,6 +440,9 @@ fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
     for item in content_items(msg) {
         if item.get("type").and_then(Value::as_str) == Some("tool_result") {
             has_tool_result = true;
+            if let Some(id) = item.get("tool_use_id").and_then(Value::as_str) {
+                s.note_resolved(id);
+            }
             // A tool call the user rejected or interrupted is also marked
             // is_error, but it says nothing about the agent's setup.
             if item.get("is_error").and_then(Value::as_bool) == Some(true) {

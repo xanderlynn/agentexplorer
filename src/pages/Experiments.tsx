@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, Target, Trash2 } from "lucide-react";
+import { Check, FlaskConical, Target, Trash2, TriangleAlert, X } from "lucide-react";
 import { api, type Experiment, type GoalStatus, type MetricDef, type Source } from "../api";
 import type { Drill } from "../App";
 import { Button, Card, Empty, ErrorNote, Field, Loading, Metric, PageHeader, cx, inputClass } from "../components/ui";
@@ -213,11 +213,11 @@ function GoalCard({ g }: { g: GoalStatus }) {
         </span>
       </div>
       <div className={cx("text-xs", g.met == null ? "text-zinc-500" : g.met ? "text-emerald-300" : "text-amber-300")}>
-        {g.met == null ? "No data this week" : g.met ? "✓ On target this week" : "! Not there yet this week"} · n={g.n}
+        {g.met == null ? "No data this week" : g.met ? <><Check size={12} aria-hidden className="inline" /> On target this week</> : <><TriangleAlert size={12} aria-hidden className="inline" /> Not there yet this week</>} · n={g.n}
       </div>
       <div className={cx("mt-2 border-t border-zinc-800 pt-2 text-xs", g.counterSlipping ? "text-rose-300" : "text-zinc-400")}>
         Guard: {g.counter.label} {fmtMetric(g.counter, g.counterCurrent)} (was {fmtMetric(g.counter, g.counterBaseline)})
-        {g.counterSlipping && " ✕ slipping: the goal may be costing you here"}
+        {g.counterSlipping && <> · <X size={12} aria-hidden className="inline" /> slipping: the goal may be costing you here</>}
       </div>
     </Card>
   );

@@ -1,6 +1,9 @@
 import type { Lane, Mode } from "../api";
 import { MODE_COLOR, MODE_LABEL, SOURCE_COLOR, SPAN_MODE, duration, projectName } from "../format";
 
+/** Waiting on you is hatched as well as amber, so it reads without colour. */
+const WAIT_FILL = "repeating-linear-gradient(135deg, var(--color-amber-500) 0 3px, color-mix(in oklab, var(--color-amber-500) 35%, transparent) 3px 6px)";
+
 /**
  * One lane per session: agent work coloured by mode, and waiting on you (amber)
  * across the day, with a "now" line. Shows at a glance when parallel
@@ -42,7 +45,7 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
                     <span
                       key={i}
                       className="absolute top-0.5 h-3 rounded-sm"
-                      style={{ left: x(a), width: w(a, b), background: k === 0 ? "var(--color-amber-500)" : MODE_COLOR[SPAN_MODE[k] as Mode], opacity: k === 0 ? 0.75 : 0.9 }}
+                      style={{ left: x(a), width: w(a, b), background: k === 0 ? WAIT_FILL : MODE_COLOR[SPAN_MODE[k] as Mode], opacity: k === 0 ? 0.85 : 0.9 }}
                       title={SPAN_MODE[k] === "waiting" ? "waiting on you" : MODE_LABEL[SPAN_MODE[k] as Mode]}
                     />
                   ))}
@@ -60,7 +63,7 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
           </span>
         ))}
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" /> waiting on you
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: WAIT_FILL }} /> waiting on you
         </span>
       </div>
     </div>

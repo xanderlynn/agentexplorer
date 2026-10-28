@@ -168,6 +168,33 @@ pub fn get_toolkit(
     })
 }
 
+/// Takes the file's bytes as the raw request body.
+#[tauri::command(async)]
+pub fn import_alert_asset(
+    state: State<AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> CmdResult<crate::alerts::AlertAsset> {
+    let bytes: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(b) => b.clone(),
+        // Without the custom IPC protocol the bytes arrive as a JSON array.
+        tauri::ipc::InvokeBody::Json(v) => serde_json::from_value(v.clone())
+            .map_err(|_| "Expected the file's bytes".to_string())?,
+    };
+    crate::alerts::import(&state.data_dir, &bytes).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn read_alert_asset(state: State<AppState>, id: String) -> CmdResult<tauri::ipc::Response> {
+    crate::alerts::read(&state.data_dir, &id)
+        .map(tauri::ipc::Response::new)
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn delete_alert_asset(state: State<AppState>, id: String) -> CmdResult<()> {
+    crate::alerts::delete(&state.data_dir, &id).map_err(err)
+}
+
 #[tauri::command]
 pub fn list_teams(state: State<AppState>) -> CmdResult<Vec<live::TeamSession>> {
     with_db(&state, live::teams)
@@ -405,6 +432,7 @@ const SETTING_KEYS: &[&str] = &[
     "retro.claudePath",
     "budget.monthly",
     "context.smartZoneTokens",
+    "alerts.profile",
 ];
 
 #[derive(Serialize)]

@@ -48,6 +48,11 @@ const STATUS: Record<string, Scale> = {
   amber: ACCENTS.find((a) => a.id === "amber")!.scale,
   rose: ACCENTS.find((a) => a.id === "rose")!.scale,
   sky: ["#f0f9ff", "#e0f2fe", "#bae6fd", "#7dd3fc", "#38bdf8", "#0ea5e9", "#0284c7", "#0369a1", "#075985", "#0c4a6e", "#082f49"],
+  // Agent statuses, kept apart from the accent so a green or amber accent
+  // never reads as "working" or "your turn".
+  green: ["#f0fdf4", "#dcfce7", "#bbf7d0", "#86efac", "#4ade80", "#22c55e", "#16a34a", "#15803d", "#166534", "#14532d", "#052e16"],
+  orange: ["#fff7ed", "#ffedd5", "#fed7aa", "#fdba74", "#fb923c", "#f97316", "#ea580c", "#c2410c", "#9a3412", "#7c2d12", "#431407"],
+  violet: ["#f5f3ff", "#ede9fe", "#ddd6fe", "#c4b5fd", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95", "#2e1065"],
 };
 
 export const DENSITIES = [

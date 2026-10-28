@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
-import { api, isWaiting, useLive, type LiveSession, type LiveState, type SessionFilter } from "./api";
+import { Bot, ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
+import { api, isActive, isAwaiting, useLive, type LiveSession, type LiveStatus, type SessionFilter } from "./api";
+import { useProfile } from "./alerts/profile";
+import { useStatusAlerts } from "./alerts/useStatusAlerts";
+import { STATUS } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
 import { SessionDrawer } from "./components/SessionDrawer";
@@ -16,7 +18,7 @@ import Experiments from "./pages/Experiments";
 import Execution from "./pages/Execution";
 import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
-import Live from "./pages/Live";
+import ControlCenter from "./pages/ControlCenter";
 import Teams from "./pages/Teams";
 import Toolkit from "./pages/Toolkit";
 import Journal from "./pages/Journal";
@@ -30,7 +32,7 @@ import Settings from "./pages/Settings";
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "live" | "teams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "control" | "teams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -38,7 +40,8 @@ export type Page = "today" | "experiments" | "execution" | "overview" | "live" |
  * the page.
  */
 const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Page; label: string }[] }[] = [
-  { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }, { page: "live", label: "Live agents" }, { page: "teams", label: "Teams" }] },
+  { id: "agents", label: "Agents", icon: Bot, tabs: [{ page: "control", label: "Control center" }, { page: "teams", label: "Teams" }] },
+  { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }] },
   { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
   { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
   {
@@ -79,7 +82,11 @@ function store(key: string, value: unknown) {
 
 export default function App() {
   const qc = useQueryClient();
-  const [page, setPage] = useState<Page>(() => readStored("page", "today"));
+  // "live" was the control center's id before it replaced the Live page.
+  const [page, setPage] = useState<Page>(() => {
+    const p = readStored<string>("page", "control");
+    return (p === "live" ? "control" : p) as Page;
+  });
   const [planning, setPlanning] = useState(false);
   const [palette, setPalette] = useState(false);
   const group = groupOf(page);
@@ -122,9 +129,14 @@ export default function App() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   // Keep polling while the window is hidden: that is when a notification matters.
   const live = useLive();
-  useWaitingNotifications(live.data?.sessions, settings.data?.values["notify.waiting"] !== "false");
+  const { profile } = useProfile();
+  // Finished sessions move to completedToday; the alerts need to see them arrive there.
+  const tracked = useMemo(() => live.data && [...live.data.sessions, ...live.data.completedToday], [live.data]);
+  useStatusAlerts(tracked, profile, settings.data?.values["notify.waiting"] !== "false");
 
-  const waiting = live.data?.waitingOnYou ?? 0;
+  const awaiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
+  // The badge takes the most urgent waiting status's colour.
+  const urgent = awaiting.some((s) => s.status === "needs_permission") ? STATUS.needs_permission : STATUS.asking;
   const go = (p: Page) => {
     setDrill(null);
     setPage(p);
@@ -152,9 +164,9 @@ export default function App() {
             >
               <Icon size={16} aria-hidden />
               <span className="flex-1">{label}</span>
-              {id === "today" && waiting > 0 && (
-                <span className="rounded-full bg-amber-500/20 px-1.5 text-xs font-semibold text-amber-300" aria-label={`${waiting} waiting on you`}>
-                  {waiting}
+              {id === "agents" && awaiting.length > 0 && (
+                <span className={cx("rounded-full px-1.5 text-xs font-semibold", urgent.bg, urgent.text)} aria-label={`${awaiting.length} awaiting you`}>
+                  {awaiting.length}
                 </span>
               )}
             </button>
@@ -207,7 +219,7 @@ export default function App() {
           {page === "experiments" && <Experiments drill={openSessions} />}
           {page === "execution" && <Execution days={days} setDays={setDays} drill={openSessions} />}
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
-          {page === "live" && <Live onOpen={setOpenSession} />}
+          {page === "control" && <ControlCenter onOpen={setOpenSession} onOpenTeam={openTeam} />}
           {page === "teams" && <Teams onOpen={openTeam} />}
           {page === "toolkit" && <Toolkit days={days} setDays={setDays} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
@@ -241,35 +253,9 @@ export default function App() {
           pages={GROUPS.flatMap((g) => g.tabs.map((t) => ({ page: t.page, label: t.label === g.label ? t.label : `${g.label} › ${t.label}` })))}
         />
       )}
-      <ReviewPrompt sessions={live.data?.sessions} onOpen={setOpenSession} />
+      <ReviewPrompt sessions={tracked} onOpen={setOpenSession} />
     </div>
   );
-}
-
-// Sends a desktop notification when a session starts waiting on the human.
-function useWaitingNotifications(sessions: { id: string; state: LiveState; title: string | null; projectPath: string | null }[] | undefined, enabled: boolean) {
-  const previous = useRef<Map<string, LiveState> | null>(null);
-  useEffect(() => {
-    if (!sessions) return;
-    const now = new Map(sessions.map((s) => [s.id, s.state]));
-    const before = previous.current;
-    previous.current = now;
-    // The first poll establishes a baseline; don't notify for old sessions.
-    if (!before || !enabled) return;
-    const fresh = sessions.filter((s) => isWaiting(s.state) && !isWaiting(before.get(s.id) ?? "idle"));
-    if (fresh.length === 0) return;
-    (async () => {
-      let ok = await isPermissionGranted();
-      if (!ok) ok = (await requestPermission()) === "granted";
-      if (!ok) return;
-      for (const s of fresh.slice(0, 3)) {
-        sendNotification({
-          title: s.state === "needs_you" ? "Agent needs permission" : "Agent is waiting on you",
-          body: `${projectName(s.projectPath)} · ${s.title ?? "Untitled session"}`,
-        });
-      }
-    })().catch(() => {});
-  }, [sessions, enabled]);
 }
 
 const PROMPTS_PER_DAY = 3;
@@ -279,18 +265,18 @@ const PROMPTS_PER_DAY = 3;
  * Never more than three a day, and never for a session already rated.
  */
 function ReviewPrompt({ sessions, onOpen }: { sessions: LiveSession[] | undefined; onOpen: (id: string) => void }) {
-  const previous = useRef<Map<string, LiveState> | null>(null);
+  const previous = useRef<Map<string, LiveStatus> | null>(null);
   const [queue, setQueue] = useState<LiveSession[]>([]);
   useEffect(() => {
     if (!sessions) return;
-    const now = new Map(sessions.map((s) => [s.id, s.state]));
+    const now = new Map(sessions.map((s) => [s.id, s.status]));
     const before = previous.current;
     previous.current = now;
     if (!before) return;
     const finished = sessions.filter((s) => {
       const was = before.get(s.id);
-      const active = was === "working" || was === "quiet" || (was != null && isWaiting(was));
-      return active && (s.state === "ended" || s.state === "idle") && !s.outcome;
+      const active = was != null && (isActive(was) || isAwaiting(was));
+      return active && (s.status === "ended" || s.status === "stale") && !s.outcome;
     });
     if (!finished.length) return;
     const today = new Date().toDateString();

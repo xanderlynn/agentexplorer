@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { CalendarClock, ChevronDown } from "lucide-react";
-import type { AgentStatus, ScheduledWork, SessionRow, Team, TeamAgent, TeamMessage } from "../api";
+import type { ScheduledWork, SessionRow, Team, TeamAgent, TeamMessage } from "../api";
 import { SOURCE_LABEL, ago, compact, dateTime, duration } from "../format";
+import { AGENT_STATUS, STATUS } from "../status";
+import { StatusBadge } from "./status";
 import { Legend, cx } from "./ui";
 
 /** A member of the session's team: you, the lead agent, or a sub-agent. */
@@ -50,13 +52,6 @@ export function roleOf(role: string): [string, string] {
   const words = role.replace(/[-_]/g, " ").replace(/ agent$/i, "");
   return [words.charAt(0).toUpperCase() + words.slice(1), "Custom agent"];
 }
-
-const STATUS: Record<AgentStatus, { label: string; cls: string; mark: string }> = {
-  running: { label: "working", cls: "bg-emerald-500/15 text-emerald-300", mark: "●" },
-  done: { label: "done", cls: "bg-sky-500/15 text-sky-300", mark: "✓" },
-  failed: { label: "failed", cls: "bg-rose-500/15 text-rose-300", mark: "✕" },
-  stopped: { label: "no report", cls: "bg-zinc-700/60 text-zinc-300", mark: "■" },
-};
 
 function members(team: Team, s: SessionRow): Member[] {
   const out: Member[] = [
@@ -161,15 +156,15 @@ export function TeamView({
             peak <span className="text-zinc-100">{peakParallel(agents)}</span> at once
           </span>
         )}
-        {running > 0 && <span className="text-emerald-300">{running} working now</span>}
-        {unreported > 0 && <span className="text-amber-300">{unreported} never reported back</span>}
+        {running > 0 && <span className={STATUS.working.text}>{running} working now</span>}
+        {unreported > 0 && <span className={STATUS.failed.text}>{unreported} never reported back</span>}
         {agentTokens > 0 && (
           <span title="Tokens the sub-agents used, compared with the whole session">
             {compact(agentTokens)} tokens
             {totalTokens > 0 && <span className="text-zinc-500"> · {Math.round((agentTokens / (agentTokens + totalTokens)) * 100)}% of all</span>}
           </span>
         )}
-        {next > 0 && <span className="text-sky-300">{next} scheduled</span>}
+        {next > 0 && <span className={STATUS.scheduled.text}>{next} scheduled</span>}
       </section>
 
       <Roster crew={crew} model={session.model} focus={focus} setFocus={setFocus} />
@@ -188,16 +183,6 @@ function Avatar({ m, size = 28 }: { m: Member; size?: number }) {
       aria-hidden
     >
       {m.label.charAt(0).toUpperCase()}
-    </span>
-  );
-}
-
-function Status({ status }: { status: AgentStatus }) {
-  const st = STATUS[status];
-  return (
-    <span className={cx("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs", st.cls)}>
-      <span aria-hidden className={status === "running" ? "animate-pulse" : undefined}>{st.mark}</span>
-      {st.label}
     </span>
   );
 }
@@ -226,7 +211,7 @@ function Roster({ crew, model, focus, setFocus }: { crew: Member[]; model: strin
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-zinc-100">{m.label}</span>
-                    {a && <Status status={a.status} />}
+                    {a && <StatusBadge token={AGENT_STATUS[a.status]} size="xs" />}
                   </div>
                   <div className="text-xs text-zinc-500">
                     {a && m.label === m.title ? a.role : m.title}
@@ -449,7 +434,7 @@ function Timeline({ crew, session, focus }: { crew: Member[]; session: SessionRo
               </span>
               <span className="relative h-3.5 flex-1 rounded bg-zinc-800/60">
                 <span
-                  className={cx("absolute top-0.5 h-2.5 rounded-sm", a?.status === "running" && "animate-pulse")}
+                  className={cx("absolute top-0.5 h-2.5 rounded-sm", a?.status === "running" && "motion-safe:animate-pulse")}
                   style={{ left: pct(from), width: `max(3px, ${((to - from) / span) * 100}%)`, background: m.color, opacity: m.id === LEAD ? 0.45 : 0.9 }}
                   title={`${m.label}: ${dateTime(from)}${a ? `, ${duration(to - from)}` : ""}`}
                 />
@@ -478,7 +463,7 @@ function Scheduled({ jobs, live, crew }: { jobs: ScheduledWork[]; live: boolean;
           const state = j.cancelled ? "cancelled" : soon ? (j.recurring ? "repeats" : "upcoming") : j.at && j.at <= Date.now() ? "due time passed" : "ended with the session";
           return (
             <li key={j.id ?? i} className="flex items-start gap-2.5 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-              <CalendarClock size={15} className={cx("mt-0.5 shrink-0", soon ? "text-sky-300" : "text-zinc-500")} />
+              <CalendarClock size={15} className={cx("mt-0.5 shrink-0", soon ? STATUS.scheduled.text : "text-zinc-500")} />
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-zinc-200">{j.task || "Untitled job"}</div>
                 <div className="mt-0.5 text-xs text-zinc-500">
@@ -488,7 +473,7 @@ function Scheduled({ jobs, live, crew }: { jobs: ScheduledWork[]; live: boolean;
                   {j.createdAt && ` ${ago(Date.now() - j.createdAt)}`}
                 </div>
               </div>
-              <span className={cx("shrink-0 rounded-md px-1.5 py-0.5 text-xs", soon ? "bg-sky-500/15 text-sky-300" : "bg-zinc-800 text-zinc-400")}>{state}</span>
+              <span className={cx("shrink-0 rounded-md px-1.5 py-0.5 text-xs", soon ? cx(STATUS.scheduled.bg, STATUS.scheduled.text) : "bg-zinc-800 text-zinc-400")}>{state}</span>
             </li>
           );
         })}

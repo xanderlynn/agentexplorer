@@ -1,16 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { CalendarClock } from "lucide-react";
 import { api, type AgentStatus, type TeamSession } from "../api";
+import { StatusDot } from "../components/status";
 import { cronText, roleOf } from "../components/TeamView";
+import { AGENT_STATUS, STATUS } from "../status";
 import { Card, Empty, ErrorNote, Loading, PageHeader, SourceBadge, Stat, cx } from "../components/ui";
 import { ago, compact, dateTime, duration, projectName } from "../format";
-
-const DOT: Record<AgentStatus, string> = {
-  running: "bg-emerald-400 animate-pulse",
-  done: "bg-sky-400",
-  failed: "bg-rose-400",
-  stopped: "bg-zinc-500",
-};
 
 const isLive = (t: TeamSession) => t.team.live;
 
@@ -20,7 +15,13 @@ const isLive = (t: TeamSession) => t.team.live;
  */
 export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
   const q = useQuery({ queryKey: ["teams"], queryFn: api.teams, refetchInterval: 10_000 });
-  if (q.isLoading) return <Loading />;
+  if (q.isLoading)
+    return (
+      <>
+        <PageHeader title="Teams" />
+        <Loading />
+      </>
+    );
   const teams = q.data ?? [];
 
   const working = teams.flatMap((t) => t.team.agents.filter((a) => a.status === "running").map((a) => ({ t, a })));
@@ -63,7 +64,7 @@ export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
                 {working.map(({ t, a }) => (
                   <li key={`${t.id}-${a.id}`}>
                     <button className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-sm hover:bg-zinc-800/40" onClick={() => onOpen(t.id)}>
-                      <span className={cx("h-2 w-2 shrink-0 rounded-full", DOT.running)} aria-hidden />
+                      <StatusDot token={AGENT_STATUS.running} />
                       <span className="shrink-0 text-zinc-100">{a.name ?? roleOf(a.role)[0]}</span>
                       <span className="min-w-0 flex-1 truncate text-zinc-400">{a.task}</span>
                       <span className="shrink-0 text-xs text-zinc-500">
@@ -76,7 +77,7 @@ export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
                 {jobs.map(({ t, j }, i) => (
                   <li key={`${t.id}-job-${i}`}>
                     <button className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-sm hover:bg-zinc-800/40" onClick={() => onOpen(t.id)}>
-                      <CalendarClock size={14} className="shrink-0 text-sky-300" />
+                      <CalendarClock size={14} className={cx("shrink-0", STATUS.scheduled.text)} />
                       <span className="min-w-0 flex-1 truncate text-zinc-300">{j.task || "Scheduled job"}</span>
                       <span className="shrink-0 text-xs text-zinc-500">
                         {j.cron ? cronText(j.cron) : j.at ? `in ${duration(j.at - Date.now())}` : ""} · {t.title ?? projectName(t.projectPath)}
@@ -147,14 +148,16 @@ function TeamRow({ t, onOpen }: { t: TeamSession; onOpen: (id: string) => void }
         </div>
         <div className="flex shrink-0 items-center gap-0.5" aria-label={`${agents.length} agents`}>
           {agents.slice(0, 12).map((a) => (
-            <span key={a.id} className={cx("h-2.5 w-2.5 rounded-full", DOT[a.status])} title={`${a.name ?? roleOf(a.role)[0]}: ${a.task} (${a.status})`} />
+            <span key={a.id} title={`${a.name ?? roleOf(a.role)[0]}: ${a.task}`}>
+              <StatusDot token={AGENT_STATUS[a.status]} />
+            </span>
           ))}
           {agents.length > 12 && <span className="ml-1 text-xs text-zinc-500">+{agents.length - 12}</span>}
         </div>
         <div className="w-36 shrink-0 text-right text-xs text-zinc-400">
           <div className="text-sm text-zinc-200">{agents.length} agent{agents.length === 1 ? "" : "s"}</div>
-          {counts("running") > 0 && <span className="text-emerald-300">{counts("running")} working · </span>}
-          {counts("failed") + counts("stopped") > 0 && <span className="text-amber-300">{counts("failed") + counts("stopped")} no report · </span>}
+          {counts("running") > 0 && <span className={STATUS.working.text}>{counts("running")} working · </span>}
+          {counts("failed") + counts("stopped") > 0 && <span className={STATUS.failed.text}>{counts("failed") + counts("stopped")} no report · </span>}
           {compact(tokens)} tokens
         </div>
       </button>

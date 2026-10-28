@@ -60,6 +60,9 @@ pub struct Agent {
     pub tool_calls: u64,
     pub tokens: u64,
     pub tools: BTreeMap<String, u64>,
+    /// Its latest logged activity; a running agent silent for long is
+    /// probably stuck or gone.
+    pub last_seen: Option<i64>,
     /// The start of its report.
     pub result: Option<String>,
     /// Other ids the logs use for it (tool call id, agent id, name).
@@ -296,6 +299,9 @@ impl Team {
         let Some(a) = self.agent(key) else { return };
         if let Some(f) = first {
             a.started_at = Some(a.started_at.map_or(f, |s| s.min(f)));
+        }
+        if let Some(l) = last {
+            a.last_seen = Some(a.last_seen.map_or(l, |e| e.max(l)));
         }
         if let Some(l) = last
             && a.status != Status::Running

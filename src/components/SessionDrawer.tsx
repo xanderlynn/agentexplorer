@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
+import { Check, Copy, FolderOpen, GitCommitHorizontal, TriangleAlert, X } from "lucide-react";
 import { api, type Mode, type Outcome, type VsManual } from "../api";
 import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, Segmented, SourceBadge } from "./ui";
@@ -343,12 +343,12 @@ export function SessionDrawer({ id, team = false, onClose }: { id: string; team?
 function Score({ label, value, hint }: { label: string; value: number; hint: string }) {
   const color = value >= 4 ? "text-emerald-300" : value >= 3 ? "text-amber-300" : "text-rose-300";
   // A symbol as well as a colour, so the state reads without colour vision.
-  const mark = value >= 4 ? "✓" : value >= 3 ? "!" : "✕";
+  const Mark = value >= 4 ? Check : value >= 3 ? TriangleAlert : X;
   return (
     <div>
       <div className="text-xs uppercase tracking-wide text-zinc-500">{label}</div>
       <div className={`text-lg font-semibold tabular-nums ${color}`}>
-        <span aria-hidden className="mr-1 text-sm">{mark}</span>
+        <Mark size={14} aria-hidden className="mr-1 inline align-[-1px]" />
         {value}
         <span className="text-xs text-zinc-500">/5</span>
       </div>

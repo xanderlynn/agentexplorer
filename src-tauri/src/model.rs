@@ -128,6 +128,10 @@ pub struct ParsedSession {
     pub subagents: u64,
     /// Sub-agents, their messages, and work scheduled for later.
     pub team: crate::team::Team,
+    /// Tool calls the lead started that have no result yet: (call id, tool).
+    pub pending: Vec<(String, String)>,
+    /// The latest turn ended in an error (API error, output limit).
+    pub failed: bool,
     /// Skills used, by name, whether the agent or you invoked them.
     pub skills: BTreeMap<String, u64>,
     /// MCP tool calls per server.
@@ -267,6 +271,7 @@ impl ParsedSession {
     }
 
     pub fn note_turn_end(&mut self, ts: Option<i64>) {
+        self.pending.clear();
         let Some(t) = ts else { return };
         self.last_turn_end = Some(t);
         if let Some(start) = self.turn_start.take()
@@ -277,6 +282,22 @@ impl ParsedSession {
         }
         self.turn_tools.clear();
         self.stretch = None;
+        self.pending.clear();
+    }
+
+    pub fn note_pending(&mut self, id: &str, tool: &str) {
+        self.pending.push((id.to_string(), tool.to_string()));
+    }
+
+    pub fn note_resolved(&mut self, id: &str) {
+        self.pending.retain(|(x, _)| x != id);
+    }
+
+    /// The tool the lead is waiting on, while its turn is still open.
+    pub fn pending_tool(&self) -> Option<&str> {
+        (self.last_event == Some(LastEvent::Working))
+            .then(|| self.pending.last().map(|(_, t)| t.as_str()))
+            .flatten()
     }
 
     /// Ends the open stretch at `end`, recording it as a span (and, when
@@ -293,6 +314,7 @@ impl ParsedSession {
     }
 
     pub fn note_human_prompt(&mut self, ts: Option<i64>) {
+        self.failed = false;
         if let (Some(end), Some(t)) = (self.last_turn_end.take(), ts) {
             let gap = t - end;
             if (0..=WAIT_SAMPLE_CAP_MS).contains(&gap) {

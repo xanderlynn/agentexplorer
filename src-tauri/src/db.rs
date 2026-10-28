@@ -243,6 +243,13 @@ ALTER TABLE sessions ADD COLUMN team TEXT NOT NULL DEFAULT '{}';
     r#"
 ALTER TABLE sessions ADD COLUMN toolkit TEXT NOT NULL DEFAULT '{}';
 "#,
+    // Live status: the tool the lead is waiting on, when its turn began,
+    // and whether the latest turn failed.
+    r#"
+ALTER TABLE sessions ADD COLUMN pending_tool TEXT;
+ALTER TABLE sessions ADD COLUMN turn_started_at INTEGER;
+ALTER TABLE sessions ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -305,6 +312,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "last_context", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "team", "TEXT NOT NULL DEFAULT '{}'"),
     ("sessions", "toolkit", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "pending_tool", "TEXT"),
+    ("sessions", "turn_started_at", "INTEGER"),
+    ("sessions", "failed", "INTEGER NOT NULL DEFAULT 0"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),

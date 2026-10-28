@@ -105,7 +105,10 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 });
                 s.last_event = Some(LastEvent::Working);
             }
-            "assistant.turn_start" => s.last_event = Some(LastEvent::Working),
+            "assistant.turn_start" => {
+                s.last_event = Some(LastEvent::Working);
+                s.failed = false;
+            }
             "assistant.message" => {
                 s.assistant_turns += 1;
                 if !current_model.is_empty() {
@@ -143,6 +146,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 }
                 if let Some(p) = parent {
                     s.team.tool(p, tool);
+                    s.team.span(p, None, ts);
                     // Sub-agent work is reported by subagent.* events; counting
                     // its tool calls here would not match Claude Code's numbers.
                     continue;
@@ -159,12 +163,16 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 let path = d.pointer("/arguments/path").and_then(Value::as_str);
                 if let Some(id) = d.get("toolCallId").and_then(Value::as_str) {
                     s.tool_names.insert(id.to_string(), name.to_string());
+                    s.note_pending(id, name);
                 }
                 s.note_tool(name, path, ts);
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
                 note_team_result(&mut s.team, &reads, d, ts);
+                if let Some(id) = d.get("toolCallId").and_then(Value::as_str) {
+                    s.note_resolved(id);
+                }
                 if d.get("success").and_then(Value::as_bool) == Some(false) {
                     s.tool_errors += 1;
                     let name = d
@@ -176,7 +184,10 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     s.note_tool_error(&name);
                 }
             }
-            "session.error" => s.tool_errors += 1,
+            "session.error" => {
+                s.tool_errors += 1;
+                s.failed = true;
+            }
             "session.compaction_complete" => s.compactions += 1,
             "session.compaction_start" => {
                 let n = |k: &str| d.get(k).and_then(Value::as_u64).unwrap_or(0);

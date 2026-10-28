@@ -1,17 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
-import { api, isWaiting, useLive } from "../api";
+import { ArrowRight, ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
+import { api, isAwaiting, useLive } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
-import { Swimlanes } from "../components/Swimlanes";
+import { StatusBadge } from "../components/status";
+import { STATUS } from "../status";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
 import { InsightItem } from "../components/InsightItem";
 
 /**
- * The landing page: what needs you now, yesterday's sessions to rate in a
- * tap, the experiment you're running, your goals, and your planned tasks.
+ * Planning and review: a pointer to anything awaiting you, recent sessions
+ * to rate in a tap, the experiment you're running, your goals, and your
+ * planned tasks.
  * Decisions, not volume: there are no activity totals here.
  */
 export default function Today({
@@ -31,13 +33,9 @@ export default function Today({
   const goals = useQuery({ queryKey: ["goals"], queryFn: api.goals });
   const intents = useQuery({ queryKey: ["intents"], queryFn: api.intents });
   const insights = useQuery({ queryKey: ["insights", 30], queryFn: () => api.insights(30) });
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  const since = midnight.getTime();
-  const lanes = useQuery({ queryKey: ["timelines", since], queryFn: () => api.timelines(since), refetchInterval: 30_000 });
   const unusual = useQuery({ queryKey: ["anomalies", 14], queryFn: () => api.anomalies(14) });
 
-  const waiting = live.data?.sessions.filter((s) => isWaiting(s.state)) ?? [];
+  const waiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
   const active = exps.data?.filter((e) => e.status === "active") ?? [];
   const open = intents.data?.filter((i) => i.closedAt == null) ?? [];
   const now = new Date();
@@ -56,30 +54,18 @@ export default function Today({
       />
 
       {waiting.length > 0 && (
-        <Card title={`Waiting on you (${waiting.length})`} className="mb-4 border-amber-500/30">
-          <ul className="divide-y divide-zinc-800/70">
-            {waiting.map((s) => (
-              <li key={s.id}>
-                <button className="flex w-full items-start gap-3 py-2 text-left hover:bg-zinc-800/30" onClick={() => onOpen(s.id)}>
-                  <span className={cx("mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full", s.state === "needs_you" ? "bg-rose-400" : "bg-amber-400")} aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-zinc-100">{s.title ?? "Untitled"}</span>
-                    <span className="block text-xs text-zinc-500">
-                      {s.state === "needs_you" ? "Needs permission" : "Your turn"} for {duration(s.ageMs)} · {projectName(s.projectPath)}
-                    </span>
-                    {s.lastMessage && <span className="mt-1 line-clamp-2 block text-xs text-zinc-400">{s.lastMessage}</span>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
-      {lanes.data && lanes.data.length > 0 && (
-        <Card title="Today's agents" className="mb-4">
-          <Swimlanes lanes={lanes.data} since={since} onOpen={onOpen} />
-        </Card>
+        <button
+          onClick={() => go("control")}
+          className={cx("mb-4 flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm ring-1 ring-inset", STATUS.asking.bg, STATUS.asking.ring)}
+        >
+          <StatusBadge status={waiting.some((s) => s.status === "needs_permission") ? "needs_permission" : "asking"} />
+          <span className="flex-1 text-zinc-100">
+            {waiting.length} agent{waiting.length === 1 ? "" : "s"} awaiting you · longest {duration(Math.max(...waiting.map((s) => Date.now() - s.statusSince)))}
+          </span>
+          <span className="inline-flex items-center gap-1 text-xs text-zinc-300">
+            Control center <ArrowRight size={13} aria-hidden />
+          </span>
+        </button>
       )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">

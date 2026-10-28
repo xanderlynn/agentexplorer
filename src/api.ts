@@ -252,14 +252,29 @@ export interface Scorecard {
   }[];
 }
 
-export type LiveState = "working" | "quiet" | "needs_you" | "waiting" | "idle" | "ended";
+/** One status per session; see live.rs `status_for`. */
+export type LiveStatus = "working" | "long_task" | "maybe_blocked" | "needs_permission" | "asking" | "done" | "failed" | "scheduled" | "stale" | "ended";
 
-/** The agent is stopped until you reply or approve something. */
-export const isWaiting = (state: LiveState) => state === "waiting" || state === "needs_you";
+/** The agent is stopped until you reply, approve something, or look at a failure. */
+export const isAwaiting = (s: LiveStatus) => s === "asking" || s === "needs_permission" || s === "maybe_blocked" || s === "failed";
+export const isActive = (s: LiveStatus) => s === "working" || s === "long_task";
 
 /** Live sessions, polled every 5 s. Every caller shares the one poll. */
 export const useLive = () =>
   useQuery({ queryKey: ["live"], queryFn: () => api.live(), refetchInterval: 5000, refetchIntervalInBackground: true, staleTime: 0 });
+
+export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
+
+export interface LiveAgent {
+  id: string;
+  name: string | null;
+  role: string;
+  task: string;
+  status: LiveAgentStatus;
+  startedAt: number | null;
+  lastSeen: number | null;
+  tokens: number;
+}
 
 export interface LiveSession {
   id: string;
@@ -267,19 +282,61 @@ export interface LiveSession {
   title: string | null;
   projectPath: string | null;
   gitBranch: string | null;
-  state: LiveState;
-  ageMs: number;
+  status: LiveStatus;
+  /** When it entered its current status. */
+  statusSince: number;
+  /** Since its latest activity, including sub-agents. */
+  quietMs: number;
+  endedAt: number;
   userTurns: number;
   activeMs: number;
   avgWaitMs: number | null;
   lastMessage: string | null;
+  pendingTool: string | null;
   outcome: Outcome | null;
+  rating: number | null;
   mode: Mode | null;
   context: number;
-  /** Sub-agents still at work: [role or name, task]. */
-  agentsRunning: [string, string][];
-  agentsTotal: number;
+  tokens: number;
+  agents: LiveAgent[];
   scheduled: number;
+  nextRun: number | null;
+}
+
+export interface LiveBucket {
+  start: number;
+  working: number;
+  awaiting: number;
+  done: number;
+}
+
+export interface LiveSummary {
+  sessions: LiveSession[];
+  completedToday: LiveSession[];
+  working: number;
+  awaiting: number;
+  agentsRunning: number;
+  oldestWaitMs: number | null;
+  replyMedianMs: number | null;
+  replyP75Ms: number | null;
+  replyN: number;
+  agentMsToday: number;
+  waitMsToday: number;
+  turnsToday: number;
+  agentsDoneToday: number;
+  agentsFailedToday: number;
+  peakParallelToday: number;
+  buckets: LiveBucket[];
+  /** Your replies today: <1 min, 1–5, 5–15, 15–60, >60 min. */
+  replyHistogram: [number, number, number, number, number];
+  midnight: number;
+}
+
+export interface AlertAsset {
+  id: string;
+  kind: "sound" | "image";
+  mime: string;
+  bytes: number;
 }
 
 export interface TeamSession {
@@ -289,7 +346,6 @@ export interface TeamSession {
   projectPath: string | null;
   startedAt: number | null;
   endedAt: number;
-  state: LiveState;
   /** All tokens the lead used, for the agents' share. */
   tokens: number;
   team: Team;
@@ -322,12 +378,6 @@ export interface Toolkit {
   skills: ToolkitItem[];
 }
 
-export interface LiveSummary {
-  sessions: LiveSession[];
-  working: number;
-  waitingOnYou: number;
-  waitMsToday: number;
-}
 
 export interface Intent {
   id: number;
@@ -757,6 +807,9 @@ export const api = {
 
   settings: () => invoke<Settings>("get_settings"),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+  importAlertAsset: (bytes: Uint8Array) => invoke<AlertAsset>("import_alert_asset", bytes),
+  readAlertAsset: (id: string) => invoke<ArrayBuffer>("read_alert_asset", { id }),
+  deleteAlertAsset: (id: string) => invoke<void>("delete_alert_asset", { id }),
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   clearApiKey: () => invoke<void>("clear_api_key"),
 };
