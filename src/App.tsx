@@ -64,7 +64,7 @@ const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p)
 
 
 /** Queries that show live state and refetch as soon as data changes. */
-const LIVE_QUERIES = new Set(["live", "teams", "timelines", "session"]);
+const LIVE_QUERIES = new Set(["live", "teams", "session"]);
 
 function readStored<T>(key: string, fallback: T): T {
   try {

@@ -1,8 +1,8 @@
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowRight, ChevronDown, Radio, Star, TriangleAlert, X } from "lucide-react";
-import { api, useLive, type LiveSession, type LiveSummary, type Source } from "../api";
+import { api, useLive, type LiveBucket, type LiveSession, type LiveSummary, type Source } from "../api";
 import { StatusAvatar, StatusBadge, TeamStack } from "../components/status";
 import { Swimlanes } from "../components/Swimlanes";
 import { Card, Empty, ErrorNote, Meter, PageHeader, Segmented, SourceBadge, Stat, cx } from "../components/ui";
@@ -60,7 +60,6 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
   // Context past this is flagged on each card.
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
-  const open = (s: LiveSession) => onOpen(s.id);
 
   const header = (
     <PageHeader
@@ -122,7 +121,7 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
           ) : (
             <ul className="space-y-2">
               {awaiting.map((s) => (
-                <AwaitingRow key={s.id} s={s} onOpen={() => open(s)} />
+                <AwaitingRow key={s.id} s={s} onOpen={onOpen} />
               ))}
             </ul>
           )}
@@ -131,24 +130,24 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
         <div className={cx("grid gap-4", focus === "working" || focus === "completed" ? "" : "lg:grid-cols-3")}>
           {show("working") && <Column title="Working" count={working.length} empty="No agent is working right now.">
             {working.map((s) => (
-              <SessionCard key={s.id} s={s} zone={zone} onOpen={() => open(s)} />
+              <SessionCard key={s.id} s={s} zone={zone} onOpen={onOpen} />
             ))}
-            {idle.length > 0 && <IdleFooter sessions={idle} onOpen={open} />}
+            {idle.length > 0 && <IdleFooter sessions={idle} onOpen={onOpen} />}
           </Column>}
           {focus == null && <Column title="Scheduled" count={scheduled.length} empty="Nothing scheduled. Jobs an agent sets up with a cron or wake-up show here.">
             {scheduled.map((s) => (
-              <SessionCard key={s.id} s={s} zone={zone} onOpen={() => open(s)} />
+              <SessionCard key={s.id} s={s} zone={zone} onOpen={onOpen} />
             ))}
           </Column>}
           {show("completed") && <Column title="Completed today" count={completed.length} empty="Nothing finished yet today.">
             {completed.slice(0, 12).map((s) => (
-              <CompletedRow key={s.id} s={s} onOpen={() => open(s)} />
+              <CompletedRow key={s.id} s={s} onOpen={onOpen} />
             ))}
             {completed.length > 12 && <div className="px-1 text-xs text-zinc-500">+{completed.length - 12} more in Sessions</div>}
           </Column>}
         </div>
 
-        <TodayCharts d={d} onOpen={onOpen} />
+        <TodayCharts buckets={d.buckets} replyHistogram={d.replyHistogram} replyN={d.replyN} midnight={d.midnight} onOpen={onOpen} />
       </div>
     </>
   );
@@ -206,14 +205,16 @@ function Kpis({ d, focus, setFocus }: { d: LiveSummary; focus: Focus; setFocus: 
   );
 }
 
-function AwaitingRow({ s, onOpen }: { s: LiveSession; onOpen: () => void }) {
+// Rows, cards and charts skip re-rendering when a poll brings the same data:
+// react-query keeps unchanged parts of the response as the same objects.
+const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; onOpen: (id: string) => void }) {
   const t = STATUS[s.status];
   const note = s.status === "maybe_blocked" && s.pendingTool ? `Waiting on ${s.pendingTool} — check the terminal for a permission prompt.` : s.lastMessage;
   return (
     <li>
       <button
         data-card
-        onClick={onOpen}
+        onClick={() => onOpen(s.id)}
         className={cx("flex w-full items-start gap-3 rounded-xl border bg-zinc-900/60 p-3 text-left ring-1 ring-inset transition-colors hover:bg-zinc-800/50 focus-visible:outline-2 focus-visible:outline-emerald-500", "border-zinc-800", t.ring)}
       >
         <StatusAvatar status={s.status} size={44} />
@@ -239,7 +240,7 @@ function AwaitingRow({ s, onOpen }: { s: LiveSession; onOpen: () => void }) {
       </button>
     </li>
   );
-}
+});
 
 function Column({ title, count, empty, children }: { title: string; count: number; empty: string; children: ReactNode }) {
   return (
@@ -252,10 +253,10 @@ function Column({ title, count, empty, children }: { title: string; count: numbe
   );
 }
 
-function SessionCard({ s, zone, onOpen }: { s: LiveSession; zone: number; onOpen: () => void }) {
+const SessionCard = memo(function SessionCard({ s, zone, onOpen }: { s: LiveSession; zone: number; onOpen: (id: string) => void }) {
   const running = s.agents.filter((a) => a.status === "running" || a.status === "quiet").length;
   return (
-    <button data-card onClick={onOpen} className="block w-full rounded-lg border border-zinc-800 bg-zinc-900/70 p-2.5 text-left hover:border-zinc-700 focus-visible:outline-2 focus-visible:outline-emerald-500">
+    <button data-card onClick={() => onOpen(s.id)} className="block w-full rounded-lg border border-zinc-800 bg-zinc-900/70 p-2.5 text-left hover:border-zinc-700 focus-visible:outline-2 focus-visible:outline-emerald-500">
       <div className="flex items-center justify-between gap-2">
         <StatusBadge status={s.status} size="xs" />
         <span className="text-xs tabular-nums text-zinc-500">
@@ -292,9 +293,9 @@ function SessionCard({ s, zone, onOpen }: { s: LiveSession; zone: number; onOpen
       )}
     </button>
   );
-}
+});
 
-function IdleFooter({ sessions, onOpen }: { sessions: LiveSession[]; onOpen: (s: LiveSession) => void }) {
+function IdleFooter({ sessions, onOpen }: { sessions: LiveSession[]; onOpen: (id: string) => void }) {
   return (
     <details className="group">
       <summary className="flex cursor-pointer list-none items-center gap-1 px-1 text-xs text-zinc-500 hover:text-zinc-300">
@@ -303,7 +304,7 @@ function IdleFooter({ sessions, onOpen }: { sessions: LiveSession[]; onOpen: (s:
       <ul className="mt-1 space-y-0.5">
         {sessions.map((s) => (
           <li key={s.id}>
-            <button data-card onClick={() => onOpen(s)} className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-zinc-800/40 focus-visible:outline-2 focus-visible:outline-emerald-500">
+            <button data-card onClick={() => onOpen(s.id)} className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-zinc-800/40 focus-visible:outline-2 focus-visible:outline-emerald-500">
               <StatusBadge status={s.status} size="xs" label={false} />
               <span className="truncate text-zinc-300">{s.title ?? "Untitled session"}</span>
             </button>
@@ -314,10 +315,10 @@ function IdleFooter({ sessions, onOpen }: { sessions: LiveSession[]; onOpen: (s:
   );
 }
 
-function CompletedRow({ s, onOpen }: { s: LiveSession; onOpen: () => void }) {
+const CompletedRow = memo(function CompletedRow({ s, onOpen }: { s: LiveSession; onOpen: (id: string) => void }) {
   const failed = s.agents.filter((a) => a.status === "failed" || a.status === "stopped").length;
   return (
-    <button data-card onClick={onOpen} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-zinc-800/40 focus-visible:outline-2 focus-visible:outline-emerald-500">
+    <button data-card onClick={() => onOpen(s.id)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-zinc-800/40 focus-visible:outline-2 focus-visible:outline-emerald-500">
       <StatusBadge status={s.status} size="xs" label={false} />
       <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">{s.title ?? "Untitled session"}</span>
       {failed > 0 && <span className="shrink-0 text-xs text-rose-300">{failed} agent{failed > 1 ? "s" : ""} failed</span>}
@@ -333,20 +334,33 @@ function CompletedRow({ s, onOpen }: { s: LiveSession; onOpen: () => void }) {
       </span>
     </button>
   );
-}
+});
 
 const HIST = ["<1m", "1–5m", "5–15m", "15–60m", ">1h"];
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-function TodayCharts({ d, onOpen }: { d: LiveSummary; onOpen: (id: string) => void }) {
-  const lanes = useQuery({ queryKey: ["timelines", d.midnight], queryFn: () => api.timelines(d.midnight) });
-  const series = useMemo(() => d.buckets.map((b) => ({ t: time(b.start), working: b.working, awaiting: b.awaiting })), [d.buckets]);
-  const hist = d.replyHistogram.map((n, i) => ({ bucket: HIST[i], n }));
+const TodayCharts = memo(function TodayCharts({
+  buckets,
+  replyHistogram,
+  replyN,
+  midnight,
+  onOpen,
+}: {
+  buckets: LiveBucket[];
+  replyHistogram: LiveSummary["replyHistogram"];
+  replyN: number;
+  midnight: number;
+  onOpen: (id: string) => void;
+}) {
+  // The day's lanes change slowly; once a minute is plenty.
+  const lanes = useQuery({ queryKey: ["timelines", midnight], queryFn: () => api.timelines(midnight), refetchInterval: 60_000 });
+  const series = useMemo(() => buckets.map((b) => ({ t: time(b.start), working: b.working, awaiting: b.awaiting })), [buckets]);
+  const hist = useMemo(() => replyHistogram.map((n, i) => ({ bucket: HIST[i], n })), [replyHistogram]);
   return (
     <div className="space-y-4">
       <Card title="Today's activity">
         {lanes.data && lanes.data.length > 0 ? (
-          <Swimlanes lanes={lanes.data} since={d.midnight} onOpen={onOpen} />
+          <Swimlanes lanes={lanes.data} since={midnight} onOpen={onOpen} />
         ) : (
           <Empty title="No activity yet today" />
         )}
@@ -367,8 +381,8 @@ function TodayCharts({ d, onOpen }: { d: LiveSummary; onOpen: (id: string) => vo
           </div>
           <p className="mt-1 text-xs text-zinc-500">Solid green: working. Dashed amber: awaiting you. In 15-minute steps.</p>
         </Card>
-        <Card title={`How long you took to reply today (${d.replyN})`}>
-          {d.replyN === 0 ? (
+        <Card title={`How long you took to reply today (${replyN})`}>
+          {replyN === 0 ? (
             <Empty title="No replies yet today" />
           ) : (
             <div className="h-44">
@@ -387,7 +401,7 @@ function TodayCharts({ d, onOpen }: { d: LiveSummary; onOpen: (id: string) => vo
       </div>
     </div>
   );
-}
+});
 
 function Skeleton() {
   return (

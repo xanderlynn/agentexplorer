@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Lane, Mode } from "../api";
 import { MODE_COLOR, MODE_LABEL, SOURCE_COLOR, SPAN_MODE, duration, projectName } from "../format";
 
@@ -9,7 +10,7 @@ export const WAIT_FILL = "repeating-linear-gradient(135deg, var(--color-amber-50
  * across the day, with a "now" line. Shows at a glance when parallel
  * agents were idling on you.
  */
-export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: number; onOpen: (id: string) => void }) {
+export const Swimlanes = memo(function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: number; onOpen: (id: string) => void }) {
   const now = Date.now();
   const start = Math.min(since, ...lanes.flatMap((l) => l.spans.map((s) => s[0])));
   const span = Math.max(1, now - start);
@@ -68,4 +69,4 @@ export function Swimlanes({ lanes, since, onOpen }: { lanes: Lane[]; since: numb
       </div>
     </div>
   );
-}
+});
