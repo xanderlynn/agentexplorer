@@ -552,18 +552,22 @@ fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
         } else {
             dest.join("sub").join(&name)
         };
+        if let Some(parent) = target.parent() {
+            crate::util::create_private_dir(parent)?;
+        }
+        crate::util::restrict_private_if_exists(&target, false)?;
+        if i > 0 {
+            crate::util::restrict_private_if_exists(&target.with_extension("meta.json"), false)?;
+        }
         // Transcripts only grow, so an equal size means nothing new to copy.
         if std::fs::metadata(&target).is_ok_and(|t| t.len() == meta.len()) {
             continue;
         }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(p, &target)?;
+        crate::util::copy_private(p, &target)?;
         // A Claude Code sub-agent's role and task sit in a file beside it.
         let side = p.with_extension("meta.json");
         if i > 0 && side.is_file() {
-            std::fs::copy(side, target.with_extension("meta.json"))?;
+            crate::util::copy_private(&side, &target.with_extension("meta.json"))?;
         }
     }
     Ok(())
@@ -572,6 +576,60 @@ fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_is_owner_only() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let root = tempfile::tempdir().unwrap();
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("session.jsonl");
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).mode(0o644);
+        std::io::Write::write_all(&mut options.open(&source).unwrap(), b"private log").unwrap();
+
+        let unit = Unit {
+            source: Source::ClaudeCode,
+            paths: vec![source],
+        };
+        archive_unit(root.path(), &unit).unwrap();
+        let archive = archive_dir(root.path(), Source::ClaudeCode, &unit.paths[0]);
+        let archived_file = archive.join("session.jsonl");
+
+        assert_eq!(
+            std::fs::metadata(&archive).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(archived_file)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(
+            archive.join("session.jsonl"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        archive_unit(root.path(), &unit).unwrap();
+        assert_eq!(
+            std::fs::metadata(&archive).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(archive.join("session.jsonl"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 
     /// Ingests this machine's real logs into a throwaway database and prints
     /// a summary. Run with `cargo test real_logs -- --ignored --nocapture`.

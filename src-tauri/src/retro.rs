@@ -313,7 +313,7 @@ pub fn generate(
                 anyhow!("Could not find the `claude` CLI. Install Claude Code or set its path in Settings.")
             })?;
             let workdir = data_dir.join("retro-runs");
-            std::fs::create_dir_all(&workdir)?;
+            tilly_core::util::create_private_dir(&workdir)?;
             (
                 run_cli(&bin, &workdir, model.as_deref(), &prepared.prompt)?,
                 model,

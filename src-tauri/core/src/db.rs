@@ -253,10 +253,21 @@ ALTER TABLE sessions ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
+    crate::util::prepare_private_file(path)?;
     let conn = Connection::open(path)?;
     configure(&conn)?;
+    restrict_sqlite_files(path)?;
     migrate(&conn)?;
     Ok(conn)
+}
+
+fn restrict_sqlite_files(path: &Path) -> Result<()> {
+    crate::util::restrict_private_if_exists(path, false)?;
+    let path = path.as_os_str().to_string_lossy();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        crate::util::restrict_private_if_exists(Path::new(&format!("{path}{suffix}")), false)?;
+    }
+    Ok(())
 }
 
 /// A fresh database in memory, for tests.
@@ -414,6 +425,8 @@ pub fn setting_bool(conn: &Connection, key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::path::PathBuf;
 
     #[test]
     fn repair_adds_columns_a_draft_migration_missed() {
@@ -469,5 +482,28 @@ mod tests {
         set_setting(&conn, "a", "1").unwrap();
         set_setting(&conn, "a", "2").unwrap();
         assert_eq!(get_setting(&conn, "a").unwrap().as_deref(), Some("2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_and_sidecars_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let _conn = open(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = PathBuf::from(format!("{}{suffix}", path.display()));
+            if sidecar.exists() {
+                assert_eq!(
+                    std::fs::metadata(sidecar).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
     }
 }

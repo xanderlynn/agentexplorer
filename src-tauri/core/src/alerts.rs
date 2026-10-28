@@ -79,9 +79,11 @@ pub fn import(data_dir: &Path, bytes: &[u8]) -> Result<AlertAsset> {
     let prefix: String = hash.iter().take(8).map(|b| format!("{b:02x}")).collect();
     let id = format!("{prefix}.{ext}");
     let path = path_for(data_dir, &id)?;
-    if !path.is_file() {
-        std::fs::create_dir_all(dir(data_dir))?;
-        std::fs::write(&path, bytes)?;
+    crate::util::create_private_dir(&dir(data_dir))?;
+    if path.is_file() {
+        crate::util::restrict_private_if_exists(&path, false)?;
+    } else {
+        crate::util::write_private(&path, bytes)?;
     }
     Ok(AlertAsset { id, kind })
 }
@@ -122,6 +124,25 @@ mod tests {
 
         delete(dir.path(), &a.id).unwrap();
         assert!(read(dir.path(), &a.id).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reimport_tightens_existing_asset_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+        let asset = import(dir.path(), &png).unwrap();
+        let path = path_for(dir.path(), &asset.id).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        import(dir.path(), &png).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
