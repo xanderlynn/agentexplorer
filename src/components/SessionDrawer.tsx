@@ -7,7 +7,8 @@ import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money
 import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, Segmented, SourceBadge } from "./ui";
 import { TeamView } from "./TeamView";
 
-export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+/** `team` opens it on the Team tab. */
+export function SessionDrawer({ id, team = false, onClose }: { id: string; team?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["session", id], queryFn: () => api.session(id) });
   const playbooks = useQuery({ queryKey: ["playbooks"], queryFn: api.playbooks });
@@ -34,10 +35,10 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
       setTags(q.data.session.tags.filter((t) => !t.startsWith("exp-")).join(", "));
       setVsManual(q.data.session.vsManual);
       // Open on the team while its agents are still at work.
-      setTab(q.data.team.agents.some((a) => a.status === "running") ? "team" : "review");
+      setTab(team || q.data.team.agents.some((a) => a.status === "running") ? "team" : "review");
       setLoadedFor(id);
     }
-  }, [q.data, id, loadedFor]);
+  }, [q.data, id, loadedFor, team]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();

@@ -17,6 +17,7 @@ import Execution from "./pages/Execution";
 import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
 import Live from "./pages/Live";
+import Teams from "./pages/Teams";
 import Journal from "./pages/Journal";
 import Patterns from "./pages/Patterns";
 import Usage from "./pages/Usage";
@@ -28,7 +29,7 @@ import Settings from "./pages/Settings";
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "live" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "live" | "teams" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -36,7 +37,7 @@ export type Page = "today" | "experiments" | "execution" | "overview" | "live" |
  * the page.
  */
 const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Page; label: string }[] }[] = [
-  { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }, { page: "live", label: "Live agents" }] },
+  { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }, { page: "live", label: "Live agents" }, { page: "teams", label: "Teams" }] },
   { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
   { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
   {
@@ -94,6 +95,11 @@ export default function App() {
   }, []);
   const [days, setDays] = useState<number>(() => readStored("days", 30));
   const [openSession, setOpenSession] = useState<string | null>(null);
+  const [teamTab, setTeamTab] = useState(false);
+  const openTeam = (id: string) => {
+    setTeamTab(true);
+    setOpenSession(id);
+  };
   const [drill, setDrill] = useState<Drill | null>(null);
   const openSessions = (d: Drill) => {
     setDrill(d);
@@ -200,6 +206,7 @@ export default function App() {
           {page === "execution" && <Execution days={days} setDays={setDays} drill={openSessions} />}
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
           {page === "live" && <Live onOpen={setOpenSession} />}
+          {page === "teams" && <Teams onOpen={openTeam} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
           {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} drill={openSessions} />}
           {page === "usage" && <Usage days={days} setDays={setDays} drill={openSessions} />}
@@ -211,7 +218,16 @@ export default function App() {
         </div>
       </main>
 
-      {openSession && <SessionDrawer id={openSession} onClose={() => setOpenSession(null)} />}
+      {openSession && (
+        <SessionDrawer
+          id={openSession}
+          team={teamTab}
+          onClose={() => {
+            setOpenSession(null);
+            setTeamTab(false);
+          }}
+        />
+      )}
       {planning && <Preflight onClose={() => setPlanning(false)} />}
       {palette && (
         <CommandPalette

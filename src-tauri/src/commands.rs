@@ -158,6 +158,11 @@ pub fn get_live(state: State<AppState>) -> CmdResult<LiveSummary> {
 }
 
 #[tauri::command]
+pub fn list_teams(state: State<AppState>) -> CmdResult<Vec<live::TeamSession>> {
+    with_db(&state, live::teams)
+}
+
+#[tauri::command]
 pub async fn rescan(state: State<'_, AppState>, force: bool) -> CmdResult<IngestReport> {
     blocking(&state, move |conn, data_dir| {
         Ingestor::new(data_dir).ingest_all(conn, force)

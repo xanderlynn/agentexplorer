@@ -91,6 +91,7 @@ pub fn run() {
             commands::get_session,
             commands::save_review,
             commands::get_live,
+            commands::list_teams,
             commands::rescan,
             commands::get_sources,
             commands::set_source_enabled,

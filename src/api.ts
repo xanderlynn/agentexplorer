@@ -282,6 +282,19 @@ export interface LiveSession {
   scheduled: number;
 }
 
+export interface TeamSession {
+  id: string;
+  source: Source;
+  title: string | null;
+  projectPath: string | null;
+  startedAt: number | null;
+  endedAt: number;
+  state: LiveState;
+  /** All tokens the lead used, for the agents' share. */
+  tokens: number;
+  team: Team;
+}
+
 export interface LiveSummary {
   sessions: LiveSession[];
   working: number;
@@ -677,6 +690,7 @@ export const api = {
   retireGoal: (id: number) => invoke<void>("retire_goal", { id }),
   preflight: (text: string, source: Source | null) => invoke<PreflightAdvice>("preflight", { text, source }),
   live: () => invoke<LiveSummary>("get_live"),
+  teams: () => invoke<TeamSession[]>("list_teams"),
   rescan: (force: boolean) => invoke<IngestReport>("rescan", { force }),
   sources: () => invoke<SourceStatus[]>("get_sources"),
   setSourceEnabled: (source: Source, enabled: boolean) => invoke<void>("set_source_enabled", { source, enabled }),

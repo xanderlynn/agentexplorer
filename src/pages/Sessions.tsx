@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Download, Flag, Search, X } from "lucide-react";
+import { Download, Flag, Search, Users, X } from "lucide-react";
 import type { Drill } from "../App";
 import { api, OUTCOMES, type Outcome, type SessionFilter, type Source } from "../api";
 import { Button, Empty, ErrorNote, Loading, OutcomeBadge, PageHeader, RANGE_OPTIONS, Segmented, SourceBadge, inputBase, inputClass } from "../components/ui";
@@ -132,6 +132,11 @@ export default function Sessions({
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
                       <SourceBadge source={s.source} />
                       <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}{s.category ? ` · ${s.category}` : ""}</span>
+                      {s.subagents > 0 && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-1 text-zinc-300" title="Sub-agents in this session; see its Team tab">
+                          <Users size={11} /> {s.subagents}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="whitespace-nowrap text-zinc-400">{dateTime(s.startedAt)}</td>

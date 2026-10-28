@@ -74,6 +74,52 @@ pub fn team_of(json: &str, last_event: Option<&str>, ended_at: i64) -> Team {
     t
 }
 
+/// A session that had a team: sub-agents or scheduled work.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamSession {
+    pub id: String,
+    pub source: String,
+    pub title: Option<String>,
+    pub project_path: Option<String>,
+    pub started_at: Option<i64>,
+    pub ended_at: i64,
+    pub state: String,
+    pub tokens: i64,
+    pub team: Team,
+}
+
+/// The most recent sessions that had a team, newest first.
+pub fn teams(conn: &Connection) -> Result<Vec<TeamSession>> {
+    let now = now_ms();
+    let mut stmt = conn.prepare(
+        "SELECT id, source, title, project_path, started_at, ended_at, last_event, team,
+                input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+         FROM sessions
+         WHERE json_array_length(team, '$.agents') > 0
+            OR json_array_length(team, '$.scheduled') > 0
+         ORDER BY ended_at DESC LIMIT 100",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            let ended: i64 = r.get(5)?;
+            let last_event: Option<String> = r.get(6)?;
+            Ok(TeamSession {
+                id: r.get(0)?,
+                source: r.get(1)?,
+                title: r.get(2)?,
+                project_path: r.get(3)?,
+                started_at: r.get(4)?,
+                ended_at: ended,
+                state: state_for(last_event.as_deref(), (now - ended).max(0)).to_string(),
+                team: team_of(&r.get::<_, String>(7)?, last_event.as_deref(), ended),
+                tokens: r.get(8)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 pub fn state_for(last_event: Option<&str>, age_ms: i64) -> &'static str {
     match last_event {
         Some("closed") => "ended",
