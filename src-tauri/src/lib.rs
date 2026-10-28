@@ -131,7 +131,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| match event {
+        // `_app` is only used on macOS.
+        .run(|_app, event| match event {
             // Closing the window keeps Governess running in the tray; only
             // Quit (which passes an exit code) ends it.
             tauri::RunEvent::ExitRequested {
@@ -142,7 +143,7 @@ pub fn run() {
             tauri::RunEvent::Reopen {
                 has_visible_windows: false,
                 ..
-            } => background::open_window(app),
+            } => background::open_window(_app),
             _ => {}
         });
 }
