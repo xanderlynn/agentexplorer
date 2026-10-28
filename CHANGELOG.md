@@ -8,6 +8,19 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+The first public release of Tilly. Everything listed under 0.1.0 is included.
+
+### Added
+
+- **What's new.** These release notes in the app: they open once after each update, and the sidebar link shows your version.
+- **Software bill of materials.** Each release lists every component that ships in Tilly, with its license, in `tilly-licenses.md` and in a CycloneDX SBOM (`tilly-sbom.cdx.json`).
+- **Checksums.** Each release has a `SHA256SUMS.txt` for checking your download.
+
+### Security
+
+- Tilly runs `git` in the repositories your sessions worked in. It now stops a repository's own settings from making git run a program.
+- Dependencies are checked against the known-vulnerability databases (RustSec and npm) on every change. None are known to be vulnerable.
+
 ## [0.1.0] - 2026-10-28
 
 The first release of Tilly: a desktop app that keeps your AI coding agents in line and helps you get better at working with them. It reads Claude Code and GitHub Copilot logs (the CLI and Copilot Chat in VS Code) and keeps everything on your computer.
