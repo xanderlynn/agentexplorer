@@ -51,8 +51,9 @@ test("macOS packaging keeps the app parent and bundle metadata", () => {
 test("Windows packaging uses literal paths and a controlled staging directory", () => {
   const plan = packagePlan({ platform: "windows", version: "1.2.3", root: "C:\\repo" });
   assert.equal(plan.executable, "powershell.exe");
-  assert.match(plan.args.join(" "), /Get-ChildItem -LiteralPath/);
-  assert.match(plan.args.join(" "), /Compress-Archive -LiteralPath/);
+  assert.match(plan.scriptContent, /Get-ChildItem -LiteralPath/);
+  assert.match(plan.scriptContent, /Compress-Archive -LiteralPath/);
+  assert.ok(plan.args.includes("-File"));
   assert.match(plan.stagedExecutable, /Tilly\.exe$/);
   assert.match(plan.destination, /Tilly_1\.2\.3_windows-x64-portable\.zip$/);
 });
@@ -109,19 +110,8 @@ test(
       root,
     });
     const extracted = join(root, "extracted");
-    const command =
-      "param([string]$Archive, [string]$Destination); Expand-Archive -LiteralPath $Archive -DestinationPath $Destination";
-    execFileSync("powershell.exe", [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      command,
-      "-Archive",
-      archive,
-      "-Destination",
-      extracted,
-    ]);
+    mkdirSync(extracted);
+    execFileSync("tar.exe", ["-xf", archive, "-C", extracted]);
     assert.equal(readFileSync(join(extracted, "Tilly.exe"), "utf8"), "fixture executable");
   },
 );

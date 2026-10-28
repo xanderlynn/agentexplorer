@@ -4,6 +4,7 @@ import {
   mkdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,24 +38,27 @@ export function packagePlan({ platform, version, root = process.cwd() }) {
   const source = resolve(root, "src-tauri/target/release/tilly.exe");
   const staging = resolve(root, "src-tauri/target/portable/windows-x64");
   const stagedExecutable = join(staging, "Tilly.exe");
-  const command = [
+  const script = resolve(root, "src-tauri/target/portable/package-portable.ps1");
+  const scriptContent = [
     "param([string]$Source, [string]$Destination)",
     "$items = Get-ChildItem -LiteralPath $Source",
     "if (-not $items) { throw 'Portable staging directory is empty' }",
     "Compress-Archive -LiteralPath $items.FullName -DestinationPath $Destination -CompressionLevel Optimal -Force",
-  ].join("; ");
+  ].join("\n");
   return {
     source,
     staging,
     stagedExecutable,
+    script,
+    scriptContent,
     destination,
     executable: "powershell.exe",
     args: [
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",
-      "-Command",
-      command,
+      "-File",
+      script,
       "-Source",
       staging,
       "-Destination",
@@ -80,6 +84,7 @@ export function createPortableArchive(options) {
     rmSync(plan.staging, { recursive: true, force: true });
     mkdirSync(plan.staging, { recursive: true });
     copyFileSync(plan.source, plan.stagedExecutable);
+    writeFileSync(plan.script, plan.scriptContent);
   }
 
   try {
@@ -91,6 +96,7 @@ export function createPortableArchive(options) {
   } finally {
     if (options.platform === "windows") {
       rmSync(plan.staging, { recursive: true, force: true });
+      rmSync(plan.script, { force: true });
     }
   }
 }

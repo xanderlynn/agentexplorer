@@ -76,7 +76,8 @@ pub fn import(data_dir: &Path, bytes: &[u8]) -> Result<AlertAsset> {
     }
     // Named by content, so the same file imported twice is stored once.
     let hash = Sha256::digest(bytes);
-    let id = format!("{}.{ext}", &format!("{hash:x}")[..16]);
+    let prefix: String = hash.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let id = format!("{prefix}.{ext}");
     let path = path_for(data_dir, &id)?;
     if !path.is_file() {
         std::fs::create_dir_all(dir(data_dir))?;
@@ -107,7 +108,7 @@ mod tests {
         let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
         let a = import(dir.path(), &png).unwrap();
         assert_eq!(a.kind, "image");
-        assert!(a.id.ends_with(".png"));
+        assert_eq!(a.id, "7f47b756761a46e6.png");
         // Same bytes, same file.
         assert_eq!(import(dir.path(), &png).unwrap().id, a.id);
         assert_eq!(read(dir.path(), &a.id).unwrap(), png);
