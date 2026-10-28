@@ -52,12 +52,14 @@ Download the latest release from the [Releases page](https://github.com/xanderly
 
 | Platform | File |
 | --- | --- |
-| macOS 11 or later, Apple Silicon and Intel | `Tilly_<version>_universal.dmg` |
-| Windows 10 and 11, x64 | `Tilly_<version>_x64-setup.exe` (or `…_x64_en-US.msi` for managed installs) |
+| macOS 11 or later, Apple Silicon and Intel | `Tilly_<version>_universal.dmg`, or `Tilly_<version>_macos-universal-portable.zip` |
+| Windows 10 and 11, x64 | `Tilly_<version>_x64-setup.exe` (or `…_x64_en-US.msi` for managed installs), or `Tilly_<version>_windows-x64-portable.zip` |
 
 Each release lists SHA-256 checksums in `SHA256SUMS.txt`; check a download with `shasum -a 256 <file>` (macOS) or `Get-FileHash <file>` (Windows).
 
-Until the installers are code-signed, the OS warns on first launch. On macOS, right-click Tilly in Applications and choose **Open**, then **Open** again. On Windows, choose **More info → Run anyway**.
+For a portable install, unzip the archive before running it. On macOS, move `Tilly.app` wherever you want and open it; keep the bundle intact. On Windows, run `Tilly.exe` from the extracted folder. The Windows portable build uses the system Microsoft Edge WebView2 runtime, which is included with current Windows 10 and 11 installations; if it has been removed, install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) first. Portable builds still store settings and the database in the normal per-user app-data directory described under **Privacy**; they do not keep user data beside the executable.
+
+Until the downloads are code-signed, the OS warns on first launch. This applies to both installers and portable archives. On macOS, right-click Tilly and choose **Open**, then **Open** again. On Windows, choose **More info → Run anyway**. Extract the archive before bypassing the warning rather than running Tilly from inside the ZIP.
 
 Tilly lives in the menu bar (macOS) or the system tray (Windows). Closing the window keeps it running so it can alert you; choose **Quit Tilly** from the tray menu to stop it.
 
@@ -120,9 +122,9 @@ npm run release -- 0.2.0          # moves Unreleased notes under 0.2.0, bumps ev
 git push && git push origin v0.2.0
 ```
 
-The script refuses to release with no notes under Unreleased. The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and the Windows `-setup.exe` and `.msi` into a **draft** GitHub Release, then adds `SHA256SUMS.txt` and uses the version's CHANGELOG section as the release notes. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
+The script refuses to release with no notes under Unreleased. The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and portable `.app` ZIP, plus the Windows `-setup.exe`, `.msi`, and portable executable ZIP, into a **draft** GitHub Release. It then adds every download to `SHA256SUMS.txt` and uses the version's CHANGELOG section as the release notes. The macOS ZIP is created with `ditto` so bundle permissions, symlinks, and resource metadata are preserved. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
 
-Every push to `main` also builds installers as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
+Every push to `main` also builds installers and portable archives as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
 
 **Signing.** macOS signing and notarization turn on by themselves once these repository secrets exist: `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and `APPLE_TEAM_ID`. They need an Apple Developer account. For Windows, Azure Trusted Signing is the low-cost option; see the [Tauri signing guides](https://tauri.app/distribute/sign/macos/) for both.
 

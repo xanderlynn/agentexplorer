@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check:licenses": "node scripts/check-licenses.mjs",
+    "test:portable": "node --test scripts/package-portable.test.mjs",
     "release": "node scripts/release.mjs"
   },
   "dependencies": {

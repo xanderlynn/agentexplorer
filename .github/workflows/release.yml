@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag like v0.2.0 (see scripts/release.mjs) builds the macOS and
-# Windows installers into a draft GitHub Release, then adds checksums and
+# Windows installers and portable archives into a draft GitHub Release, then adds checksums and
 # the version's notes from CHANGELOG.md. Review the draft, then publish it.
 on:
   push:
@@ -25,10 +25,14 @@ jobs:
             os: macos-latest
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin
+            portable-platform: macos
+            portable-target: macos-universal
           - name: Windows x64
             os: windows-latest
             rust-targets: x86_64-pc-windows-msvc
             args: ""
+            portable-platform: windows
+            portable-target: windows-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -97,6 +101,18 @@ jobs:
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
 
+      - name: Package and upload portable archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PORTABLE_PLATFORM: ${{ matrix.portable-platform }}
+          PORTABLE_TARGET: ${{ matrix.portable-target }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          node scripts/package-portable.mjs --platform "$PORTABLE_PLATFORM" --version "$version"
+          archive="artifacts/Tilly_${version}_${PORTABLE_TARGET}-portable.zip"
+          gh release upload "$GITHUB_REF_NAME" "$archive" --clobber
+
   finish:
     name: Checksums and notes
     needs: build
@@ -120,8 +136,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd assets
-          gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe'
-          sha256sum * > SHA256SUMS.txt
+          gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe' --pattern '*.zip'
+          sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           gh release upload "$GITHUB_REF_NAME" tilly-sbom.cdx.json tilly-licenses.md SHA256SUMS.txt --clobber
 
@@ -139,8 +155,8 @@ jobs:
             echo ""
             echo "| Platform | File |"
             echo "| --- | --- |"
-            echo "| macOS 11 or later (Apple Silicon and Intel) | \`Tilly_${version}_universal.dmg\` |"
-            echo "| Windows 10 and 11 (x64) | \`Tilly_${version}_x64-setup.exe\` (or the \`.msi\` for managed installs) |"
+            echo "| macOS 11 or later (Apple Silicon and Intel) | \`Tilly_${version}_universal.dmg\` or \`Tilly_${version}_macos-universal-portable.zip\` |"
+            echo "| Windows 10 and 11 (x64) | \`Tilly_${version}_x64-setup.exe\`, the \`.msi\` for managed installs, or \`Tilly_${version}_windows-x64-portable.zip\` |"
             echo ""
             echo "Check a download against \`SHA256SUMS.txt\` with \`shasum -a 256 <file>\` (macOS) or \`Get-FileHash <file>\` (Windows)."
             echo ""
