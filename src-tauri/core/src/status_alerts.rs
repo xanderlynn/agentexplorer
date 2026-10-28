@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::live::LiveSession;
+use crate::live::{LiveSession, LiveStatus};
+use crate::team::AgentLiveStatus;
 
 pub const PROFILE_KEY: &str = "alerts.profile";
 
@@ -72,10 +73,10 @@ pub struct Alert {
 }
 
 struct Seen {
-    status: String,
+    status: LiveStatus,
     /// A new status seen, and since when; announced once it has held.
-    pending: Option<(String, Instant)>,
-    agents: HashMap<String, String>,
+    pending: Option<(LiveStatus, Instant)>,
+    agents: HashMap<String, AgentLiveStatus>,
     last_seen: Instant,
 }
 
@@ -100,11 +101,8 @@ impl Tracker {
         let map = self.seen.get_or_insert_with(HashMap::new);
         let mut out = vec![];
         for s in sessions {
-            let agents: HashMap<String, String> = s
-                .agents
-                .iter()
-                .map(|a| (a.id.clone(), a.status.clone()))
-                .collect();
+            let agents: HashMap<String, AgentLiveStatus> =
+                s.agents.iter().map(|a| (a.id.clone(), a.status)).collect();
             let alert = |key: &str, agent: Option<String>| Alert {
                 key: key.to_string(),
                 session_id: s.id.clone(),
@@ -115,12 +113,8 @@ impl Tracker {
             let Some(prev) = map.get_mut(&s.id).filter(|_| !first) else {
                 // Unseen after the baseline: it comes from idle, so one that
                 // appears already waiting on you still alerts.
-                let status = if first {
-                    s.status.clone()
-                } else {
-                    "stale".into()
-                };
-                let pending = (!first && s.status != "stale").then(|| (s.status.clone(), now));
+                let status = if first { s.status } else { LiveStatus::Stale };
+                let pending = (!first && s.status != LiveStatus::Stale).then_some((s.status, now));
                 map.insert(
                     s.id.clone(),
                     Seen {
@@ -139,26 +133,33 @@ impl Tracker {
                 match &prev.pending {
                     Some((p, since)) if *p == s.status => {
                         if now.duration_since(*since) >= CONFIRM_AFTER {
-                            prev.status = s.status.clone();
+                            prev.status = s.status;
                             prev.pending = None;
-                            out.push(alert(&s.status, None));
+                            out.push(alert(s.status.as_str(), None));
                         }
                     }
-                    _ => prev.pending = Some((s.status.clone(), now)),
+                    _ => prev.pending = Some((s.status, now)),
                 }
             }
             for a in &s.agents {
-                let was = prev.agents.get(&a.id).map(String::as_str);
-                if was == Some(a.status.as_str())
-                    || matches!(was, Some("done" | "failed" | "stopped"))
+                let was = prev.agents.get(&a.id).copied();
+                if was == Some(a.status)
+                    || matches!(
+                        was,
+                        Some(
+                            AgentLiveStatus::Done
+                                | AgentLiveStatus::Failed
+                                | AgentLiveStatus::Stopped
+                        )
+                    )
                 {
                     continue;
                 }
                 let who = a.name.clone().unwrap_or_else(|| a.role.clone());
-                match a.status.as_str() {
-                    "done" => out.push(alert("agent_done", Some(who))),
+                match a.status {
+                    AgentLiveStatus::Done => out.push(alert("agent_done", Some(who))),
                     // Stopped means the session ended without a report, not a failure.
-                    "failed" => out.push(alert("agent_failed", Some(who))),
+                    AgentLiveStatus::Failed => out.push(alert("agent_failed", Some(who))),
                     _ => {}
                 }
             }
@@ -338,7 +339,10 @@ mod tests {
     fn s(id: &str, status: &str) -> LiveSession {
         LiveSession {
             id: id.into(),
-            status: status.into(),
+            status: LiveStatus::ALL
+                .into_iter()
+                .find(|x| x.as_str() == status)
+                .unwrap(),
             ..Default::default()
         }
     }
@@ -388,11 +392,11 @@ mod tests {
         let mut with = s("b", "needs_permission");
         with.agents = vec![LiveAgent {
             id: "x".into(),
-            status: "running".into(),
+            status: AgentLiveStatus::Running,
             ..Default::default()
         }];
         t.update_at([with.clone()].iter(), t0 + Duration::from_secs(6));
-        with.agents[0].status = "failed".into();
+        with.agents[0].status = AgentLiveStatus::Failed;
         let out = t.update_at([with].iter(), t0 + Duration::from_secs(7));
         assert_eq!(out[0].key, "agent_failed");
     }

@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import type { AlertProfile, SoundChoice } from "./alerts/profile";
 
-export type Source = "claude_code" | "copilot_cli" | "copilot_vscode";
+import type { LiveAgentStatus, LiveStatus, Source } from "./generated";
+export type { LiveAgentStatus, LiveStatus, Source };
 export type Outcome = "shipped" | "partial" | "abandoned" | "redo";
 export const OUTCOMES: Outcome[] = ["shipped", "partial", "abandoned", "redo"];
 
@@ -255,8 +256,6 @@ export interface Scorecard {
   }[];
 }
 
-/** One status per session; see live.rs `status_for`. */
-export type LiveStatus = "working" | "long_task" | "maybe_blocked" | "needs_permission" | "asking" | "done" | "failed" | "scheduled" | "stale" | "ended";
 
 
 /**
@@ -266,7 +265,6 @@ export type LiveStatus = "working" | "long_task" | "maybe_blocked" | "needs_perm
  */
 export const useLive = () => useQuery({ queryKey: ["live"], queryFn: () => api.live(), staleTime: Infinity });
 
-export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
 
 export interface LiveAgent {
   id: string;
