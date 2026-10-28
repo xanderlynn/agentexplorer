@@ -110,7 +110,7 @@ fn restrict_private(path: &Path, directory: bool) -> std::io::Result<()> {
 #[cfg(windows)]
 fn restrict_private(path: &Path, directory: bool) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use std::ptr::{null, null_mut};
+    use std::ptr::null_mut;
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
