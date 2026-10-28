@@ -2,7 +2,7 @@ import type { Lane, Mode } from "../api";
 import { MODE_COLOR, MODE_LABEL, SOURCE_COLOR, SPAN_MODE, duration, projectName } from "../format";
 
 /** Waiting on you is hatched as well as amber, so it reads without colour. */
-const WAIT_FILL = "repeating-linear-gradient(135deg, var(--color-amber-500) 0 3px, color-mix(in oklab, var(--color-amber-500) 35%, transparent) 3px 6px)";
+export const WAIT_FILL = "repeating-linear-gradient(135deg, var(--color-amber-500) 0 3px, color-mix(in oklab, var(--color-amber-500) 35%, transparent) 3px 6px)";
 
 /**
  * One lane per session: agent work coloured by mode, and waiting on you (amber)

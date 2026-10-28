@@ -110,6 +110,8 @@ export interface SessionDetail {
   }[];
   intent: { id: number; goal: string; expectedMinutes: number; confidence: number; outcome: Outcome | null } | null;
   team: Team;
+  /** The lead's [start, end, kind] spans: 0 waiting on you, else a mode. */
+  timeline: [number, number, number][];
 }
 
 /** "you" and "lead" are the two members every session has; agents use their own ids. */

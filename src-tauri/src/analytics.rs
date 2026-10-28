@@ -395,6 +395,8 @@ pub struct SessionDetail {
     pub playbooks: Vec<SessionPlaybook>,
     pub intent: Option<LinkedIntent>,
     pub team: crate::team::Team,
+    /// The lead's (start, end, kind) spans: 0 waiting on you, else a mode.
+    pub timeline: Vec<(i64, i64, u8)>,
 }
 
 pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
@@ -413,12 +415,13 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         tool_errors_by: String,
         tool_vetoes: String,
         team: crate::team::Team,
+        timeline: String,
     }
     let x = conn.query_row(
         "SELECT file_path, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, lines_added, lines_removed, notes, tool_counts,
                 last_message, external_id, tool_errors_by, tool_vetoes, team, last_event,
-                ended_at
+                ended_at, timeline
          FROM sessions WHERE id = ?1",
         [id],
         |r| {
@@ -437,6 +440,7 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
                     r.get::<_, Option<String>>(14)?.as_deref(),
                     r.get(15)?,
                 ),
+                timeline: r.get(16)?,
             })
         },
     )?;
@@ -523,6 +527,7 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         playbooks,
         intent,
         team: x.team,
+        timeline: serde_json::from_str(&x.timeline).unwrap_or_default(),
     })
 }
 

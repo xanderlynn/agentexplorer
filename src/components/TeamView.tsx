@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { CalendarClock, ChevronDown } from "lucide-react";
-import type { ScheduledWork, SessionRow, Team, TeamAgent, TeamMessage } from "../api";
-import { SOURCE_LABEL, agentName, ago, compact, cronText, dateTime, duration, roleOf, upcoming } from "../format";
+import type { Mode, ScheduledWork, SessionRow, Team, TeamAgent, TeamMessage } from "../api";
+import { MODE_COLOR, MODE_LABEL, SOURCE_LABEL, SPAN_MODE, agentName, ago, compact, cronText, dateTime, duration, roleOf, upcoming } from "../format";
 import { AGENT_STATUS, STATUS } from "../status";
 import { StatusBadge } from "./status";
+import { WAIT_FILL } from "./Swimlanes";
 import { Legend, cx } from "./ui";
 
 /** A member of the session's team: you, the lead agent, or a sub-agent. */
@@ -79,64 +80,105 @@ function peakParallel(agents: TeamAgent[]): number {
   return peak;
 }
 
+/**
+ * The left column of the session view: the team at a glance, one timeline
+ * of the lead's work (and waits on you) with each sub-agent below it, then
+ * the roster and the hand-off flow, folded.
+ */
 export function TeamView({
   team,
   session,
   prompts,
   totalTokens,
+  spans,
 }: {
   team: Team;
   session: SessionRow;
   prompts: { ts: number | null; text: string }[];
   totalTokens: number;
+  /** The lead's [start, end, kind] spans: 0 waiting on you, else a mode. */
+  spans: [number, number, number][];
 }) {
   const crew = useMemo(() => members(team, session), [team, session]);
   const [focus, setFocus] = useState<string | null>(null);
-
-  if (team.agents.length === 0 && team.scheduled.length === 0) {
-    return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 text-sm text-zinc-400">
-        <div className="mb-1 font-medium text-zinc-200">The lead worked alone</div>
-        No sub-agents were started and nothing was scheduled. Handing independent research, reviews or test runs to sub-agents keeps the lead's context small and lets the work run in parallel.
-      </div>
-    );
-  }
-
   const agents = team.agents;
-  const running = agents.filter((a) => a.status === "running").length;
   const unreported = agents.filter((a) => a.status === "failed" || a.status === "stopped").length;
   const agentTokens = agents.reduce((n, a) => n + a.tokens, 0);
-  const next = team.scheduled.filter((j) => upcoming(j, team.live)).length;
-  const roles = [...new Set(crew.slice(2).map((m) => m.title))];
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-zinc-400">
-        <span>
-          <span className="text-zinc-100">{agents.length}</span> agent{agents.length === 1 ? "" : "s"}
-          {roles.length > 0 && <span className="text-zinc-500"> · {roles.join(", ")}</span>}
-        </span>
-        {agents.length > 1 && (
-          <span>
-            peak <span className="text-zinc-100">{peakParallel(agents)}</span> at once
+    <div className="space-y-4">
+      <section>
+        <h3 className="mb-2 flex flex-wrap items-baseline gap-x-3 text-sm font-medium text-zinc-200">
+          Team
+          <span className="text-xs font-normal text-zinc-500">
+            {agents.length === 0
+              ? "the lead worked alone"
+              : [
+                  `${agents.length} agent${agents.length === 1 ? "" : "s"}`,
+                  agents.length > 1 && `peak ${peakParallel(agents)} at once`,
+                  unreported > 0 && `${unreported} never reported back`,
+                  agentTokens > 0 && `${compact(agentTokens)} tokens${totalTokens > 0 ? ` (${Math.round((agentTokens / (agentTokens + totalTokens)) * 100)}%)` : ""}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
           </span>
-        )}
-        {running > 0 && <span className={STATUS.working.text}>{running} working now</span>}
-        {unreported > 0 && <span className={STATUS.failed.text}>{unreported} never reported back</span>}
-        {agentTokens > 0 && (
-          <span title="Tokens the sub-agents used, compared with the whole session">
-            {compact(agentTokens)} tokens
-            {totalTokens > 0 && <span className="text-zinc-500"> · {Math.round((agentTokens / (agentTokens + totalTokens)) * 100)}% of all</span>}
-          </span>
-        )}
-        {next > 0 && <span className={STATUS.scheduled.text}>{next} scheduled</span>}
+        </h3>
+        {agents.length > 0 && <Chips crew={crew} focus={focus} setFocus={setFocus} />}
       </section>
 
-      <Roster crew={crew} model={session.model} focus={focus} setFocus={setFocus} />
-      {agents.length > 0 && <Flow crew={crew} team={team} prompts={prompts} focus={focus} setFocus={setFocus} />}
-      {agents.some((a) => a.startedAt != null) && <Timeline crew={crew} session={session} focus={focus} />}
+      <Timeline crew={crew} session={session} spans={spans} focus={focus} />
+
+      {agents.length > 0 && (
+        <Fold title="Roster: briefs, reports and tools">
+          <Roster crew={crew} model={session.model} focus={focus} setFocus={setFocus} />
+        </Fold>
+      )}
+      {agents.length > 0 && (
+        <Fold title={`How they worked together (${team.messages.length} hand-offs, reports and messages)`}>
+          <Flow crew={crew} team={team} prompts={prompts} focus={focus} setFocus={setFocus} />
+        </Fold>
+      )}
       {team.scheduled.length > 0 && <Scheduled jobs={team.scheduled} live={team.live} crew={crew} />}
     </div>
+  );
+}
+
+/** A section that starts folded. */
+export function Fold({ title, children, open }: { title: string; children: ReactNode; open?: boolean }) {
+  return (
+    <details className="group rounded-lg border border-zinc-800/80" open={open}>
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-sm text-zinc-300 hover:text-zinc-100">
+        <ChevronDown size={14} className="-rotate-90 transition-transform group-open:rotate-0" aria-hidden /> {title}
+      </summary>
+      <div className="border-t border-zinc-800/80 p-3">{children}</div>
+    </details>
+  );
+}
+
+/** Each sub-agent as one chip: status, name, task. */
+function Chips({ crew, focus, setFocus }: { crew: Member[]; focus: string | null; setFocus: (id: string | null) => void }) {
+  return (
+    <ul className="flex flex-wrap gap-1.5">
+      {crew
+        .filter((m) => m.agent)
+        .map((m) => {
+          const t = AGENT_STATUS[m.agent!.status];
+          const Icon = t.icon;
+          return (
+            <li
+              key={m.id}
+              onMouseEnter={() => setFocus(m.id)}
+              onMouseLeave={() => setFocus(null)}
+              className={cx("flex max-w-xs items-center gap-1.5 rounded-md border px-2 py-1 text-xs", focus === m.id ? "border-zinc-500" : "border-zinc-800")}
+              title={`${m.label} (${m.title}) · ${t.label}: ${m.agent!.task}`}
+            >
+              <Icon size={13} className={t.text} aria-label={t.label} />
+              <span className="shrink-0 text-zinc-100">{m.label}</span>
+              <span className="truncate text-zinc-500">{m.agent!.task}</span>
+            </li>
+          );
+        })}
+    </ul>
   );
 }
 
@@ -156,7 +198,6 @@ function Roster({ crew, model, focus, setFocus }: { crew: Member[]; model: strin
   const byId = new Map(crew.map((m) => [m.id, m]));
   return (
     <section>
-      <h3 className="mb-2 text-sm font-medium text-zinc-200">The team</h3>
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {crew.map((m) => {
           const a = m.agent;
@@ -287,7 +328,7 @@ function Flow({
   return (
     <section>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-medium text-zinc-200">How they worked together</h3>
+        <span className="text-xs text-zinc-500">One row per hand-off, report or message, in order.</span>
         <label className="flex items-center gap-1.5 text-xs text-zinc-400">
           <input type="checkbox" className="accent-emerald-500" checked={withPrompts} onChange={(e) => setWithPrompts(e.target.checked)} />
           Show your prompts ({prompts.length})
@@ -378,40 +419,67 @@ function Flow({
 }
 
 /** When each member was at work, on the session's clock. */
-function Timeline({ crew, session, focus }: { crew: Member[]; session: SessionRow; focus: string | null }) {
+/**
+ * One clock for the whole session: the lead's bar shows its working
+ * stretches (by mode) and its waits on you (hatched); each sub-agent's bar
+ * sits below it.
+ */
+function Timeline({ crew, session, spans, focus }: { crew: Member[]; session: SessionRow; spans: [number, number, number][]; focus: string | null }) {
   const agents = crew.filter((m) => m.agent?.startedAt != null);
-  const start = Math.min(session.startedAt ?? Infinity, ...agents.map((m) => m.agent!.startedAt!));
-  const end = Math.max(session.endedAt ?? 0, ...agents.map((m) => m.agent!.endedAt ?? Date.now()));
-  const span = Math.max(1, end - start);
+  const start = Math.min(session.startedAt ?? Infinity, ...spans.map((x) => x[0]), ...agents.map((m) => m.agent!.startedAt!));
+  const end = Math.max(session.endedAt ?? 0, ...spans.map((x) => x[1]), ...agents.map((m) => m.agent!.endedAt ?? Date.now()));
+  if (!Number.isFinite(start) || end <= start) return null;
+  const span = end - start;
   const pct = (t: number) => `${((t - start) / span) * 100}%`;
+  const width = (a: number, b: number) => `max(2px, ${((b - a) / span) * 100}%)`;
+  const waited = spans.filter((x) => x[2] === 0).reduce((n, x) => n + x[1] - x[0], 0);
   return (
     <section>
-      <h3 className="mb-2 text-sm font-medium text-zinc-200">When each one worked</h3>
+      <h3 className="mb-2 flex items-baseline gap-3 text-sm font-medium text-zinc-200">
+        Timeline
+        <span className="text-xs font-normal text-zinc-500">
+          {duration(span)} · {waited > 0 ? `${duration(waited)} waiting on you` : "never waited on you"}
+        </span>
+      </h3>
       <ul className="space-y-1">
-        {[crew[1], ...agents].map((m) => {
-          const a = m.agent;
-          const from = a?.startedAt ?? start;
-          const to = a ? (a.endedAt ?? (a.status === "running" ? Date.now() : from)) : end;
+        <li className={cx("flex items-center gap-2", focus && focus !== LEAD && "opacity-40")}>
+          <span className="w-24 shrink-0 truncate text-xs text-zinc-300">Lead</span>
+          <span className="relative h-3.5 flex-1 rounded bg-zinc-800/60">
+            {spans.map(([a, b, k], i) => (
+              <span
+                key={i}
+                className="absolute top-0.5 h-2.5 rounded-sm"
+                style={{ left: pct(a), width: width(a, b), background: k === 0 ? WAIT_FILL : MODE_COLOR[SPAN_MODE[k] as Mode] }}
+                title={`${k === 0 ? "Waiting on you" : MODE_LABEL[SPAN_MODE[k] as Mode]}: ${duration(b - a)}`}
+              />
+            ))}
+          </span>
+          <span className="w-12 shrink-0" />
+        </li>
+        {agents.map((m) => {
+          const a = m.agent!;
+          const from = a.startedAt!;
+          const to = a.endedAt ?? (a.status === "running" ? Date.now() : from);
           return (
             <li key={m.id} className={cx("flex items-center gap-2", focus && focus !== m.id && "opacity-40")}>
-              <span className="w-32 shrink-0 truncate text-xs text-zinc-300" style={{ paddingLeft: Math.max(0, m.depth - 1) * 10 }}>
+              <span className="w-24 shrink-0 truncate text-xs text-zinc-300" style={{ paddingLeft: Math.max(0, m.depth - 1) * 10 }}>
                 {m.label}
               </span>
               <span className="relative h-3.5 flex-1 rounded bg-zinc-800/60">
                 <span
-                  className={cx("absolute top-0.5 h-2.5 rounded-sm", a?.status === "running" && "motion-safe:animate-pulse")}
-                  style={{ left: pct(from), width: `max(3px, ${((to - from) / span) * 100}%)`, background: m.color, opacity: m.id === LEAD ? 0.45 : 0.9 }}
-                  title={`${m.label}: ${dateTime(from)}${a ? `, ${duration(to - from)}` : ""}`}
+                  className={cx("absolute top-0.5 h-2.5 rounded-sm", a.status === "running" && "motion-safe:animate-pulse")}
+                  style={{ left: pct(from), width: width(from, to), background: m.color }}
+                  title={`${m.label}: ${dateTime(from)}, ${duration(to - from)}`}
                 />
               </span>
-              <span className="w-12 shrink-0 text-right text-xs tabular-nums text-zinc-500">{a ? duration(to - from) : ""}</span>
+              <span className="w-12 shrink-0 text-right text-xs tabular-nums text-zinc-500">{duration(to - from)}</span>
             </li>
           );
         })}
       </ul>
-      <div className="mt-1 flex justify-between pl-[8.5rem] pr-14 text-[11px] text-zinc-500">
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 pl-[6.5rem] text-[11px] text-zinc-500">
         <span>{dateTime(start)}</span>
-        <span>{duration(span)}</span>
+        <Legend items={[...(Object.keys(MODE_LABEL) as Mode[]).map((k) => [MODE_LABEL[k], MODE_COLOR[k]] as [string, string]), ["waiting on you", WAIT_FILL]]} />
       </div>
     </section>
   );

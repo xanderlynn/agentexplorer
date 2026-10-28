@@ -133,7 +133,7 @@ export default function Sessions({
                       <SourceBadge source={s.source} />
                       <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}{s.category ? ` · ${s.category}` : ""}</span>
                       {s.subagents > 0 && (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-1 text-zinc-300" title="Sub-agents in this session; see its Team tab">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-1 text-zinc-300" title="Sub-agents in this session">
                           <Users size={11} /> {s.subagents}
                         </span>
                       )}

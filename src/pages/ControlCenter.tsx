@@ -52,7 +52,7 @@ function Until({ to }: { to: number }) {
  * The live control center: what needs you, what is running, what finished
  * today, and how today's work between you and your agents is going.
  */
-export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: string) => void; onOpenTeam: (id: string) => void }) {
+export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void }) {
   const q = useLive();
   const [tool, setTool] = useState<ToolFilter>("all");
   const [teamsOnly, setTeamsOnly] = useState(false);
@@ -60,7 +60,7 @@ export default function ControlCenter({ onOpen, onOpenTeam }: { onOpen: (id: str
   // Context past this is flagged on each card.
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const zone = Number(settings.data?.values["context.smartZoneTokens"]) || SMART_ZONE_DEFAULT;
-  const open = (s: LiveSession) => (s.agents.length ? onOpenTeam(s.id) : onOpen(s.id));
+  const open = (s: LiveSession) => onOpen(s.id);
 
   const header = (
     <PageHeader

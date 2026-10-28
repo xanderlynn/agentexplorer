@@ -8,7 +8,7 @@ import { agentName, ago, compact, cronText, dateTime, duration, projectName, rol
 
 /**
  * Every session that worked as a team: who is at work right now, what is
- * scheduled, and recent teams with their roles. Each opens on its Team tab.
+ * scheduled, and recent teams with their roles. Each opens the session.
  */
 export default function Teams({ onOpen }: { onOpen: (id: string) => void }) {
   const q = useQuery({ queryKey: ["teams"], queryFn: api.teams });

@@ -107,11 +107,6 @@ export default function App() {
   }, []);
   const [days, setDays] = useState<number>(() => readStored("days", 30));
   const [openSession, setOpenSession] = useState<string | null>(null);
-  const [teamTab, setTeamTab] = useState(false);
-  const openTeam = (id: string) => {
-    setTeamTab(true);
-    setOpenSession(id);
-  };
   const [drill, setDrill] = useState<Drill | null>(null);
   const openSessions = (d: Drill) => {
     setDrill(d);
@@ -227,8 +222,8 @@ export default function App() {
           {page === "experiments" && <Experiments drill={openSessions} />}
           {page === "execution" && <Execution days={days} setDays={setDays} drill={openSessions} />}
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
-          {page === "control" && <ControlCenter onOpen={setOpenSession} onOpenTeam={openTeam} />}
-          {page === "teams" && <Teams onOpen={openTeam} />}
+          {page === "control" && <ControlCenter onOpen={setOpenSession} />}
+          {page === "teams" && <Teams onOpen={setOpenSession} />}
           {page === "toolkit" && <Toolkit days={days} setDays={setDays} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
           {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} drill={openSessions} />}
@@ -242,14 +237,7 @@ export default function App() {
       </main>
 
       {openSession && (
-        <SessionDrawer
-          id={openSession}
-          team={teamTab}
-          onClose={() => {
-            setOpenSession(null);
-            setTeamTab(false);
-          }}
-        />
+        <SessionDrawer id={openSession} onClose={() => setOpenSession(null)} />
       )}
       {planning && <Preflight onClose={() => setPlanning(false)} />}
       {palette && (
