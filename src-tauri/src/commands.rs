@@ -6,13 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
-use crate::analytics::{
-    self, Insight, Overview, Review, Scorecard, SessionDetail, SessionFilter, SessionRow,
-};
+use crate::analytics::{self, Insight, Overview, Review, Scorecard, SessionDetail};
 use crate::experiments::{
     self, Experiment, GoalStatus, MetricDef, NewExperiment, NewGoal, PreflightAdvice,
 };
@@ -22,7 +20,8 @@ use crate::live::{self, LiveSummary};
 use crate::model::Source;
 use crate::playbooks::{self, PlaybookStats};
 use crate::retro::{self, RetroRow};
-use crate::{AppState, db, sources, trends};
+use crate::store::{SessionFilter, SessionRow};
+use crate::{AppState, db, sources, store, trends};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -126,7 +125,7 @@ pub fn get_patterns(state: State<AppState>, days: i64) -> CmdResult<trends::Patt
 #[tauri::command(async)]
 pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<String> {
     with_db(&state, |c| {
-        let rows = analytics::filter_sessions(c, &filter)?;
+        let rows = store::filter_sessions(c, &filter)?;
         let dir = tilly_core::util::download_dir().unwrap_or_else(|| state.data_dir.clone());
         let path = dir.join(format!(
             "tilly-sessions-{}.csv",
@@ -139,7 +138,7 @@ pub fn export_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResu
 
 #[tauri::command(async)]
 pub fn list_sessions(state: State<AppState>, filter: SessionFilter) -> CmdResult<Vec<SessionRow>> {
-    with_db(&state, |c| analytics::list_sessions(c, &filter))
+    with_db(&state, |c| store::list_sessions(c, &filter))
 }
 
 #[tauri::command(async)]
@@ -253,11 +252,7 @@ pub fn get_sources(state: State<AppState>) -> CmdResult<Vec<SourceStatus>> {
             .iter()
             .map(|s| {
                 let mine: Vec<_> = roots.iter().filter(|r| r.source == *s).collect();
-                let sessions: i64 = c.query_row(
-                    "SELECT COUNT(*) FROM sessions WHERE source = ?1",
-                    [s.as_str()],
-                    |r| r.get(0),
-                )?;
+                let sessions = store::count_by_source(c, s.as_str())?;
                 Ok(SourceStatus {
                     source: *s,
                     label: s.label().into(),
@@ -288,16 +283,7 @@ pub fn set_source_enabled(state: State<AppState>, source: Source, enabled: bool)
 
 #[tauri::command(async)]
 pub fn list_projects(state: State<AppState>) -> CmdResult<Vec<String>> {
-    with_db(&state, |c| {
-        let mut stmt = c.prepare(
-            "SELECT COALESCE(repo_root, project_path) AS p FROM sessions
-             WHERE p IS NOT NULL GROUP BY p ORDER BY MAX(started_at) DESC LIMIT 100",
-        )?;
-        let rows = stmt
-            .query_map([], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        Ok(rows)
-    })
+    with_db(&state, |c| store::recent_projects(c, 100))
 }
 
 // ----------------------------------------------------------------- journal
@@ -335,7 +321,7 @@ pub fn link_intent(state: State<AppState>, id: i64, session_id: Option<String>) 
 #[tauri::command(async)]
 pub fn get_calibration(state: State<AppState>, days: i64) -> CmdResult<Calibration> {
     with_db(&state, |c| {
-        journal::calibration(c, analytics::Range::last_days(days).since)
+        journal::calibration(c, store::Range::last_days(days).since)
     })
 }
 
@@ -374,15 +360,7 @@ pub fn update_prompt_template(
 
 #[tauri::command(async)]
 pub fn delete_playbook(state: State<AppState>, id: i64) -> CmdResult<()> {
-    // Instruction files are rediscovered on the next scan, so only prompt
-    // templates can be deleted.
-    with_db(&state, |c| {
-        c.execute(
-            "DELETE FROM playbooks WHERE id = ?1 AND kind = 'prompt'",
-            [id],
-        )?;
-        Ok(())
-    })
+    with_db(&state, |c| playbooks::delete_prompt_template(c, id))
 }
 
 #[tauri::command(async)]
@@ -393,19 +371,7 @@ pub fn set_session_playbook(
     linked: bool,
 ) -> CmdResult<()> {
     with_db(&state, |c| {
-        if linked {
-            c.execute(
-                "INSERT INTO session_playbooks (session_id, version_id, link) VALUES (?1, ?2, 'manual')
-                 ON CONFLICT(session_id, version_id) DO UPDATE SET link = 'manual'",
-                params![session_id, version_id],
-            )?;
-        } else {
-            c.execute(
-                "DELETE FROM session_playbooks WHERE session_id = ?1 AND version_id = ?2",
-                params![session_id, version_id],
-            )?;
-        }
-        Ok(())
+        playbooks::set_session_link(c, &session_id, version_id, linked)
     })
 }
 

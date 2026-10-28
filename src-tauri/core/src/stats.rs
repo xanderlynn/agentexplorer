@@ -3,7 +3,7 @@
 
 use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone};
 
-use crate::analytics::SessionRow;
+use crate::store::SessionRow;
 
 pub const DAY_MS: i64 = 86_400_000;
 pub const HOUR_MS: f64 = 3_600_000.0;

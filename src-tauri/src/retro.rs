@@ -16,7 +16,8 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::analytics::{self, Range, project_name, source_label};
+use crate::analytics::{self, project_name, source_label};
+use crate::store::Range;
 use crate::util::{home, now_ms, quiet_command, truncate};
 use crate::{db, journal};
 
@@ -153,7 +154,7 @@ pub fn prepare(conn: &Connection, days: i64, reflection: Option<&str>) -> Result
     let overview = analytics::overview(conn, days.max(1))?;
     let insights = analytics::insights(conn, days.max(1))?;
     let calibration = journal::calibration(conn, range.since)?;
-    let sessions = analytics::load_sessions(conn, range)?;
+    let sessions = crate::store::load_sessions(conn, range)?;
 
     let stats = json!({
         "periodDays": days,

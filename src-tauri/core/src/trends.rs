@@ -9,11 +9,11 @@ use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
-use crate::analytics::{Range, SessionRow, load_sessions};
 use crate::pricing;
 use crate::stats::{
     DAY_MS, HOUR_MS, MIN_SAMPLE, local_date, local_midnight_ms, mean, ratio, success, week_of,
 };
+use crate::store::{Range, SessionRow, load_sessions};
 use crate::util::now_ms;
 
 // ------------------------------------------------------------------- usage

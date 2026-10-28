@@ -10,8 +10,8 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::analytics::{Range, SessionRow, load_sessions};
 use crate::stats::{DAY_MS, MIN_SAMPLE};
+use crate::store::{Range, SessionRow, load_sessions};
 use crate::util::now_ms;
 
 /// The baseline is the same metric over this many days before the start.

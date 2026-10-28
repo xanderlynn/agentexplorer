@@ -148,6 +148,7 @@ src-tauri/
     codegen.rs             writes src/generated.ts (tool ids, statuses, shared thresholds); a test fails if it is stale
     status_alerts.rs       which status changes to announce, per your profile
     team.rs, toolkit.rs    sub-agents and their messages; agents, tools, MCP servers, skills
+    store.rs               the sessions table as rows for the read models (by range, filter or id)
     analytics.rs, trends.rs, experiments.rs, journal.rs, playbooks.rs, git.rs
   src/                     the desktop app
     background.rs          tray, window lifecycle, and the Sink: window events, notifications, sounds
