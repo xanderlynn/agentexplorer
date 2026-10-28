@@ -1,6 +1,6 @@
-name: Build installers
+name: Build downloads
 
-# Every push to main produces downloadable installers as workflow artifacts,
+# Every push to main produces installers and portable archives as workflow artifacts,
 # so each change can be tried before it is released. Tagged releases are
 # built by release.yml.
 on:
@@ -29,6 +29,7 @@ jobs:
             args: --target universal-apple-darwin
             artifact: macos-universal
             bundle-dir: src-tauri/target/universal-apple-darwin/release/bundle
+            portable-platform: macos
           - name: Windows x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -36,6 +37,7 @@ jobs:
             args: ""
             artifact: windows-x64
             bundle-dir: src-tauri/target/release/bundle
+            portable-platform: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -58,14 +60,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Unsigned development builds: macOS Gatekeeper and Windows
+      # Unsigned development downloads: macOS Gatekeeper and Windows
       # SmartScreen warn on first launch.
       - name: Build app and installers
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         with:
           args: ${{ matrix.args }}
 
-      - name: Upload installers
+      - name: Package portable archive
+        shell: bash
+        env:
+          PORTABLE_PLATFORM: ${{ matrix.portable-platform }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/package-portable.mjs --platform "$PORTABLE_PLATFORM" --version "$version"
+
+      - name: Upload installers and portable archive
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tilly-${{ matrix.artifact }}
@@ -74,3 +84,4 @@ jobs:
             ${{ matrix.bundle-dir }}/dmg/*.dmg
             ${{ matrix.bundle-dir }}/msi/*.msi
             ${{ matrix.bundle-dir }}/nsis/*.exe
+            artifacts/*.zip
