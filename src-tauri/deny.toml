@@ -10,6 +10,12 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 
+[advisories]
+version = 2
+# Vulnerabilities in any shipped crate fail CI. Unmaintained crates fail only
+# when Tilly depends on them directly; deep ones are reported, not fatal.
+unmaintained = "workspace"
+
 [licenses]
 version = 2
 allow = [

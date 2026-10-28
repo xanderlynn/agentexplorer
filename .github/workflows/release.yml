@@ -31,7 +31,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Check the tag matches the app version and has notes
         shell: bash
@@ -45,16 +45,17 @@ jobs:
             fi
           done
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.rust-targets }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
           key: release-${{ matrix.os }}
@@ -85,7 +86,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build installers into the draft release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -101,19 +102,28 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - name: Add SHA256SUMS.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # The software bill of materials: every shipped component with its
+      # license (CycloneDX JSON plus a readable summary).
+      - name: Generate the SBOM
+        run: node scripts/sbom.mjs assets
+
+      - name: Add the SBOM and SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir assets && cd assets
+          cd assets
           gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe'
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
-          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
+          gh release upload "$GITHUB_REF_NAME" tilly-sbom.cdx.json tilly-licenses.md SHA256SUMS.txt --clobber
 
       - name: Write release notes
         env:
@@ -133,6 +143,8 @@ jobs:
             echo "| Windows 10 and 11 (x64) | \`Tilly_${version}_x64-setup.exe\` (or the \`.msi\` for managed installs) |"
             echo ""
             echo "Check a download against \`SHA256SUMS.txt\` with \`shasum -a 256 <file>\` (macOS) or \`Get-FileHash <file>\` (Windows)."
+            echo ""
+            echo "Every component that ships in Tilly, with its license, is listed in \`tilly-licenses.md\` and in the CycloneDX SBOM \`tilly-sbom.cdx.json\`."
             if [ -n "$prev" ]; then
               echo ""
               echo "**Full changelog:** https://github.com/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_REF_NAME"

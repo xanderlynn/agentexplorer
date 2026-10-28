@@ -2,12 +2,10 @@
 // package and Rust crate that ships inside the app, with identical texts
 // printed once. MIT, Apache-2.0, BSD and ISC all require these notices to be
 // distributed with the binary. Uses only Node built-ins and `cargo metadata`.
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { cargoCrates, hostTarget, npmPackages, root } from "./deps.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LICENSE_FILE = /^(licen[cs]e|copying|notice)/i;
 
 function licenseTexts(dir) {
@@ -19,36 +17,16 @@ function licenseTexts(dir) {
 }
 
 /** @type {{ name: string; license: string; texts: string[] }[]} */
-const entries = [];
-
-const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
-for (const [path, pkg] of Object.entries(lock.packages)) {
-  if (!path || pkg.dev || pkg.devOptional) continue;
-  const name = path.replace(/^.*node_modules\//, "");
-  entries.push({ name: `${name}@${pkg.version} (npm)`, license: pkg.license ?? "unknown", texts: licenseTexts(join(root, path)) });
-}
+const entries = npmPackages().map((p) => ({ name: `${p.name}@${p.version} (npm)`, license: p.license ?? "unknown", texts: licenseTexts(p.dir) }));
 
 // Release builds always have Rust; a frontend-only build may not, so the
 // crates are skipped with a warning instead of failing.
-let rust = null;
 try {
-  const host = /host: (\S+)/.exec(execFileSync("rustc", ["-vV"], { encoding: "utf8" }))?.[1];
-  rust = JSON.parse(
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--manifest-path", join(root, "src-tauri", "Cargo.toml"), ...(host ? ["--filter-platform", host] : [])], {
-      encoding: "utf8",
-      maxBuffer: 256 * 1024 * 1024,
-    }),
-  );
+  for (const c of cargoCrates([hostTarget()])) {
+    entries.push({ name: `${c.name}@${c.version} (crate)`, license: c.license ?? "unknown", texts: licenseTexts(c.dir) });
+  }
 } catch {
   console.warn("warning: cargo not found; third-party notices list npm packages only.");
-}
-if (rust) {
-  const used = new Set(rust.resolve.nodes.map((n) => n.id));
-  const own = new Set(rust.workspace_members);
-  for (const p of rust.packages) {
-    if (!used.has(p.id) || own.has(p.id)) continue;
-    entries.push({ name: `${p.name}@${p.version} (crate)`, license: p.license ?? "unknown", texts: licenseTexts(dirname(p.manifest_path)) });
-  }
 }
 
 // Group packages that ship byte-identical license texts.

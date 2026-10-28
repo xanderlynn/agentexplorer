@@ -26,9 +26,12 @@ type CommitLink = (
 /// Commits this long after a session's last event still count toward it.
 pub const COMMIT_WINDOW_MS: i64 = 30 * 60 * 1000;
 
+/// Runs git in a repository taken from a session log. A repository's own
+/// config can name a program for git to run (core.fsmonitor), and an agent
+/// working there could have set it, so that is switched off for every call.
 pub fn git(repo: &str, args: &[&str]) -> Result<String> {
     let out = quiet_command("git")
-        .arg("-C")
+        .args(["-c", "core.fsmonitor=false", "-C"])
         .arg(repo)
         .args(args)
         .output()?;
