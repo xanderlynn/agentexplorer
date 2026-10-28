@@ -1,10 +1,7 @@
 import type { Mode, Outcome, Source } from "./api";
+import { SOURCES } from "./generated";
 
-export const SOURCE_LABEL: Record<Source, string> = {
-  claude_code: "Claude Code",
-  copilot_cli: "Copilot CLI",
-  copilot_vscode: "Copilot Chat",
-};
+export const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.id, s.shortLabel])) as Record<Source, string>;
 
 export const SOURCE_COLOR: Record<Source, string> = {
   claude_code: "#e07a52",
@@ -56,9 +53,7 @@ export const STYLE_LABEL: Record<string, string> = {
 /** Filter options for "which tool": all, then each source. */
 export const SOURCE_OPTIONS: { value: Source | "all"; label: string }[] = [
   { value: "all", label: "All tools" },
-  { value: "claude_code", label: "Claude Code" },
-  { value: "copilot_cli", label: "Copilot CLI" },
-  { value: "copilot_vscode", label: "Copilot Chat" },
+  ...SOURCES.map((s) => ({ value: s.id, label: s.shortLabel })),
 ];
 
 export const sourceLabel = (s: string) => SOURCE_LABEL[s as Source] ?? s;

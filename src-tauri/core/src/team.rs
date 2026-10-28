@@ -139,9 +139,8 @@ pub struct Finish<'a> {
 }
 
 impl Agent {
-    /// running | quiet | done | failed | stopped: running agents silent for
-    /// longer than `quiet_after_ms` are quiet.
-    pub fn live_status(&self, now: i64, quiet_after_ms: i64) -> &'static str {
+    /// Running agents silent for longer than `quiet_after_ms` are quiet.
+    pub fn live_status(&self, now: i64, quiet_after_ms: i64) -> AgentLiveStatus {
         match self.status {
             Status::Running
                 if self
@@ -149,14 +148,36 @@ impl Agent {
                     .or(self.started_at)
                     .is_some_and(|t| now - t > quiet_after_ms) =>
             {
-                "quiet"
+                AgentLiveStatus::Quiet
             }
-            Status::Running => "running",
-            Status::Done => "done",
-            Status::Failed => "failed",
-            Status::Stopped => "stopped",
+            Status::Running => AgentLiveStatus::Running,
+            Status::Done => AgentLiveStatus::Done,
+            Status::Failed => AgentLiveStatus::Failed,
+            Status::Stopped => AgentLiveStatus::Stopped,
         }
     }
+}
+
+/// A sub-agent's status as the live views show it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLiveStatus {
+    #[default]
+    Running,
+    Quiet,
+    Done,
+    Failed,
+    Stopped,
+}
+
+impl AgentLiveStatus {
+    pub const ALL: [AgentLiveStatus; 5] = [
+        AgentLiveStatus::Running,
+        AgentLiveStatus::Quiet,
+        AgentLiveStatus::Done,
+        AgentLiveStatus::Failed,
+        AgentLiveStatus::Stopped,
+    ];
 }
 
 impl Team {

@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::ingest::IngestReport;
-use crate::live::{LiveSummary, group};
+use crate::live::{Group, LiveSummary};
 use crate::status_alerts::{Alert, PROFILE_KEY, Profile, plan};
 use crate::{AppState, db, sound, watcher};
 
@@ -170,7 +170,7 @@ impl watcher::Sink for AppSink {
         let awaiting = summary
             .sessions
             .iter()
-            .filter(|s| group(&s.status) == "awaiting")
+            .filter(|s| s.status.group() == Group::Awaiting)
             .count();
         let text = match (awaiting, summary.working) {
             (0, 0) => "Nothing running".to_string(),

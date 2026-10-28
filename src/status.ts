@@ -1,10 +1,12 @@
 import { Activity, CalendarClock, CircleCheck, CircleMinus, CircleStop, CircleX, Hourglass, MessageSquareReply, Moon, ShieldAlert, ShieldQuestion, type LucideIcon } from "lucide-react";
 import type { LiveAgentStatus, LiveStatus } from "./api";
+import { STATUS_GROUP, type SessionGroup } from "./generated";
 
 /** Every status a session or sub-agent can show, and the ones you can give a sound or image. */
 export type StatusKey = LiveStatus | "agent_done" | "agent_failed";
 
-export type StatusGroup = "awaiting" | "active" | "completed" | "failed" | "scheduled" | "idle";
+/** A session's group, from live.rs, plus `failed` for sub-agent failures. */
+export type StatusGroup = SessionGroup | "failed";
 
 export interface StatusToken {
   label: string;
@@ -167,6 +169,5 @@ export const urgency = (k: StatusKey) => URGENCY.indexOf(k);
 /** The most urgent of some statuses. */
 export const mostUrgent = <K extends StatusKey>(keys: K[]): K | undefined => [...keys].sort((a, b) => urgency(a) - urgency(b))[0];
 
-/** Same groups as live.rs `group`. */
-export const isAwaiting = (s: LiveStatus) => STATUS[s].group === "awaiting";
-export const isActive = (s: LiveStatus) => STATUS[s].group === "active";
+export const isAwaiting = (s: LiveStatus) => STATUS_GROUP[s] === "awaiting";
+export const isActive = (s: LiveStatus) => STATUS_GROUP[s] === "active";
