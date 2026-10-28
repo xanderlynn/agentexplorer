@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::journal::{self, outcome_score};
+use crate::model::Source;
 use crate::signals::{self, Friction};
 use crate::stats::{
     DAY_MS, HOUR_MS, MIN_SAMPLE, local_date, local_midnight_ms, monday, pct, success, week_of,
@@ -531,18 +532,9 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     })
 }
 
-/// Claude Code resumes from the session's folder; Copilot CLI by id.
-/// Copilot Chat in VS Code has no resume command.
+/// The command that reopens the session in its tool, when it has one.
 fn resume_command(s: &SessionRow, external_id: &str) -> Option<String> {
-    let quote = |p: &str| format!("\"{}\"", p.replace('"', "\\\""));
-    match s.source.as_str() {
-        "claude_code" => Some(match &s.project_path {
-            Some(p) => format!("cd {} && claude --resume {external_id}", quote(p)),
-            None => format!("claude --resume {external_id}"),
-        }),
-        "copilot_cli" => Some(format!("copilot --resume {external_id}")),
-        _ => None,
-    }
+    Source::from_id(&s.source)?.resume_command(s.project_path.as_deref(), external_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1527,12 +1519,7 @@ pub fn sessions_csv(rows: &[SessionRow]) -> String {
 }
 
 pub fn source_label(s: &str) -> &str {
-    match s {
-        "claude_code" => "Claude Code",
-        "copilot_cli" => "Copilot CLI",
-        "copilot_vscode" => "Copilot Chat",
-        other => other,
-    }
+    Source::from_id(s).map_or(s, |source| source.short_label())
 }
 
 #[cfg(test)]

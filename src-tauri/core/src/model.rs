@@ -2,41 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::pricing;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Source {
-    ClaudeCode,
-    CopilotCli,
-    CopilotVscode,
-}
-
-impl Source {
-    pub const ALL: [Source; 3] = [
-        Source::ClaudeCode,
-        Source::CopilotCli,
-        Source::CopilotVscode,
-    ];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Source::ClaudeCode => "claude_code",
-            Source::CopilotCli => "copilot_cli",
-            Source::CopilotVscode => "copilot_vscode",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Source::ClaudeCode => "Claude Code",
-            Source::CopilotCli => "Copilot CLI",
-            Source::CopilotVscode => "Copilot Chat (VS Code)",
-        }
-    }
-}
+pub use crate::sources::Source;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TokenUsage {

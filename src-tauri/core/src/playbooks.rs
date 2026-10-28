@@ -31,10 +31,9 @@ const MAX_GIT_VERSIONS: usize = 30;
 const PROMPT_MATCH_CHARS: usize = 60;
 
 pub fn applies_to(kind: &str, source: &str) -> bool {
-    match kind {
-        "claude_md" => source == Source::ClaudeCode.as_str(),
-        "agents_md" | "copilot_instructions" => source != Source::ClaudeCode.as_str(),
-        _ => true,
+    match Source::from_id(source) {
+        Some(s) => s.reads_instructions(kind),
+        None => kind != "claude_md",
     }
 }
 
