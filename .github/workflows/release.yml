@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a tag like v0.2.0 (see scripts/release.mjs) builds the macOS and
 # Windows installers into a draft GitHub Release, then adds checksums and
-# notes. Review the draft, then publish it.
+# the version's notes from CHANGELOG.md. Review the draft, then publish it.
 on:
   push:
     tags: ["v*"]
@@ -33,9 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag matches the app version
+      - name: Check the tag matches the app version and has notes
         shell: bash
         run: |
+          node scripts/changelog.mjs notes "${GITHUB_REF_NAME#v}" > /dev/null
           for v in "$(node -p "require('./package.json').version")" \
                    "$(node -p "require('./src-tauri/tauri.conf.json').version")"; do
             if [ "${GITHUB_REF_NAME#v}" != "$v" ]; then
@@ -118,21 +119,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          version=${GITHUB_REF_NAME#v}
           prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
-          range=${prev:+$prev..}$GITHUB_REF_NAME
           {
+            # The hand-written notes for this version, from CHANGELOG.md.
+            node scripts/changelog.mjs notes "$version"
+            echo ""
             echo "## Download"
             echo ""
             echo "| Platform | File |"
             echo "| --- | --- |"
-            echo "| macOS (Apple Silicon and Intel) | \`Tilly_${GITHUB_REF_NAME#v}_universal.dmg\` |"
-            echo "| Windows 10 and 11 (x64) | \`Tilly_${GITHUB_REF_NAME#v}_x64-setup.exe\` (or the \`.msi\`) |"
+            echo "| macOS 11 or later (Apple Silicon and Intel) | \`Tilly_${version}_universal.dmg\` |"
+            echo "| Windows 10 and 11 (x64) | \`Tilly_${version}_x64-setup.exe\` (or the \`.msi\` for managed installs) |"
             echo ""
-            echo "Check a download with \`shasum -a 256 <file>\` against \`SHA256SUMS.txt\`."
-            echo ""
-            echo "## Changes"
-            echo ""
-            git log --no-merges --format='- %s' "$range" | grep -v '^- Release v' || echo "- First release"
+            echo "Check a download against \`SHA256SUMS.txt\` with \`shasum -a 256 <file>\` (macOS) or \`Get-FileHash <file>\` (Windows)."
             if [ -n "$prev" ]; then
               echo ""
               echo "**Full changelog:** https://github.com/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_REF_NAME"

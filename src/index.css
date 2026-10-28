@@ -34,52 +34,59 @@ body {
   scrollbar-color: var(--color-zinc-700) transparent;
 }
 
-.prose-retro h2 {
+.prose-md h2 {
   font-size: 1.05rem;
   font-weight: 600;
   margin: 1.4rem 0 0.5rem;
   color: var(--color-zinc-50);
 }
-.prose-retro h2:first-child {
+.prose-md h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 1.1rem 0 0.35rem;
+  color: var(--color-zinc-100);
+}
+.prose-md h2:first-child,
+.prose-md h3:first-child {
   margin-top: 0;
 }
-.prose-retro p,
-.prose-retro li {
+.prose-md p,
+.prose-md li {
   line-height: 1.6;
   color: var(--color-zinc-300);
 }
-.prose-retro ul,
-.prose-retro ol {
+.prose-md ul,
+.prose-md ol {
   padding-left: 1.25rem;
   margin: 0.4rem 0;
 }
-.prose-retro ul {
+.prose-md ul {
   list-style: disc;
 }
-.prose-retro ol {
+.prose-md ol {
   list-style: decimal;
 }
-.prose-retro strong {
+.prose-md strong {
   color: var(--color-zinc-50);
 }
-.prose-retro code {
+.prose-md code {
   font-family: var(--font-mono);
   font-size: 0.85em;
   background: var(--color-zinc-800);
   padding: 0.1rem 0.3rem;
   border-radius: 4px;
 }
-.prose-retro blockquote {
+.prose-md blockquote {
   border-left: 3px solid var(--color-zinc-700);
   padding-left: 0.75rem;
   color: var(--color-zinc-400);
 }
-.prose-retro table {
+.prose-md table {
   border-collapse: collapse;
   margin: 0.5rem 0;
 }
-.prose-retro th,
-.prose-retro td {
+.prose-md th,
+.prose-md td {
   border: 1px solid var(--color-zinc-700);
   padding: 0.25rem 0.5rem;
 }

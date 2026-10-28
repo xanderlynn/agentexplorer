@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, ChartColumn, Coins, Gauge, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
+import { Bot, ChartColumn, Coins, Gauge, Gift, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
 import { useLive, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
 import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
 import { cx } from "./components/ui";
@@ -10,6 +10,7 @@ import { SessionDrawer } from "./components/SessionDrawer";
 import { Preflight } from "./components/Preflight";
 import { QuickReview } from "./components/QuickReview";
 import { CommandPalette } from "./components/CommandPalette";
+import { CURRENT_VERSION, WhatsNew, useWhatsNew } from "./components/WhatsNew";
 import { projectName } from "./format";
 import Today from "./pages/Today";
 import Experiments from "./pages/Experiments";
@@ -90,6 +91,7 @@ export default function App() {
   });
   const [planning, setPlanning] = useState(false);
   const [palette, setPalette] = useState(false);
+  const whatsNew = useWhatsNew();
   const group = groupOf(page);
 
   // ⌘K / Ctrl+K opens the command palette from anywhere.
@@ -185,6 +187,15 @@ export default function App() {
         </button>
         <div className="mt-auto space-y-3">
           <button
+            onClick={whatsNew.show}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
+          >
+            <Gift size={16} aria-hidden />
+            <span className="flex-1">What's new</span>
+            {whatsNew.unseen && <span className="h-2 w-2 rounded-full bg-emerald-500" aria-label="New release notes" />}
+            <span className="text-xs tabular-nums text-zinc-500">v{CURRENT_VERSION}</span>
+          </button>
+          <button
             onClick={() => go("settings")}
             className={cx(
               "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors",
@@ -239,6 +250,7 @@ export default function App() {
         <SessionDrawer id={openSession} onClose={() => setOpenSession(null)} />
       )}
       {planning && <Preflight onClose={() => setPlanning(false)} />}
+      {whatsNew.open && <WhatsNew onClose={whatsNew.close} />}
       {palette && (
         <CommandPalette
           onClose={() => setPalette(false)}

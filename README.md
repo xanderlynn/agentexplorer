@@ -111,14 +111,16 @@ src-tauri/
 
 Versions follow [semver](https://semver.org). `0.x` releases are early: anything may change between minor versions.
 
+Release notes live in [CHANGELOG.md](CHANGELOG.md) ([Keep a Changelog](https://keepachangelog.com) format). Add to the **Unreleased** section as you go; the app shows the notes under **What's new**, opening them once after each update.
+
 To release:
 
 ```bash
-npm run release -- 0.2.0          # bumps every manifest, commits "Release v0.2.0", tags v0.2.0
+npm run release -- 0.2.0          # moves Unreleased notes under 0.2.0, bumps every manifest, commits, tags v0.2.0
 git push && git push origin v0.2.0
 ```
 
-The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and the Windows `-setup.exe` and `.msi` into a **draft** GitHub Release, then adds `SHA256SUMS.txt` and notes listing the commits since the previous tag. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
+The script refuses to release with no notes under Unreleased. The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and the Windows `-setup.exe` and `.msi` into a **draft** GitHub Release, then adds `SHA256SUMS.txt` and uses the version's CHANGELOG section as the release notes. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
 
 Every push to `main` also builds installers as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
 

@@ -105,7 +105,7 @@ export default function Retro({ go }: { go: (p: Page) => void }) {
               <span>{date(current.periodStart)} – {date(current.periodEnd)} · {current.engine === "claude_cli" ? "Claude Code CLI" : current.model}</span>
               <Button size="sm" variant="ghost" onClick={() => del.mutate(current.id)} aria-label="Delete retro"><Trash2 size={14} /></Button>
             </div>
-            <div className="prose-retro">
+            <div className="prose-md">
               {current.reflection && (
                 <blockquote className="mb-4">
                   <span className="text-xs uppercase tracking-wide text-zinc-500">Your reflection</span>
