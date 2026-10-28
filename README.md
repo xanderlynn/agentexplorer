@@ -116,14 +116,14 @@ Versions follow [semver](https://semver.org). `0.x` releases are early: anything
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md) ([Keep a Changelog](https://keepachangelog.com) format). Add to the **Unreleased** section as you go; the app shows the notes under **What's new**, opening them once after each update.
 
-To release:
+`main` only accepts pull requests that pass CI, so a release takes two steps:
 
 ```bash
-npm run release -- 0.2.0          # moves Unreleased notes under 0.2.0, bumps every manifest, commits, tags v0.2.0
-git push && git push origin v0.2.0
+npm run release -- 0.2.0          # on a release/v0.2.0 branch: moves Unreleased notes under 0.2.0, bumps every manifest, opens a PR
+npm run release -- 0.2.0 --tag    # once that PR is merged: tags main as v0.2.0 and pushes the tag
 ```
 
-The script refuses to release with no notes under Unreleased. The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and portable `.app` ZIP, plus the Windows `-setup.exe`, `.msi`, and portable executable ZIP, into a **draft** GitHub Release. It then adds every download to `SHA256SUMS.txt`, records GitHub artifact attestations for the downloads, checksum, and SBOM, and uses the version's CHANGELOG section as the release notes. The macOS ZIP is created with `ditto` so bundle permissions, symlinks, and resource metadata are preserved. Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
+The script refuses to release with no notes under Unreleased, and refuses to tag until `main` carries the new version. Only repository admins can create `v*` tags, and nobody can move or delete one. The tag starts `.github/workflows/release.yml`. It builds the macOS universal `.dmg` and portable `.app` ZIP, plus the Windows `-setup.exe`, `.msi`, and portable executable ZIP, into a **draft** GitHub Release. It then adds every download to `SHA256SUMS.txt`, records GitHub artifact attestations for the downloads, checksum, and SBOM, and uses the version's CHANGELOG section as the release notes. The macOS ZIP is created with `ditto` so bundle permissions, symlinks, and resource metadata are preserved. The build jobs run in the protected `release` environment, so each run waits until you approve it (the run's page, **Review deployments**). Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
 
 Every push to `main` also builds installers and portable archives as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
 
