@@ -8,6 +8,10 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+### Changed
+
+- A new logo: a girl with a bob haircut replaces the lowercase "t", in the app icon, the window and the macOS menu bar.
+
 ## [0.1.2] - 2026-10-28
 
 The first public release of Tilly. Everything listed under 0.1.1 and 0.1.0 is included.

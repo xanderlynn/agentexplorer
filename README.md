@@ -1,4 +1,4 @@
-<p align="center"><img src="public/tilly.svg" width="128" alt="Tilly logo: a white lowercase t with a bow on a pink-to-purple tile"></p>
+<p align="center"><img src="public/tilly.svg" width="128" alt="Tilly logo: a girl with a bob haircut on a pink-to-purple tile"></p>
 
 # Tilly
 
@@ -176,7 +176,7 @@ Every push to `main` also builds installers and portable archives as workflow ar
 
 ## Logo
 
-`public/tilly.svg` is the source for the app icons. After editing it, run `npx tauri icon public/tilly.svg` and delete the `android`, `ios` and `64x64.png` outputs, which the desktop builds don't use. The macOS menu-bar icon, `src-tauri/icons/tray-template@2x.png`, is the same mark in black on transparent (macOS recolours it for light and dark menu bars).
+`public/tilly.svg` is the source for the app icons. After editing it, run `npx tauri icon public/tilly.svg` and delete the `android`, `ios` and `64x64.png` outputs, which the desktop builds don't use. The macOS menu-bar icon, `src-tauri/icons/tray-template@2x.png`, is the same silhouette in black on transparent, with the face cut out (macOS recolours it for light and dark menu bars).
 
 ## License and dependencies
 
