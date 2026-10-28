@@ -1,8 +1,10 @@
 name: Release
 
-# Pushing a tag like v0.2.0 (see scripts/release.mjs) builds the macOS and
-# Windows installers and portable archives into a draft GitHub Release, then adds checksums and
-# the version's notes from CHANGELOG.md. Review the draft, then publish it.
+# Pushing a tag like v0.2.0 (see scripts/release.mjs) runs CodeQL on the
+# tagged code first; a serious finding stops the release. Then it builds the
+# macOS and Windows installers and portable archives into a draft GitHub
+# Release, and adds checksums and the version's notes from CHANGELOG.md.
+# Review the draft, then publish it.
 on:
   push:
     tags: ["v*"]
@@ -15,8 +17,16 @@ permissions:
   contents: read
 
 jobs:
+  codeql:
+    name: CodeQL
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      security-events: write
+
   build:
     name: ${{ matrix.name }}
+    needs: codeql
     environment: release
     permissions:
       contents: write
