@@ -8,6 +8,8 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-28
+
 The first public release of Tilly. Everything listed under 0.1.0 is included.
 
 ### Added
@@ -50,5 +52,6 @@ The first release of Tilly: a desktop app that keeps your AI coding agents in li
 - Lean on resources: Tilly reads only the new lines of each log, pushes changes to the window instead of polling, and frees its window's memory when you close it. In the tray with agents busy, it uses under 1% of one CPU core and about 100 MB of memory.
 - Upgrading from Governess or Execution Ledger: your data and saved API key move over on first launch.
 
-[Unreleased]: https://github.com/xanderlynn/tilly/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xanderlynn/tilly/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/xanderlynn/tilly/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xanderlynn/tilly/releases/tag/v0.1.0
