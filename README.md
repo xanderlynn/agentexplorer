@@ -149,7 +149,8 @@ src-tauri/
     status_alerts.rs       which status changes to announce, per your profile
     team.rs, toolkit.rs    sub-agents and their messages; agents, tools, MCP servers, skills
     store.rs               the sessions table as rows for the read models (by range, filter or id)
-    analytics.rs, trends.rs, experiments.rs, journal.rs, playbooks.rs, git.rs
+    analytics/             session detail, overview, scorecard; insights.rs holds the insight rules (one function each, listed in RULES)
+    trends.rs, experiments.rs, journal.rs, playbooks.rs, git.rs
   src/                     the desktop app
     background.rs          tray, window lifecycle, and the Sink: window events, notifications, sounds
     sound.rs               alert tones (synthesised) and your WAV/Ogg files
