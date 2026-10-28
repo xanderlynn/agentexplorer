@@ -4,27 +4,64 @@
 
 *Keeps your agents in line, and you improving.*
 
-A desktop app that tracks how you work with AI coding agents (Claude Code and GitHub Copilot) and helps you get better at it.
+Tilly is a desktop app for people who hand real work to AI coding agents: Claude Code and GitHub Copilot. It watches the agents' logs on your computer and answers two questions:
 
-Plenty of tools already show tokens and cost. This one focuses on **execution**: did the work ship, what did it take, and which of your habits make the difference.
+1. **Right now: which agents need me?** Agents stall silently: waiting for an answer, a permission prompt, or a failed run nobody noticed. Tilly shows every live session by status, puts the ones waiting on you first, and can play a sound or show a notification when one needs you, even with its window closed.
+2. **Over time: am I getting better at this?** Most tools stop at tokens and cost. Tilly tracks **execution**: did the work ship, what did it take, and which of your habits (planning first, using a reviewer agent, smaller tasks) actually make a difference. Then it helps you try a change and measure it.
 
-Built with Tauri 2, Rust and React. Runs on macOS and Windows. All data stays on your computer.
+Everything stays on your computer. Tilly runs on macOS and Windows, and is built with Tauri 2, Rust and React.
 
-## What it does
+![Control center: four sessions awaiting you, with what each is waiting on, above the working, scheduled and completed columns](docs/screenshots/control.png)
 
-The app is organised around a daily and a weekly loop, in seven areas (press ⌘K anywhere to jump to a page or find any prompt you've written):
+**[Download Tilly](https://github.com/xanderlynn/tilly/releases/latest)** · **[Read the guide](https://github.com/xanderlynn/tilly/wiki)** · [What's new](CHANGELOG.md)
 
-| Area | What you get |
+## A quick tour
+
+*All screenshots use made-up demo data ([`scripts/demo-data.mjs`](scripts/demo-data.mjs)), not anyone's real sessions.*
+
+### Agents: what needs you, right now
+
+The **Control center** is where Tilly opens. Each session gets one status: *your turn*, *needs permission*, *might need approval*, *failed*, *working*, *long task*, *scheduled* or *completed*. The *Awaiting you* queue puts the longest wait first and shows what the agent asked or is stuck on. Above it: how many agents are working, how long they have waited on you today, and your reply time.
+
+**Teams** shows sessions where the lead agent handed work to sub-agents: who is on each team, what each was asked to do, whether it reported back, and what is scheduled to run later.
+
+![Teams: three sub-agents at work on a payments migration, and recent sessions with their teams](docs/screenshots/teams.png)
+
+### Today and Sessions: review in one tap
+
+**Today** lists what finished recently so you can rate each one (shipped, partial, abandoned, redo) in a click. Ratings are what turn activity into insight. **Sessions** holds every session from every tool, searchable across all your prompts; open one to see its timeline, its team, and the commits it produced.
+
+| Today | Sessions |
 | --- | --- |
-| **Agents** | The landing page. **Control center:** every live Claude Code and Copilot session by status (your turn, needs permission, might need approval, failed, working, long task, scheduled, completed, idle), an *Awaiting you* queue sorted by wait time, working / scheduled / completed-today columns with each session's sub-agents, live stats (working now, awaiting you, completed today, sub-agents, time waiting on you, your reply time), today's swimlanes, concurrency and reply-time charts. **Teams:** sessions that used sub-agents, roles and how often they report back. You choose a sound (built-in tones or your own WAV or Ogg) and an image for each status in Settings, with volume, mute, quiet hours and desktop notifications. |
-| **Today** | Planning and review: a pointer to anything awaiting you, recent sessions to rate in one tap, running experiments, goals, planned tasks, unusual sessions. |
-| **Sessions** | Every session from every tool, searchable across all prompts, filterable, exportable to CSV. Charts and insights elsewhere open here with the matching filter. The session view puts everything on one page: its live status and key numbers at the top; what the lead last said or is waiting on, the team (each sub-agent's status and task), one timeline of the lead's work and waits on you with each sub-agent below it, and folded detail (roster with briefs and reports, the hand-off flow, flow score and tool use, your prompts) on the left; your review, the resume command, commits and playbooks on the right. It works for Claude Code and Copilot (CLI and VS Code). |
-| **Outcomes** | **Summary:** KPIs with 12-week sparklines, your usual range and sample size; insights that open the sessions behind them; why sessions go wrong, grouped by cause. **Delivery & reality:** sessions to commits, rework within 7 days of shipping, "felt faster" against evidence, your estimate ratio, agent-to-human time, and a delegation-fit matrix (task type × tool). |
-| **Habits** | **Patterns:** activity calendar, weekday × hour heatmap, task categories, tool mix, tool reliability and vetoes, learning curve (with playbook changes marked), then vs now. **Execution:** where agent time goes (coding, research, running commands, discussion), how you run sessions (one-shot, planned, iterative) and how they compare, and how often sessions outgrow the model's smart zone (peak context, compaction). **Toolkit:** the agent roles, tools, MCP servers and skills you use with Claude Code and Copilot, week by week, and how sessions that used each one went compared with sessions that didn't (success and rework). **Journal:** plan tasks with the pre-flight card, close them with what happened, calibration. **Playbooks:** CLAUDE.md / AGENTS.md / prompt-template versions compared by outcome and rework. |
-| **Usage** | Tokens and spend side by side (tokens per session and per shipped session, a tokens / cost toggle), month-to-date spend against pace and an optional budget, cache hit rate and savings, and a model comparison. |
-| **Improve** | **Weekly retro:** your reflection first, then Claude's review grounded in measured results, ending in three experiments you can adopt in one click. **Experiments & goals:** one habit per experiment with a locked baseline, adherence and a keep / drop / extend verdict; up to three goals, each with a counter-metric. |
+| ![Today: sessions to rate, experiments and goals](docs/screenshots/today.png) | ![Sessions: every session with project, branch, time, cost and outcome](docs/screenshots/sessions.png) |
 
-Numbers are honest about their sample: rates show n, small samples read "k/n rated" instead of a percentage, and heuristic scores are labelled as such.
+### Outcomes and Habits: what actually works for you
+
+**Outcomes** shows how often sessions ship, with your usual range so a good or bad week stands out, and insights you can click through to the sessions behind them. **Habits** shows when you work, what you delegate and how it goes, and how the agent spends its time. **Toolkit** lists the agent roles, tools, MCP servers and skills you use, and compares how sessions went with each one against sessions without it.
+
+| Outcomes | Patterns |
+| --- | --- |
+| ![Outcomes: success rate, shipped sessions, spend and insights](docs/screenshots/overview.png) | ![Patterns: activity calendar, session start heatmap, flow score](docs/screenshots/patterns.png) |
+
+![Toolkit: agent roles used per week, and success with and without each one](docs/screenshots/toolkit.png)
+
+### Usage: tokens and spend
+
+Tokens and spend by tool and model, month-to-date against pace, cache savings, and the cost of each *shipped* session rather than each session.
+
+![Usage: tokens, spend against pace, tokens per day by tool](docs/screenshots/usage.png)
+
+### Improve: change one habit and measure it
+
+A **weekly retro** starts with your own reflection, then Claude reviews the measured results and suggests three experiments. An **experiment** locks a baseline, tracks whether you stuck to the habit, and ends in keep, drop or extend. **Goals** come with a counter-metric so you can't hit one by gaming it.
+
+### Make it yours
+
+Pick a sound (a built-in tone or your own WAV or Ogg file), an image and a volume for each status, with quiet hours, mute and background-only alerts. Themes, accents and density are in Settings too.
+
+![Settings: themes and the status sounds and images table](docs/screenshots/settings.png)
+
+Every area is described in detail in the [guide](https://github.com/xanderlynn/tilly/wiki). Press ⌘K (Ctrl+K on Windows) anywhere to jump to a page or search every prompt you've written.
 
 ## Data sources
 
@@ -79,6 +116,14 @@ Checks:
 npm run build                      # typecheck + bundle the frontend
 cd src-tauri && cargo test --workspace         # Rust unit tests (app + core)
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings
+```
+
+To try the app without your own logs, or to retake the screenshots, generate fictional ones into a throwaway home folder and point Tilly at it:
+
+```bash
+node scripts/demo-data.mjs logs /tmp/tilly-demo     # six weeks of made-up Claude Code and Copilot sessions, some live
+HOME=/tmp/tilly-demo npm run tauri dev              # macOS; once it has read the logs:
+node scripts/demo-data.mjs reviews /tmp/tilly-demo  # rates the finished sessions
 ```
 
 To check the parsers against your own logs (read-only, into a throwaway database):
