@@ -1,7 +1,7 @@
 //! Turns source files into rows: detect changed units, parse them in
 //! parallel, write them in one transaction, then run the linkers.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::model::{ParsedSession, Source};
 use crate::sources::{self, Root, Unit};
 use crate::util::{now_ms, path_within, truncate};
-use crate::{db, git, journal, playbooks, signals};
+use crate::{db, git, signals};
 
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,22 +264,9 @@ impl Ingestor {
         Ok((report, changed))
     }
 
-    /// Runs the linkers. A full pass (`None`) links commits, syncs
-    /// instruction files from git, and relinks every session. A watcher pass
-    /// only relinks the changed sessions: shelling out to git on every file
-    /// event is too slow, so commits appear with the next full scan.
+    /// Runs the linkers (see `enrich`).
     pub fn postprocess(&self, conn: &Connection, changed: Option<&[String]>) -> Result<()> {
-        if changed.is_none() {
-            let (repos, roots) = all_roots(conn)?;
-            for worktrees in group_worktrees(&repos) {
-                // A repo that moved or lost its .git should not stop the others.
-                let _ = git::link_commits(conn, &worktrees);
-            }
-            playbooks::sync(conn, &roots)?;
-        }
-        playbooks::relink(conn, changed)?;
-        journal::auto_link(conn)?;
-        Ok(())
+        crate::enrich::run_all(conn, changed)
     }
 }
 
@@ -305,39 +292,6 @@ fn cached_repo_root(
         .expect("repo cache")
         .insert(project.to_string(), root.clone());
     root
-}
-
-/// Distinct git roots and project roots across all sessions.
-fn all_roots(conn: &Connection) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
-    let mut repos = BTreeSet::new();
-    let mut roots = BTreeSet::new();
-    let mut stmt = conn.prepare("SELECT DISTINCT repo_root, project_path FROM sessions")?;
-    for row in stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, Option<String>>(0)?,
-            r.get::<_, Option<String>>(1)?,
-        ))
-    })? {
-        let (repo, project) = row?;
-        if let Some(r) = &repo {
-            repos.insert(r.clone());
-        }
-        if let Some(root) = repo.or(project) {
-            roots.insert(root);
-        }
-    }
-    Ok((repos, roots))
-}
-
-/// Groups worktrees of the same repository so their commits are read once.
-fn group_worktrees(repos: &BTreeSet<String>) -> Vec<Vec<String>> {
-    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for repo in repos {
-        if let Some(common) = git::common_dir(repo) {
-            groups.entry(common).or_default().push(repo.clone());
-        }
-    }
-    groups.into_values().collect()
 }
 
 fn upsert_session(

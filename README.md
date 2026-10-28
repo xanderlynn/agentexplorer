@@ -143,6 +143,7 @@ src-tauri/
     sources/               one plug-in per tool (the AgentSource trait): where its logs live, how files group into sessions, how to parse them
     parsers/               one parser per tool → a normalized ParsedSession, read incrementally
     ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
+    enrich.rs              steps run after ingest (commits, playbooks, intents), listed in ENRICHERS
     watcher.rs             filesystem events, periodic scans, live state pushed to a Sink
     live.rs                each session's status and today's live stats
     codegen.rs             writes src/generated.ts (tool ids, statuses, shared thresholds); a test fails if it is stale
