@@ -4,7 +4,8 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Copy, FolderOpen, GitCommitHorizontal, X } from "lucide-react";
 import { api, type Mode, type Outcome, type VsManual } from "../api";
 import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money, projectName } from "../format";
-import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, SourceBadge } from "./ui";
+import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, Segmented, SourceBadge } from "./ui";
+import { TeamView } from "./TeamView";
 
 export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -22,6 +23,7 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
     onSuccess: () => qc.invalidateQueries(),
   });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [tab, setTab] = useState<"review" | "team">("review");
 
   // Seed the form once per session, not on every refetch, so typing is not lost.
   useEffect(() => {
@@ -31,6 +33,8 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
       setNotes(q.data.notes ?? "");
       setTags(q.data.session.tags.filter((t) => !t.startsWith("exp-")).join(", "));
       setVsManual(q.data.session.vsManual);
+      // Open on the team while its agents are still at work.
+      setTab(q.data.team.agents.some((a) => a.status === "running") ? "team" : "review");
       setLoadedFor(id);
     }
   }, [q.data, id, loadedFor]);
@@ -68,7 +72,7 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true">
       <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative flex h-full w-full max-w-2xl flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950 shadow-2xl">
+      <div className={`relative flex h-full w-full ${tab === "team" ? "max-w-5xl" : "max-w-2xl"} flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950 shadow-2xl`}>
         <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-zinc-800 bg-zinc-950/95 px-5 py-4 backdrop-blur">
           <div className="min-w-0">
             {s && <SourceBadge source={s.source} />}
@@ -80,15 +84,33 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
               </div>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {d && (
+              <Segmented
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { value: "review", label: "Review" },
+                  { value: "team", label: d.team.agents.length ? `Team · ${d.team.agents.length}` : "Team" },
+                ]}
+              />
+            )}
+            <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">
+              <X size={16} />
+            </Button>
+          </div>
         </div>
 
         {q.isLoading && <div className="px-5"><Loading /></div>}
         <div className="px-5"><ErrorNote error={q.error} /></div>
 
-        {d && s && (
+        {d && s && tab === "team" && (
+          <div className="px-5 py-5">
+            <TeamView team={d.team} session={s} prompts={d.prompts} totalTokens={d.inputTokens + d.outputTokens + d.cacheReadTokens + d.cacheWriteTokens} />
+          </div>
+        )}
+
+        {d && s && tab === "review" && (
           <div className="space-y-6 px-5 py-5">
             <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <h3 className="mb-3 text-sm font-medium text-zinc-200">How did it go?</h3>

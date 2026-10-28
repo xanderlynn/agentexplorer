@@ -14,6 +14,7 @@ mod retro;
 mod signals;
 mod sources;
 mod stats;
+mod team;
 mod trends;
 mod util;
 mod watcher;

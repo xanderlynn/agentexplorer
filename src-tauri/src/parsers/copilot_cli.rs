@@ -1,6 +1,7 @@
 //! GitHub Copilot CLI sessions: `~/.copilot/session-state/<id>/events.jsonl`
 //! plus a `workspace.yaml` with the folder, branch and a session name.
 
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::model::{LastEvent, ParsedSession, Prompt, TokenUsage};
+use crate::team::{Finish, Handoff, Kind, LEAD, Status, Team};
 use crate::util::{parse_ts, truncate};
 
 use super::{MAX_PROMPT_CHARS, open_lines};
@@ -31,6 +33,8 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
     let mut fallback_output_tokens: u64 = 0;
     let mut shutdown_seen = false;
     let mut premium = 0.0;
+    // read_agent call id → the agent it reads, to attribute its report.
+    let mut reads: HashMap<String, String> = HashMap::new();
 
     for line in open_lines(events)?.lines() {
         let Ok(line) = line else { break };
@@ -118,12 +122,26 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 s.last_event = Some(LastEvent::TurnEnded);
             }
             "tool.execution_start" => {
-                // Sub-agent work is reported by subagent.* events; counting
-                // its tool calls here would not match Claude Code's numbers.
-                if d.get("parentAgentTaskId")
-                    .and_then(Value::as_str)
-                    .is_some_and(|x| !x.is_empty())
-                {
+                let call = d.get("toolCallId").and_then(Value::as_str).unwrap_or("");
+                let tool = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
+                let args = &d["arguments"];
+                let parent = ["parentToolCallId", "parentAgentTaskId"]
+                    .iter()
+                    .find_map(|k| d.get(*k).and_then(Value::as_str))
+                    .filter(|x| !x.is_empty());
+                note_team_tool(
+                    &mut s.team,
+                    &mut reads,
+                    parent.unwrap_or(LEAD),
+                    call,
+                    tool,
+                    args,
+                    ts,
+                );
+                if let Some(p) = parent {
+                    s.team.tool(p, tool);
+                    // Sub-agent work is reported by subagent.* events; counting
+                    // its tool calls here would not match Claude Code's numbers.
                     continue;
                 }
                 let mut name = d.get("toolName").and_then(Value::as_str).unwrap_or("tool");
@@ -143,6 +161,7 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 s.last_event = Some(LastEvent::Working);
             }
             "tool.execution_complete" => {
+                note_team_result(&mut s.team, &reads, d, ts);
                 if d.get("success").and_then(Value::as_bool) == Some(false) {
                     s.tool_errors += 1;
                     let name = d
@@ -163,7 +182,40 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 );
             }
             "session.plan_changed" => s.planned = true,
-            "subagent.started" => s.subagents += 1,
+            "subagent.started" => {
+                s.subagents += 1;
+                if let Some(call) = d.get("toolCallId").and_then(Value::as_str)
+                    && let Some(a) = s.team.agent(call)
+                {
+                    if let Some(r) = d.get("agentDisplayName").and_then(Value::as_str) {
+                        a.role = r.to_string();
+                    }
+                    a.started_at = a.started_at.or(ts);
+                }
+            }
+            "subagent.completed" | "subagent.failed" => {
+                if let Some(call) = d.get("toolCallId").and_then(Value::as_str) {
+                    let n = |k: &str| d.get(k).and_then(Value::as_u64);
+                    let error = d.get("error").and_then(Value::as_str);
+                    s.team.finish(
+                        call,
+                        ts,
+                        Finish {
+                            status: Some(if kind == "subagent.failed" {
+                                Status::Failed
+                            } else {
+                                Status::Done
+                            }),
+                            result: error,
+                            model: d.get("model").and_then(Value::as_str),
+                            tokens: n("totalTokens"),
+                            tool_calls: n("totalToolCalls"),
+                            duration_ms: n("durationMs").map(|x| x as i64),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             "abort" => {
                 s.interruptions += 1;
                 s.note_turn_end(ts);
@@ -259,6 +311,70 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
 }
 
 /// `workspace.yaml` is flat `key: value` pairs; a full YAML parser is overkill.
+/// Team traffic in a tool call: `task` hands work to a new agent,
+/// `write_agent` messages one, `read_agent` collects its report.
+fn note_team_tool(
+    team: &mut Team,
+    reads: &mut HashMap<String, String>,
+    me: &str,
+    call: &str,
+    tool: &str,
+    args: &Value,
+    ts: Option<i64>,
+) {
+    let arg = |k: &str| args.get(k).and_then(Value::as_str);
+    match tool {
+        "task" => team.hand_off(
+            call,
+            me,
+            ts,
+            Handoff {
+                role: arg("agent_type"),
+                task: arg("description"),
+                brief: arg("prompt"),
+                name: arg("name"),
+                model: arg("model"),
+                background: arg("mode") == Some("background"),
+            },
+        ),
+        "write_agent" => {
+            if let Some(to) = arg("agent_id") {
+                team.say(ts, me, to, Kind::Message, arg("message").unwrap_or(""));
+            }
+        }
+        "read_agent" => {
+            if let Some(id) = arg("agent_id") {
+                reads.insert(call.to_string(), id.to_string());
+            }
+        }
+        _ => team.schedule_from(tool, args, me, ts),
+    }
+}
+
+/// A `task` call that ran in the foreground returns the agent's report;
+/// a `read_agent` call returns a background agent's.
+fn note_team_result(team: &mut Team, reads: &HashMap<String, String>, d: &Value, ts: Option<i64>) {
+    let Some(call) = d.get("toolCallId").and_then(Value::as_str) else {
+        return;
+    };
+    let text = match &d["result"] {
+        Value::String(t) => t.as_str(),
+        r => r.get("content").and_then(Value::as_str).unwrap_or(""),
+    };
+    if let Some(agent) = reads.get(call) {
+        if !text.is_empty() {
+            team.report(agent, ts, text);
+        }
+    } else if team.agent(call).is_some()
+        && d.pointer("/toolTelemetry/properties/execution_mode")
+            .and_then(Value::as_str)
+            != Some("background")
+        && !text.starts_with("Agent started in background")
+    {
+        team.report(call, ts, text);
+    }
+}
+
 fn read_workspace(path: &Path, s: &mut ParsedSession) {
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
@@ -284,6 +400,56 @@ fn read_workspace(path: &Path, s: &mut ParsedSession) {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn builds_the_team() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join("s").join("events.jsonl");
+        std::fs::create_dir_all(events.parent().unwrap()).unwrap();
+        let lines = [
+            r#"{"type":"user.message","timestamp":"2026-02-01T09:00:00Z","data":{"content":"Scaffold the API"}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:01Z","data":{"toolCallId":"c1","toolName":"task","arguments":{"name":"scaffold","agent_type":"task","description":"Scaffold the project","prompt":"dotnet new webapi","mode":"background"}}}"#,
+            r#"{"type":"tool.execution_complete","timestamp":"2026-02-01T09:00:02Z","data":{"toolCallId":"c1","success":true,"result":{"content":"Agent started in background with agent_id: scaffold."},"toolTelemetry":{"properties":{"execution_mode":"background"}}}}"#,
+            r#"{"type":"subagent.started","timestamp":"2026-02-01T09:00:02Z","data":{"toolCallId":"c1","agentName":"task","agentDisplayName":"Task Agent"}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:03Z","data":{"toolCallId":"k1","toolName":"bash","parentToolCallId":"c1","arguments":{}}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:04Z","data":{"toolCallId":"w1","toolName":"write_agent","arguments":{"agent_id":"scaffold","message":"use minimal APIs"}}}"#,
+            r#"{"type":"subagent.completed","timestamp":"2026-02-01T09:00:20Z","data":{"toolCallId":"c1","model":"claude-haiku-4.5","totalToolCalls":2,"totalTokens":6950,"durationMs":18000}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:21Z","data":{"toolCallId":"r1","toolName":"read_agent","arguments":{"agent_id":"scaffold"}}}"#,
+            r#"{"type":"tool.execution_complete","timestamp":"2026-02-01T09:00:22Z","data":{"toolCallId":"r1","success":true,"result":{"content":"Created Api.csproj and Program.cs"}}}"#,
+        ];
+        std::fs::write(&events, lines.join("\n")).unwrap();
+
+        let s = parse(&[events]).unwrap().unwrap();
+        let a = &s.team.agents[0];
+        assert_eq!(
+            (a.role.as_str(), a.name.as_deref(), a.status),
+            ("Task Agent", Some("scaffold"), Status::Done)
+        );
+        assert_eq!(
+            (a.tokens, a.tool_calls, a.model.as_deref()),
+            (6950, 2, Some("claude-haiku-4.5"))
+        );
+        assert_eq!(
+            a.result.as_deref(),
+            Some("Created Api.csproj and Program.cs")
+        );
+        // The sub-agent's own tool call is not the lead's.
+        assert_eq!(s.tool_counts.get("bash"), None);
+        let flow: Vec<_> = s
+            .team
+            .messages
+            .iter()
+            .map(|m| (m.from.as_str(), m.kind))
+            .collect();
+        assert_eq!(
+            flow,
+            [
+                (LEAD, Kind::Handoff),
+                (LEAD, Kind::Message),
+                ("c1", Kind::Report)
+            ]
+        );
+    }
 
     #[test]
     fn parses_events_and_workspace() {

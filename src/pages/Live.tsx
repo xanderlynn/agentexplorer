@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, isWaiting, useLive, type LiveSession, type LiveState } from "../api";
+import { roleOf } from "../components/TeamView";
 import { Card, Empty, ErrorNote, Loading, PageHeader, SourceBadge, Stat, cx } from "../components/ui";
 import { MODE_COLOR, MODE_LABEL, SMART_ZONE_DEFAULT, ago, compact, duration, projectName } from "../format";
 
@@ -73,6 +74,20 @@ function Row({ s, onOpen, zone }: { s: LiveSession; onOpen: (id: string) => void
               </span>
             )}
           </div>
+          {(s.agentsRunning.length > 0 || s.scheduled > 0) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+              {s.agentsRunning.map(([who, task], i) => (
+                <span key={i} className="inline-flex max-w-xs items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200" title={task}>
+                  <span className="animate-pulse" aria-hidden>●</span>
+                  <span className="truncate">{roleOf(who)[0]}: {task || "working"}</span>
+                </span>
+              ))}
+              {s.agentsRunning.length > 0 && s.agentsTotal > s.agentsRunning.length && (
+                <span className="text-zinc-500">{s.agentsTotal - s.agentsRunning.length} done</span>
+              )}
+              {s.scheduled > 0 && <span className="rounded-md bg-sky-500/10 px-1.5 py-0.5 text-sky-200">{s.scheduled} scheduled</span>}
+            </div>
+          )}
           {isWaiting(s.state) && s.lastMessage && (
             <div className="mt-1.5 line-clamp-2 rounded-md border-l-2 border-amber-500/60 bg-zinc-900/60 px-2 py-1 text-xs text-zinc-400">{s.lastMessage}</div>
           )}

@@ -248,7 +248,7 @@ impl Ingestor {
 /// Bump when the parsers start recording new per-session signals. It is part
 /// of every unit's fingerprint, so a bump re-parses every transcript; rows
 /// with a lower version stay out of signal-based statistics until they are.
-pub const SIGNALS_VERSION: i64 = 5;
+pub const SIGNALS_VERSION: i64 = 7;
 
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())
@@ -323,10 +323,10 @@ fn upsert_session(
             wait_ms_total, wait_count, ingested_at, tool_counts, reads, edits, shell_calls,
             edits_without_read, re_edits, compactions, subagents, corrections, category,
             last_message, signals_version, ask_score, tool_errors_by, tool_vetoes, agent_ms,
-            timeline, mode_ms, planned, peak_context, last_context
+            timeline, mode_ms, planned, peak_context, last_context, team
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
                    ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
-                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54)
+                   ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)
          ON CONFLICT(id) DO UPDATE SET
             file_path = excluded.file_path,
             project_path = COALESCE(excluded.project_path, project_path),
@@ -356,7 +356,7 @@ fn upsert_session(
             tool_vetoes = excluded.tool_vetoes, agent_ms = excluded.agent_ms,
             timeline = excluded.timeline, mode_ms = excluded.mode_ms,
             planned = excluded.planned, peak_context = excluded.peak_context,
-            last_context = excluded.last_context",
+            last_context = excluded.last_context, team = excluded.team",
         params![
             id,
             source.as_str(),
@@ -416,6 +416,7 @@ fn upsert_session(
             s.planned,
             s.peak_context as i64,
             s.last_context as i64,
+            serde_json::to_string(&s.team)?,
         ],
     )?;
 
@@ -463,7 +464,10 @@ fn archived_unit(data_dir: &Path, source: Source, original_main: &Path) -> Optio
     }
     let mut paths = vec![main];
     if let Ok(rd) = std::fs::read_dir(dir.join("sub")) {
-        let mut subs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        let mut subs: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .collect();
         subs.sort();
         paths.extend(subs);
     }
@@ -492,7 +496,12 @@ fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(p, target)?;
+        std::fs::copy(p, &target)?;
+        // A Claude Code sub-agent's role and task sit in a file beside it.
+        let side = p.with_extension("meta.json");
+        if i > 0 && side.is_file() {
+            std::fs::copy(side, target.with_extension("meta.json"))?;
+        }
     }
     Ok(())
 }

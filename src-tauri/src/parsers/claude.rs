@@ -10,6 +10,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::model::{LastEvent, ParsedSession, Prompt, TokenUsage};
+use crate::team::{self, Finish, Handoff, Kind, LEAD, Status, Team};
 use crate::util::{parse_ts, truncate};
 
 use super::{MAX_PROMPT_CHARS, open_lines};
@@ -28,19 +29,65 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
             .unwrap_or_default(),
         ..Default::default()
     };
-    parse_file(main, &mut s, false)?;
+    parse_file(main, &mut s, None)?;
     s.subagents = paths.len() as u64 - 1;
     for sub in &paths[1..] {
+        let (key, finished) = link_subagent(&mut s.team, sub);
         // A broken sub-agent file should not drop the whole session.
-        let _ = parse_file(sub, &mut s, true);
+        let _ = parse_file(sub, &mut s, Some(&key));
+        if finished
+            && s.team
+                .agent(&key)
+                .is_some_and(|a| a.status == Status::Running)
+        {
+            s.team.finish(&key, None, Finish::default());
+        }
     }
+    s.team.sort();
     if s.title.is_none() {
         s.title = s.prompts.first().map(|p| truncate(&p.text, 120));
     }
     Ok((!s.is_empty()).then_some(s))
 }
 
-fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<()> {
+/// Matches a sub-agent transcript to the hand-off that started it, using
+/// the `.meta.json` written beside it. Returns its key and whether its run
+/// is over.
+fn link_subagent(team: &mut Team, path: &Path) -> (String, bool) {
+    let stem = path
+        .file_stem()
+        .map(|x| x.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = stem.strip_prefix("agent-").unwrap_or(&stem).to_string();
+    let meta: Value = std::fs::read_to_string(path.with_extension("meta.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    let m = |k: &str| meta.get(k).and_then(Value::as_str);
+    match m("toolUseId") {
+        Some(call) if team.agent(call).is_some() => team.alias(call, &key),
+        _ => team.hand_off(
+            &key,
+            LEAD,
+            None,
+            Handoff {
+                role: m("agentType"),
+                task: m("description"),
+                ..Default::default()
+            },
+        ),
+    }
+    (
+        key,
+        meta.get("finished").and_then(Value::as_bool) == Some(true),
+    )
+}
+
+/// `agent` is the sub-agent whose transcript this is; `None` for the main one.
+fn parse_file(path: &Path, s: &mut ParsedSession, agent: Option<&str>) -> Result<()> {
+    let is_subagent = agent.is_some();
+    let me = agent.unwrap_or(LEAD);
+    let (mut first, mut last) = (None, None);
     // Each content block is its own line but repeats the message's usage, so
     // usage is keyed by message id and counted once.
     let mut usage_by_msg: HashMap<String, (String, TokenUsage)> = HashMap::new();
@@ -55,6 +102,14 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
             .and_then(Value::as_str)
             .and_then(parse_ts);
         let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+        if ts.is_some() {
+            first = first.or(ts);
+            last = ts;
+        }
+        // Older versions wrote agent-to-agent lines into the main transcript
+        // without saying which agent; they are left out of the team.
+        let unattributed =
+            !is_subagent && v.get("isSidechain").and_then(Value::as_bool) == Some(true);
 
         if !is_subagent {
             fill_context(s, &v);
@@ -75,6 +130,16 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                         s.note_context(usage.input + usage.cache_read + usage.cache_write);
                     }
                     usage_by_msg.insert(id.to_string(), (model.to_string(), usage));
+                    if is_subagent && let Some(a) = s.team.agent(me) {
+                        a.model.get_or_insert_with(|| model.to_string());
+                    }
+                }
+                if !unattributed {
+                    for item in content_items(msg) {
+                        if item.get("type").and_then(Value::as_str) == Some("tool_use") {
+                            note_team_tool(&mut s.team, me, item, ts, is_subagent);
+                        }
+                    }
                 }
                 if is_subagent || v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
                     continue;
@@ -120,7 +185,14 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
                     LastEvent::Working
                 });
             }
-            "user" if !is_subagent => handle_user(s, &v, ts),
+            "user" => {
+                if !unattributed {
+                    note_team_reply(&mut s.team, &v, ts);
+                }
+                if !is_subagent {
+                    handle_user(s, &v, ts);
+                }
+            }
             "custom-title" => {
                 if let Some(t) = v.get("customTitle").and_then(Value::as_str) {
                     s.title = Some(truncate(t, 200));
@@ -154,8 +226,16 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
         }
     }
 
+    s.team.span(me, first, last);
     let mut ids: Vec<_> = usage_by_msg.into_iter().collect();
     ids.sort_by(|a, b| a.0.cmp(&b.0));
+    if is_subagent && let Some(a) = s.team.agent(me) {
+        let fresh: u64 = ids
+            .iter()
+            .map(|(_, (_, u))| u.input + u.output + u.cache_write)
+            .sum();
+        a.tokens = a.tokens.max(fresh);
+    }
     for (_, (model, usage)) in ids {
         if !is_subagent {
             s.assistant_turns += 1;
@@ -164,6 +244,122 @@ fn parse_file(path: &Path, s: &mut ParsedSession, is_subagent: bool) -> Result<(
         s.add_tokens(&model, &usage);
     }
     Ok(())
+}
+
+/// Team traffic in a tool call made by `me`: hand-offs, messages, reports
+/// and scheduled work.
+fn note_team_tool(team: &mut Team, me: &str, item: &Value, ts: Option<i64>, is_subagent: bool) {
+    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+    let input = &item["input"];
+    let str_of = |k: &str| input.get(k).and_then(Value::as_str);
+    if is_subagent {
+        team.tool(me, name);
+    }
+    match name {
+        "Agent" | "Task" => {
+            let Some(id) = item.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            team.hand_off(
+                id,
+                me,
+                ts,
+                Handoff {
+                    role: str_of("subagent_type"),
+                    task: str_of("description"),
+                    brief: str_of("prompt"),
+                    name: str_of("name"),
+                    model: str_of("model"),
+                    background: input.get("run_in_background").and_then(Value::as_bool)
+                        == Some(true),
+                },
+            );
+        }
+        "SendMessage" => {
+            if let Some(to) = str_of("to") {
+                let text = str_of("message").or(str_of("summary")).unwrap_or("");
+                team.say(ts, me, to, Kind::Message, text);
+            }
+        }
+        "SubagentHandback" => team.report(me, ts, str_of("message").unwrap_or("")),
+        _ => team.schedule_from(name, input, me, ts),
+    }
+}
+
+/// Results coming back to whoever started an agent: the hand-off's tool
+/// result and, for background agents, the completion notice.
+fn note_team_reply(team: &mut Team, v: &Value, ts: Option<i64>) {
+    let msg = &v["message"];
+    for item in content_items(msg) {
+        if item.get("type").and_then(Value::as_str) != Some("tool_result") {
+            continue;
+        }
+        let Some(call) = item.get("tool_use_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if team.agent(call).is_none() {
+            continue;
+        }
+        let r = &v["toolUseResult"];
+        if let Some(id) = r.get("agentId").and_then(Value::as_str) {
+            team.alias(call, id);
+        }
+        let n = |k: &str| r.get(k).and_then(Value::as_u64);
+        let failed = item.get("is_error").and_then(Value::as_bool) == Some(true);
+        if failed || r.get("status").and_then(Value::as_str) == Some("completed") {
+            let text = tool_result_text(item);
+            team.finish(
+                call,
+                ts,
+                Finish {
+                    status: Some(if failed { Status::Failed } else { Status::Done }),
+                    result: Some(&text),
+                    tokens: n("totalTokens"),
+                    tool_calls: n("totalToolUseCount"),
+                    duration_ms: n("totalDurationMs").map(|d| d as i64),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    let text = user_text(msg);
+    let Some(note) = team::tag(&text, "task-notification") else {
+        return;
+    };
+    let (Some(call), Some(id)) = (team::tag(note, "tool-use-id"), team::tag(note, "task-id"))
+    else {
+        return;
+    };
+    if team.agent(call).is_none() {
+        return;
+    }
+    team.alias(call, id);
+    let num = |k: &str| team::tag(note, k).and_then(|x| x.parse::<u64>().ok());
+    // When the agent handed its report back itself, the notice only says so.
+    let result = team::tag(note, "result");
+    let handed_back = result.is_some_and(|r| r.starts_with("This agent's report was delivered"));
+    team.finish(
+        call,
+        ts,
+        Finish {
+            status: Some(match team::tag(note, "status") {
+                Some("failed") => Status::Failed,
+                Some("killed" | "stopped" | "cancelled") => Status::Stopped,
+                _ => Status::Done,
+            }),
+            result: if handed_back {
+                None
+            } else {
+                result.or(team::tag(note, "summary"))
+            },
+            handed_back,
+            tokens: num("subagent_tokens"),
+            tool_calls: num("tool_uses"),
+            duration_ms: num("duration_ms").map(|d| d as i64),
+            ..Default::default()
+        },
+    );
 }
 
 fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
@@ -399,6 +595,84 @@ mod tests {
         assert_eq!(d.cost_usd, Some(1.25));
         assert!(!d.cost_is_estimate);
         assert_eq!(d.ended_at.unwrap() - d.started_at.unwrap(), 120_000);
+    }
+
+    #[test]
+    fn builds_the_team() {
+        let dir = tempfile::tempdir().unwrap();
+        // Lines are wrapped here for reading; a transcript has one per line.
+        let one = |ls: &[&str]| ls.iter().map(|l| l.replace('\n', "")).collect::<Vec<_>>();
+        let main_lines = one(&[
+            r#"{"type":"user","origin":{"kind":"human"},"timestamp":"2026-01-01T10:00:00Z","message":{"role":"user","content":"Review the app"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T10:00:05Z","message":{"id":"m1","model":"claude-opus-5-5","stop_reason":"tool_use","content":[
+                    {"type":"tool_use","id":"tu1","name":"Agent","input":{"description":"Review the backend","prompt":"Read src-tauri and list bugs","subagent_type":"Explore","run_in_background":true}},
+                    {"type":"tool_use","id":"tu2","name":"Agent","input":{"description":"Check the UI","prompt":"Look at src","name":"ui-check"}},
+                    {"type":"tool_use","id":"tu3","name":"CronCreate","input":{"cron":"50 23 * * *","prompt":"Run the nightly review"}}
+                ],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T10:00:06Z","toolUseResult":{"agentId":"aaa","status":"async_launched"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"launched"}]}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T10:01:00Z","toolUseResult":{"agentId":"bbb","status":"completed","totalTokens":900,"totalToolUseCount":4},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":[{"type":"text","text":"UI looks fine"}]}]}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T10:03:00Z","message":{"role":"user","content":"<task-notification>\n<task-id>aaa</task-id>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n<result>This agent's report was delivered to you as a message.</result>\n<usage><subagent_tokens>5000</subagent_tokens><tool_uses>7</tool_uses><duration_ms>170000</duration_ms></usage>\n</task-notification>"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T10:04:00Z","message":{"id":"m2","model":"claude-opus-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ]);
+        let main = write(
+            dir.path(),
+            "t.jsonl",
+            &main_lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        let subs = dir.path().join("t/subagents");
+        std::fs::create_dir_all(&subs).unwrap();
+        std::fs::write(subs.join("agent-aaa.meta.json"), r#"{"agentType":"Explore","description":"Review the backend","toolUseId":"tu1","finished":true}"#).unwrap();
+        let sub_lines = one(&[
+            r#"{"type":"user","isSidechain":true,"agentId":"aaa","timestamp":"2026-01-01T10:00:10Z","message":{"role":"user","content":"Read src-tauri and list bugs"}}"#,
+            r#"{"type":"assistant","isSidechain":true,"agentId":"aaa","timestamp":"2026-01-01T10:00:20Z","message":{"id":"s1","model":"claude-haiku-5-5","content":[
+                    {"type":"tool_use","id":"x1","name":"Read","input":{"file_path":"a.rs"}},
+                    {"type":"tool_use","id":"x2","name":"SendMessage","input":{"to":"ui-check","message":"Does the UI call get_session?"}}
+                ],"usage":{"input_tokens":7,"output_tokens":3}}}"#,
+            r#"{"type":"assistant","isSidechain":true,"agentId":"aaa","timestamp":"2026-01-01T10:02:50Z","message":{"id":"s2","model":"claude-haiku-5-5","content":[
+                    {"type":"tool_use","id":"x3","name":"SubagentHandback","input":{"message":"Found two bugs in ingest.rs"}}
+                ],"usage":{"input_tokens":7,"output_tokens":3}}}"#,
+        ]);
+        let sub = write(
+            &subs,
+            "agent-aaa.jsonl",
+            &sub_lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+
+        let s = parse(&[main, sub]).unwrap().unwrap();
+        let t = &s.team;
+        assert_eq!(t.agents.len(), 2);
+        let be = &t.agents[0];
+        assert_eq!(
+            (be.role.as_str(), be.task.as_str(), be.status),
+            ("Explore", "Review the backend", Status::Done)
+        );
+        assert!(be.background);
+        assert_eq!((be.tokens, be.tool_calls), (5000, 7));
+        assert_eq!(be.model.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(be.result.as_deref(), Some("Found two bugs in ingest.rs"));
+        let ui = &t.agents[1];
+        assert_eq!(
+            (ui.name.as_deref(), ui.status, ui.result.as_deref()),
+            (Some("ui-check"), Status::Done, Some("UI looks fine"))
+        );
+
+        let flow: Vec<_> = t
+            .messages
+            .iter()
+            .map(|m| (m.from.as_str(), m.to.as_str(), m.kind))
+            .collect();
+        assert_eq!(
+            flow,
+            [
+                (LEAD, "tu1", Kind::Handoff),
+                (LEAD, "tu2", Kind::Handoff),
+                ("tu1", "tu2", Kind::Message),
+                ("tu2", LEAD, Kind::Report),
+                ("tu1", LEAD, Kind::Report),
+            ]
+        );
+        assert_eq!(t.scheduled.len(), 1);
+        assert_eq!(t.scheduled[0].cron.as_deref(), Some("50 23 * * *"));
     }
 
     #[test]

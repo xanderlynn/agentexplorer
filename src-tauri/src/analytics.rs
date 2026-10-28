@@ -394,6 +394,7 @@ pub struct SessionDetail {
     pub commits: Vec<CommitRow>,
     pub playbooks: Vec<SessionPlaybook>,
     pub intent: Option<LinkedIntent>,
+    pub team: crate::team::Team,
 }
 
 pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
@@ -411,11 +412,13 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         external_id: String,
         tool_errors_by: String,
         tool_vetoes: String,
+        team: crate::team::Team,
     }
     let x = conn.query_row(
         "SELECT file_path, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, lines_added, lines_removed, notes, tool_counts,
-                last_message, external_id, tool_errors_by, tool_vetoes
+                last_message, external_id, tool_errors_by, tool_vetoes, team, last_event,
+                ended_at
          FROM sessions WHERE id = ?1",
         [id],
         |r| {
@@ -429,6 +432,11 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
                 external_id: r.get(10)?,
                 tool_errors_by: r.get(11)?,
                 tool_vetoes: r.get(12)?,
+                team: crate::live::team_of(
+                    &r.get::<_, String>(13)?,
+                    r.get::<_, Option<String>>(14)?.as_deref(),
+                    r.get(15)?,
+                ),
             })
         },
     )?;
@@ -514,6 +522,7 @@ pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
         commits,
         playbooks,
         intent,
+        team: x.team,
     })
 }
 

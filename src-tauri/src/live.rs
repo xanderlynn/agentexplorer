@@ -4,6 +4,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::team::{Status, Team};
 use crate::util::now_ms;
 
 /// Sessions with activity inside this window appear on the Live page.
@@ -34,6 +35,11 @@ pub struct LiveSession {
     pub mode: Option<String>,
     /// Context sent with the latest request, in tokens.
     pub context: i64,
+    /// Sub-agents still at work: (role or name, task).
+    pub agents_running: Vec<(String, String)>,
+    pub agents_total: usize,
+    /// Scheduled work still to come.
+    pub scheduled: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +62,18 @@ fn last_mode(timeline: &str) -> Option<String> {
         .map(|m| m.key().to_string())
 }
 
+fn is_live(state: &str) -> bool {
+    !matches!(state, "idle" | "ended")
+}
+
+/// A stored team, with unreported agents marked stopped once the session
+/// is over.
+pub fn team_of(json: &str, last_event: Option<&str>, ended_at: i64) -> Team {
+    let mut t: Team = serde_json::from_str(json).unwrap_or_default();
+    t.settle(is_live(state_for(last_event, (now_ms() - ended_at).max(0))));
+    t
+}
+
 pub fn state_for(last_event: Option<&str>, age_ms: i64) -> &'static str {
     match last_event {
         Some("closed") => "ended",
@@ -71,7 +89,8 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     let now = now_ms();
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
-                active_ms, wait_ms_total, wait_count, last_message, outcome, timeline, last_context
+                active_ms, wait_ms_total, wait_count, last_message, outcome, timeline, last_context,
+                team
          FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 50",
     )?;
     let sessions: Vec<LiveSession> = stmt
@@ -81,6 +100,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             let age = (now - ended).max(0);
             let wait_total: i64 = r.get(9)?;
             let wait_count: i64 = r.get(10)?;
+            let team = team_of(&r.get::<_, String>(15)?, last_event.as_deref(), ended);
             Ok(LiveSession {
                 id: r.get(0)?,
                 source: r.get(1)?,
@@ -96,6 +116,26 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 outcome: r.get(12)?,
                 mode: last_mode(&r.get::<_, String>(13)?),
                 context: r.get(14)?,
+                agents_running: team
+                    .agents
+                    .iter()
+                    .filter(|a| a.status == Status::Running)
+                    .map(|a| {
+                        (
+                            a.name.clone().unwrap_or_else(|| a.role.clone()),
+                            a.task.clone(),
+                        )
+                    })
+                    .collect(),
+                agents_total: team.agents.len(),
+                scheduled: if team.live {
+                    team.scheduled
+                        .iter()
+                        .filter(|j| !j.cancelled && (j.recurring || j.at.is_some_and(|t| t > now)))
+                        .count()
+                } else {
+                    0
+                },
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

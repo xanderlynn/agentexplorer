@@ -9,6 +9,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::model::{LastEvent, ParsedSession, Prompt, TokenUsage};
+use crate::team::{Finish, Handoff, LEAD, Status, Team};
 use crate::util::truncate;
 
 use super::{MAX_PROMPT_CHARS, open_lines};
@@ -111,7 +112,11 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 Some("toolInvocation" | "toolInvocationSerialized") => {
                     let name = item.get("toolId").and_then(Value::as_str).unwrap_or("tool");
                     // "copilot_readFile" → "readFile" for grouping with other tools.
-                    s.note_tool(&vscode_tool_name(name), None, None);
+                    let name = vscode_tool_name(name);
+                    if name == "runSubagent" {
+                        note_subagent(&mut s.team, item, ts, end);
+                    }
+                    s.note_tool(&name, None, None);
                 }
                 // Plain markdown parts carry no kind.
                 None | Some("markdownContent") => {
@@ -184,6 +189,52 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
         s.title = s.prompts.first().map(|p| truncate(&p.text, 120));
     }
     Ok((!s.is_empty()).then_some(s))
+}
+
+/// A `runSubagent` call: the agent it ran, its task and, once complete,
+/// its result.
+fn note_subagent(team: &mut Team, item: &Value, start: Option<i64>, end: Option<i64>) {
+    let Some(call) = item.get("toolCallId").and_then(Value::as_str) else {
+        return;
+    };
+    let text = |v: &Value| match v {
+        Value::String(t) => Some(t.clone()),
+        v => v.get("value").and_then(Value::as_str).map(str::to_string),
+    };
+    let data = &item["toolSpecificData"];
+    let field = |k: &str| data.get(k).and_then(Value::as_str);
+    let invocation = text(&item["invocationMessage"]);
+    team.hand_off(
+        call,
+        LEAD,
+        start,
+        Handoff {
+            role: field("agentName").or(field("subagentType")),
+            task: field("description").or(invocation.as_deref()),
+            brief: field("prompt"),
+            ..Default::default()
+        },
+    );
+    if item.get("isComplete").and_then(Value::as_bool) == Some(true) {
+        let result = field("result")
+            .map(str::to_string)
+            .or_else(|| text(&item["pastTenseMessage"]));
+        team.finish(
+            call,
+            end,
+            Finish {
+                status: Some(
+                    if item.get("isConfirmed").and_then(Value::as_bool) == Some(false) {
+                        Status::Stopped
+                    } else {
+                        Status::Done
+                    },
+                ),
+                result: result.as_deref(),
+                ..Default::default()
+            },
+        );
+    }
 }
 
 /// Rebuilds the session object from a `.jsonl` patch log:

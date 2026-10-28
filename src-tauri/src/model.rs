@@ -126,6 +126,8 @@ pub struct ParsedSession {
     pub re_edits: u64,
     pub compactions: u64,
     pub subagents: u64,
+    /// Sub-agents, their messages, and work scheduled for later.
+    pub team: crate::team::Team,
     /// The agent's most recent text reply, for "what is it asking me?".
     pub last_message: Option<String>,
     /// Failed calls per tool name (excluding calls the user rejected).

@@ -108,6 +108,57 @@ export interface SessionDetail {
     link: "auto" | "manual";
   }[];
   intent: { id: number; goal: string; expectedMinutes: number; confidence: number; outcome: Outcome | null } | null;
+  team: Team;
+}
+
+/** "you" and "lead" are the two members every session has; agents use their own ids. */
+export type AgentStatus = "running" | "done" | "failed" | "stopped";
+
+export interface TeamAgent {
+  id: string;
+  name: string | null;
+  /** Agent type: general-purpose, Explore, Task Agent, a custom agent… */
+  role: string;
+  task: string;
+  brief: string | null;
+  model: string | null;
+  /** "lead" or the id of the agent that handed it the work. */
+  parent: string;
+  background: boolean;
+  status: AgentStatus;
+  startedAt: number | null;
+  endedAt: number | null;
+  toolCalls: number;
+  tokens: number;
+  tools: Record<string, number>;
+  result: string | null;
+}
+
+export interface TeamMessage {
+  ts: number | null;
+  from: string;
+  to: string;
+  kind: "handoff" | "report" | "message";
+  text: string;
+}
+
+export interface ScheduledWork {
+  id: string | null;
+  by: string;
+  createdAt: number | null;
+  cron: string | null;
+  at: number | null;
+  recurring: boolean;
+  task: string;
+  cancelled: boolean;
+}
+
+export interface Team {
+  agents: TeamAgent[];
+  messages: TeamMessage[];
+  scheduled: ScheduledWork[];
+  /** The session is still going. */
+  live: boolean;
 }
 
 export interface Totals {
@@ -225,6 +276,10 @@ export interface LiveSession {
   outcome: Outcome | null;
   mode: Mode | null;
   context: number;
+  /** Sub-agents still at work: [role or name, task]. */
+  agentsRunning: [string, string][];
+  agentsTotal: number;
+  scheduled: number;
 }
 
 export interface LiveSummary {
