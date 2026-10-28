@@ -128,6 +128,10 @@ pub struct ParsedSession {
     pub subagents: u64,
     /// Sub-agents, their messages, and work scheduled for later.
     pub team: crate::team::Team,
+    /// Skills used, by name, whether the agent or you invoked them.
+    pub skills: BTreeMap<String, u64>,
+    /// MCP tool calls per server.
+    pub mcp: BTreeMap<String, u64>,
     /// The agent's most recent text reply, for "what is it asking me?".
     pub last_message: Option<String>,
     /// Failed calls per tool name (excluding calls the user rejected).
@@ -373,6 +377,19 @@ impl ParsedSession {
         let t = text.trim();
         if !t.is_empty() {
             self.last_message = Some(crate::util::truncate(t, 600));
+        }
+    }
+
+    pub fn note_skill(&mut self, name: &str) {
+        let name = name.trim().trim_start_matches('/');
+        if !name.is_empty() {
+            *self.skills.entry(name.to_string()).or_default() += 1;
+        }
+    }
+
+    pub fn note_mcp(&mut self, server: &str) {
+        if !server.is_empty() {
+            *self.mcp.entry(server.to_string()).or_default() += 1;
         }
     }
 

@@ -18,6 +18,7 @@ import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
 import Live from "./pages/Live";
 import Teams from "./pages/Teams";
+import Toolkit from "./pages/Toolkit";
 import Journal from "./pages/Journal";
 import Patterns from "./pages/Patterns";
 import Usage from "./pages/Usage";
@@ -29,7 +30,7 @@ import Settings from "./pages/Settings";
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "live" | "teams" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "live" | "teams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -47,6 +48,7 @@ const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Pag
     tabs: [
       { page: "patterns", label: "Patterns" },
       { page: "execution", label: "Execution" },
+      { page: "toolkit", label: "Toolkit" },
       { page: "journal", label: "Journal" },
       { page: "playbooks", label: "Playbooks" },
     ],
@@ -207,6 +209,7 @@ export default function App() {
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
           {page === "live" && <Live onOpen={setOpenSession} />}
           {page === "teams" && <Teams onOpen={openTeam} />}
+          {page === "toolkit" && <Toolkit days={days} setDays={setDays} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
           {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} drill={openSessions} />}
           {page === "usage" && <Usage days={days} setDays={setDays} drill={openSessions} />}

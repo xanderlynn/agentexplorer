@@ -138,6 +138,9 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     args,
                     ts,
                 );
+                if let Some(server) = d.get("mcpServerName").and_then(Value::as_str) {
+                    s.note_mcp(server);
+                }
                 if let Some(p) = parent {
                     s.team.tool(p, tool);
                     // Sub-agent work is reported by subagent.* events; counting
@@ -182,6 +185,11 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                 );
             }
             "session.plan_changed" => s.planned = true,
+            "skill.invoked" => {
+                if let Some(name) = d.get("name").and_then(Value::as_str) {
+                    s.note_skill(name);
+                }
+            }
             "subagent.started" => {
                 s.subagents += 1;
                 if let Some(call) = d.get("toolCallId").and_then(Value::as_str)
@@ -413,6 +421,8 @@ mod tests {
             r#"{"type":"subagent.started","timestamp":"2026-02-01T09:00:02Z","data":{"toolCallId":"c1","agentName":"task","agentDisplayName":"Task Agent"}}"#,
             r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:03Z","data":{"toolCallId":"k1","toolName":"bash","parentToolCallId":"c1","arguments":{}}}"#,
             r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:04Z","data":{"toolCallId":"w1","toolName":"write_agent","arguments":{"agent_id":"scaffold","message":"use minimal APIs"}}}"#,
+            r#"{"type":"skill.invoked","timestamp":"2026-02-01T09:00:04Z","data":{"name":"grill-me","trigger":"agent-invoked"}}"#,
+            r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:04Z","data":{"toolCallId":"m1","toolName":"github-mcp-server-list_issues","mcpServerName":"github-mcp-server","arguments":{}}}"#,
             r#"{"type":"subagent.completed","timestamp":"2026-02-01T09:00:20Z","data":{"toolCallId":"c1","model":"claude-haiku-4.5","totalToolCalls":2,"totalTokens":6950,"durationMs":18000}}"#,
             r#"{"type":"tool.execution_start","timestamp":"2026-02-01T09:00:21Z","data":{"toolCallId":"r1","toolName":"read_agent","arguments":{"agent_id":"scaffold"}}}"#,
             r#"{"type":"tool.execution_complete","timestamp":"2026-02-01T09:00:22Z","data":{"toolCallId":"r1","success":true,"result":{"content":"Created Api.csproj and Program.cs"}}}"#,
@@ -433,6 +443,8 @@ mod tests {
             a.result.as_deref(),
             Some("Created Api.csproj and Program.cs")
         );
+        assert_eq!(s.skills.get("grill-me"), Some(&1));
+        assert_eq!(s.mcp.get("github-mcp-server"), Some(&1));
         // The sub-agent's own tool call is not the lead's.
         assert_eq!(s.tool_counts.get("bash"), None);
         let flow: Vec<_> = s

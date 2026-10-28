@@ -15,6 +15,7 @@ mod signals;
 mod sources;
 mod stats;
 mod team;
+mod toolkit;
 mod trends;
 mod util;
 mod watcher;
@@ -92,6 +93,7 @@ pub fn run() {
             commands::save_review,
             commands::get_live,
             commands::list_teams,
+            commands::get_toolkit,
             commands::rescan,
             commands::get_sources,
             commands::set_source_enabled,

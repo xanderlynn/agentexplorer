@@ -295,6 +295,33 @@ export interface TeamSession {
   team: Team;
 }
 
+export interface ToolkitOutcomes {
+  rated: number;
+  success: number | null;
+  shipped: number;
+  reworked: number;
+}
+
+export interface ToolkitItem {
+  key: string;
+  sessions: number;
+  uses: number;
+  sources: Source[];
+  /** Sessions that used it, per week, oldest first. */
+  weekly: number[];
+  with: ToolkitOutcomes;
+  without: ToolkitOutcomes;
+}
+
+export interface Toolkit {
+  weeks: string[];
+  sessions: number;
+  agents: ToolkitItem[];
+  tools: ToolkitItem[];
+  mcp: ToolkitItem[];
+  skills: ToolkitItem[];
+}
+
 export interface LiveSummary {
   sessions: LiveSession[];
   working: number;
@@ -691,6 +718,7 @@ export const api = {
   preflight: (text: string, source: Source | null) => invoke<PreflightAdvice>("preflight", { text, source }),
   live: () => invoke<LiveSummary>("get_live"),
   teams: () => invoke<TeamSession[]>("list_teams"),
+  toolkit: (days: number, source: Source | null) => invoke<Toolkit>("get_toolkit", { days, source }),
   rescan: (force: boolean) => invoke<IngestReport>("rescan", { force }),
   sources: () => invoke<SourceStatus[]>("get_sources"),
   setSourceEnabled: (source: Source, enabled: boolean) => invoke<void>("set_source_enabled", { source, enabled }),

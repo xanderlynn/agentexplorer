@@ -116,6 +116,10 @@ pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
                     if name == "runSubagent" {
                         note_subagent(&mut s.team, item, ts, end);
                     }
+                    if item.pointer("/source/type").and_then(Value::as_str) == Some("mcp") {
+                        let server = item.pointer("/source/label").and_then(Value::as_str);
+                        s.note_mcp(server.unwrap_or("mcp"));
+                    }
                     s.note_tool(&name, None, None);
                 }
                 // Plain markdown parts carry no kind.

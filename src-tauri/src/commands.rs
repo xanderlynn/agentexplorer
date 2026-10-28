@@ -157,6 +157,17 @@ pub fn get_live(state: State<AppState>) -> CmdResult<LiveSummary> {
     with_db(&state, live::summary)
 }
 
+#[tauri::command(async)]
+pub fn get_toolkit(
+    state: State<AppState>,
+    days: i64,
+    source: Option<String>,
+) -> CmdResult<crate::toolkit::Toolkit> {
+    with_db(&state, |c| {
+        crate::toolkit::toolkit(c, days, source.as_deref())
+    })
+}
+
 #[tauri::command]
 pub fn list_teams(state: State<AppState>) -> CmdResult<Vec<live::TeamSession>> {
     with_db(&state, live::teams)

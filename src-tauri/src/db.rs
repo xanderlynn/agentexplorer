@@ -239,6 +239,10 @@ CREATE INDEX IF NOT EXISTS intents_session ON intents(session_id);
     r#"
 ALTER TABLE sessions ADD COLUMN team TEXT NOT NULL DEFAULT '{}';
 "#,
+    // Skills and MCP servers used, as JSON.
+    r#"
+ALTER TABLE sessions ADD COLUMN toolkit TEXT NOT NULL DEFAULT '{}';
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -300,6 +304,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "peak_context", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "last_context", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "team", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "toolkit", "TEXT NOT NULL DEFAULT '{}'"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),

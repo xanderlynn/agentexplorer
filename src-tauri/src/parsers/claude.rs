@@ -138,6 +138,7 @@ fn parse_file(path: &Path, s: &mut ParsedSession, agent: Option<&str>) -> Result
                     for item in content_items(msg) {
                         if item.get("type").and_then(Value::as_str) == Some("tool_use") {
                             note_team_tool(&mut s.team, me, item, ts, is_subagent);
+                            note_toolkit(s, item);
                         }
                     }
                 }
@@ -245,6 +246,61 @@ fn parse_file(path: &Path, s: &mut ParsedSession, agent: Option<&str>) -> Result
     }
     Ok(())
 }
+
+/// Skills and MCP servers a tool call used, by the lead or a sub-agent.
+fn note_toolkit(s: &mut ParsedSession, item: &Value) {
+    let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+    if name == "Skill" {
+        if let Some(skill) = item.pointer("/input/skill").and_then(Value::as_str) {
+            s.note_skill(skill);
+        }
+    } else if let Some(rest) = name.strip_prefix("mcp__") {
+        s.note_mcp(rest.split("__").next().unwrap_or(rest));
+    }
+}
+
+/// Slash commands that are part of Claude Code itself, not skills.
+const BUILTIN_COMMANDS: &[&str] = &[
+    "add-dir",
+    "agents",
+    "bug",
+    "clear",
+    "compact",
+    "config",
+    "context",
+    "cost",
+    "doctor",
+    "effort",
+    "exit",
+    "export",
+    "fast",
+    "help",
+    "hooks",
+    "ide",
+    "init",
+    "login",
+    "logout",
+    "mcp",
+    "memory",
+    "model",
+    "output-style",
+    "permissions",
+    "plan",
+    "plugin",
+    "plugins",
+    "pr-comments",
+    "quit",
+    "release-notes",
+    "resume",
+    "rewind",
+    "status",
+    "statusline",
+    "terminal-setup",
+    "theme",
+    "upgrade",
+    "usage",
+    "vim",
+];
 
 /// Team traffic in a tool call made by `me`: hand-offs, messages, reports
 /// and scheduled work.
@@ -423,6 +479,13 @@ fn handle_user(s: &mut ParsedSession, v: &Value, ts: Option<i64>) {
     s.user_turns += 1;
     s.note_human_prompt(ts);
     s.last_event = Some(LastEvent::Working);
+    if let Some(cmd) = text
+        .strip_prefix('/')
+        .and_then(|c| c.split_whitespace().next())
+        && !BUILTIN_COMMANDS.contains(&cmd)
+    {
+        s.note_skill(cmd);
+    }
     s.prompts.push(Prompt {
         ts,
         text: truncate(&text, MAX_PROMPT_CHARS),
@@ -572,6 +635,8 @@ mod tests {
         assert_eq!(s.git_branch.as_deref(), Some("main"));
         assert_eq!(s.user_turns, 2);
         assert_eq!(s.prompts[1].text, "/review auth");
+        // A slash command that is not built in is a skill you invoked.
+        assert_eq!(s.skills.get("review"), Some(&1));
         assert_eq!(s.assistant_turns, 2);
         assert_eq!(s.tool_calls, 2);
         assert_eq!(s.tool_counts.get("Read"), Some(&1));
@@ -607,7 +672,9 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2026-01-01T10:00:05Z","message":{"id":"m1","model":"claude-opus-5-5","stop_reason":"tool_use","content":[
                     {"type":"tool_use","id":"tu1","name":"Agent","input":{"description":"Review the backend","prompt":"Read src-tauri and list bugs","subagent_type":"Explore","run_in_background":true}},
                     {"type":"tool_use","id":"tu2","name":"Agent","input":{"description":"Check the UI","prompt":"Look at src","name":"ui-check"}},
-                    {"type":"tool_use","id":"tu3","name":"CronCreate","input":{"cron":"50 23 * * *","prompt":"Run the nightly review"}}
+                    {"type":"tool_use","id":"tu3","name":"CronCreate","input":{"cron":"50 23 * * *","prompt":"Run the nightly review"}},
+                    {"type":"tool_use","id":"tu4","name":"Skill","input":{"skill":"anthropic-skills:pdf"}},
+                    {"type":"tool_use","id":"tu5","name":"mcp__github__create_pull_request","input":{}}
                 ],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
             r#"{"type":"user","timestamp":"2026-01-01T10:00:06Z","toolUseResult":{"agentId":"aaa","status":"async_launched"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"launched"}]}}"#,
             r#"{"type":"user","timestamp":"2026-01-01T10:01:00Z","toolUseResult":{"agentId":"bbb","status":"completed","totalTokens":900,"totalToolUseCount":4},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":[{"type":"text","text":"UI looks fine"}]}]}}"#,
@@ -673,6 +740,8 @@ mod tests {
         );
         assert_eq!(t.scheduled.len(), 1);
         assert_eq!(t.scheduled[0].cron.as_deref(), Some("50 23 * * *"));
+        assert_eq!(s.skills.get("anthropic-skills:pdf"), Some(&1));
+        assert_eq!(s.mcp.get("github"), Some(&1));
     }
 
     #[test]
