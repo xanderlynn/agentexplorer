@@ -290,6 +290,32 @@ fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (LiveStatus, i
     (status, quiet_ms)
 }
 
+/// A stored session's status now, for views beyond the live window. Settles
+/// its team the same way the live views do.
+pub fn status_of(
+    team: &mut Team,
+    last_event: Option<&str>,
+    pending_tool: Option<&str>,
+    last_message: Option<&str>,
+    failed: bool,
+    ended: i64,
+    now: i64,
+) -> LiveStatus {
+    derive(
+        team,
+        Signals {
+            last_event,
+            pending_tool,
+            last_message,
+            failed,
+            ..Default::default()
+        },
+        ended,
+        now,
+    )
+    .0
+}
+
 /// A stored team without its message log, which the live views never show.
 fn team_lite(json: &str) -> Team {
     #[derive(Default, serde::Deserialize)]

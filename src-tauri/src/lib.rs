@@ -9,7 +9,7 @@ mod updates;
 // friends working in the app's own modules.
 pub(crate) use tilly_core::{
     alerts, analytics, db, experiments, ingest, journal, live, model, playbooks, sources,
-    status_alerts, store, toolkit, trends, util, watcher,
+    status_alerts, store, toolkit, trends, util, watcher, workstreams,
 };
 
 use std::path::PathBuf;
@@ -78,6 +78,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_releases,
+            commands::list_workstreams,
+            commands::set_task_kind,
             commands::install_release,
             commands::get_overview,
             commands::quick_review,

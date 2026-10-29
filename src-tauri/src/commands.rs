@@ -23,7 +23,7 @@ use crate::retro::{self, RetroRow};
 use crate::store::{SessionFilter, SessionRow};
 use crate::updates;
 use crate::util::ErrorKind;
-use crate::{AppState, db, sources, store, trends};
+use crate::{AppState, db, sources, store, trends, workstreams};
 
 type CmdResult<T> = Result<T, CmdError>;
 
@@ -454,6 +454,26 @@ pub async fn generate_retro(
 #[tauri::command(async)]
 pub fn delete_retro(state: State<AppState>, id: i64) -> CmdResult<()> {
     with_db(&state, |c| retro::delete(c, id))
+}
+
+// ------------------------------------------------------------- workstreams
+
+#[tauri::command(async)]
+pub fn list_workstreams(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<Vec<workstreams::Workstream>> {
+    with_db(&state, |c| workstreams::workstreams(c, days))
+}
+
+/// `kind` is "agent" or "human"; none clears your choice.
+#[tauri::command(async)]
+pub fn set_task_kind(
+    state: State<AppState>,
+    task_key: String,
+    kind: Option<workstreams::TaskKind>,
+) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::set_kind(c, &task_key, kind))
 }
 
 // ----------------------------------------------------------------- updates

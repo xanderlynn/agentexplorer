@@ -34,3 +34,4 @@ pub mod toolkit;
 pub mod trends;
 pub mod util;
 pub mod watcher;
+pub mod workstreams;

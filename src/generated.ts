@@ -31,6 +31,11 @@ export const STATUS_GROUP: Record<LiveStatus, SessionGroup> = {
 
 export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
 
+export type TaskStatus = "pending" | "in_progress" | "done" | "cancelled";
+
+/** Who a task is for; see workstreams.rs `classify`. */
+export type TaskKind = "agent" | "human";
+
 /** How a command failed; see util.rs `ErrorKind`. */
 export type ErrorKind = "not_found" | "busy" | "failed";
 

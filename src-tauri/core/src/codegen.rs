@@ -8,8 +8,10 @@ use std::fmt::Write;
 use crate::live::LiveStatus;
 use crate::sources::Source;
 use crate::stats::MIN_SAMPLE;
+use crate::tasks::TaskStatus;
 use crate::team::AgentLiveStatus;
 use crate::util::ErrorKind;
+use crate::workstreams::TaskKind;
 
 fn union(ids: impl IntoIterator<Item = String>) -> String {
     ids.into_iter()
@@ -71,6 +73,17 @@ pub fn typescript() -> String {
         ts,
         "export type LiveAgentStatus = {};\n",
         union(AgentLiveStatus::ALL.iter().map(id_of))
+    );
+    let _ = writeln!(
+        ts,
+        "export type TaskStatus = {};\n",
+        union(TaskStatus::ALL.iter().map(id_of))
+    );
+    ts += "/** Who a task is for; see workstreams.rs `classify`. */\n";
+    let _ = writeln!(
+        ts,
+        "export type TaskKind = {};\n",
+        union(TaskKind::ALL.iter().map(id_of))
     );
     ts += "/** How a command failed; see util.rs `ErrorKind`. */\n";
     let _ = writeln!(

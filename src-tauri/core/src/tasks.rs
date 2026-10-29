@@ -22,6 +22,13 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
+    pub const ALL: [TaskStatus; 4] = [
+        TaskStatus::Pending,
+        TaskStatus::InProgress,
+        TaskStatus::Done,
+        TaskStatus::Cancelled,
+    ];
+
     fn parse(s: &str) -> Option<TaskStatus> {
         Some(match s.to_ascii_lowercase().replace('-', "_").as_str() {
             "pending" | "not_started" | "todo" | "open" | "blocked" => TaskStatus::Pending,
