@@ -13,7 +13,7 @@ Everything stays on your computer. Tilly runs on macOS and Windows, and is built
 
 ![Control center: four sessions awaiting you, with what each is waiting on, above the working, scheduled and completed columns](docs/screenshots/control.png)
 
-**[Download Tilly](https://github.com/xanderlynn/tilly/releases/latest)** · **[Read the guide](https://github.com/xanderlynn/tilly/wiki)** · [What's new](CHANGELOG.md)
+**[Download Tilly](https://github.com/xanderlynn/tilly/releases/latest)** · [A quick tour](#a-quick-tour) · [Your first week](#your-first-week) · [FAQ](#faq) · [What's new](CHANGELOG.md)
 
 ## A quick tour
 
@@ -21,7 +21,20 @@ Everything stays on your computer. Tilly runs on macOS and Windows, and is built
 
 ### Agents: what needs you, right now
 
-The **Control center** is where Tilly opens. Each session gets one status: *your turn*, *needs permission*, *might need approval*, *failed*, *working*, *long task*, *scheduled* or *completed*. The *Awaiting you* queue puts the longest wait first and shows what the agent asked or is stuck on. Above it: how many agents are working, how long they have waited on you today, and your reply time.
+The **Control center** is where Tilly opens. Each session gets one status, worked out from its log (table below). The *Awaiting you* queue puts the longest wait first and shows what the agent asked or is stuck on. Above it: how many agents are working, how long they have waited on you today, and your reply time.
+
+| Status | Means |
+| --- | --- |
+| **Your turn** | The agent finished and asked you something, or is waiting on a question or plan approval. |
+| **Needs permission** | Waiting for you to approve a tool call (Copilot logs these). |
+| **Might need approval** | A file, web or MCP tool call has had no result for 45 seconds. Claude Code doesn't log permission prompts, so this is a best guess. |
+| **Failed** | The latest turn ended in an error or hit the output limit. |
+| **Working** / **Long task** | At work; a long task has been quiet mid-turn for over two minutes (a build, a long command, a sub-agent). |
+| **Scheduled** | Idle now, with work scheduled to run later. |
+| **Completed** / **Closed** | Finished its turn without asking you anything, or the tool closed the session. |
+| **Idle** | No activity for 30 minutes: stalled, or the tool was closed. |
+
+Sessions stay in the live view for three hours after their last turn, and the sidebar's **Agents** badge counts the ones awaiting you.
 
 **Teams** shows sessions where the lead agent handed work to sub-agents: who is on each team, what each was asked to do, whether it reported back, and what is scheduled to run later.
 
@@ -61,7 +74,14 @@ Pick a sound (a built-in tone or your own WAV or Ogg file), an image and a volum
 
 ![Settings: themes and the status sounds and images table](docs/screenshots/settings.png)
 
-Every area is described in detail in the [guide](https://github.com/xanderlynn/tilly/wiki). Press ⌘K (Ctrl+K on Windows) anywhere to jump to a page or search every prompt you've written.
+Press ⌘K (Ctrl+K on Windows) anywhere to jump to a page or search every prompt you've written.
+
+## Your first week
+
+1. **Leave it running.** Let it tell you when an agent needs you, and pick which statuses make a sound in Settings.
+2. **Rate sessions as they finish.** **Today** lists them; one click each: shipped, partial, abandoned or redo. Ratings power the insights; 10 to 20 are enough to start seeing patterns.
+3. **Look at Outcomes after a week:** your success rate, and which kinds of task you delegate well.
+4. **Try one experiment.** Pick one habit, say "ask for a plan before code on multi-file changes", and let **Improve** measure it against your baseline.
 
 ## Data sources
 
@@ -100,6 +120,22 @@ For a portable install, unzip the archive before running it. On macOS, move `Til
 Until the downloads are code-signed, the OS warns on first launch. This applies to both installers and portable archives. On macOS, right-click Tilly and choose **Open**, then **Open** again. On Windows, choose **More info → Run anyway**. Extract the archive before bypassing the warning rather than running Tilly from inside the ZIP.
 
 Tilly lives in the menu bar (macOS) or the system tray (Windows). Closing the window keeps it running so it can alert you; choose **Quit Tilly** from the tray menu to stop it.
+
+## FAQ
+
+**The Control center is empty.** It shows sessions active in the last three hours. Start a Claude Code or Copilot session and it appears within seconds. If your history is missing too, check **Settings → Data sources**, and whether you set `CLAUDE_CONFIG_DIR` or `COPILOT_HOME`.
+
+**A session says "Might need approval" but it's fine.** Claude Code doesn't log permission prompts, so Tilly guesses from a file, web or MCP tool call with no result for 45 seconds. Long-running commands and sub-agents are excluded, and the status clears as soon as the tool returns.
+
+**Why are Copilot costs estimates?** Copilot is a subscription. Tilly prices its tokens at API rates so you can compare tools; it isn't your bill.
+
+**Does Tilly slow my machine?** It reads only new log lines and pushes changes to the window instead of polling. In the tray with eight agents busy it uses under 1% of one CPU core and under 100 MB of memory; the window adds more while it's open and frees it when closed.
+
+**My MP3 alert won't import.** Use WAV or Ogg; MP3 isn't supported.
+
+**I used Governess or Execution Ledger before.** Those were Tilly's earlier names. Your data and saved API key move over on first launch.
+
+**Found a security issue?** See [SECURITY.md](SECURITY.md). Anything else: [open an issue](https://github.com/xanderlynn/tilly/issues).
 
 ## Develop
 
