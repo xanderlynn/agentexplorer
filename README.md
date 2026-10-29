@@ -36,6 +36,12 @@ The **Control center** is where Tilly opens. Each session gets one status, worke
 
 Sessions stay in the live view for three hours after their last turn, and the sidebar's **Agents** badge counts the ones awaiting you.
 
+**Workstreams** shows larger efforts that span sessions: everything on one feature branch, or a session whose agent kept a task list. Each card shows progress (done, in progress, waiting on you), the agents on it and their latest update. Open one for its task tree, built from the agents' own task lists (Claude Code's todos and plans, Copilot's todos): each task is marked as agent work or yours (approvals, decisions, credentials, release steps, or anything the agent is waiting on you for), and you can change who it's for.
+
+| Workstreams | One workstream |
+| --- | --- |
+| ![Workstreams: effort cards with progress, agent and human task counts, team and latest update](docs/screenshots/workstreams.png) | ![A workstream's task tree by session, with agent and You badges, the selected task and its updates](docs/screenshots/workstream-detail.png) |
+
 **Teams** shows sessions where the lead agent handed work to sub-agents: who is on each team, what each was asked to do, whether it reported back, and what is scheduled to run later.
 
 ![Teams: three sub-agents at work on a payments migration, and recent sessions with their teams](docs/screenshots/teams.png)

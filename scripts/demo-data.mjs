@@ -75,11 +75,14 @@ const write = (path, text) => {
 
 // ------------------------------------------------------------ Claude Code
 
-function claudeSession({ project, title, prompt, start, steps, model, agents = [], skill, mcp, end = "done", pending, finalText, cron }) {
+// `plan` is the agent's task list as [title, final status]: written at the
+// start (all pending) and again near the end, the way agents update theirs.
+// `planTool` picks Claude Code's TodoWrite or the Claude app's update_plan.
+function claudeSession({ project, title, prompt, start, steps, model, agents = [], skill, mcp, end = "done", pending, finalText, cron, plan, planTool = "TodoWrite", branchName }) {
   const sid = uuid();
   const cwd = PROJECTS[project];
   const base = join(home, ".claude/projects", cwd.replaceAll("/", "-"));
-  const branch = title.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+  const branch = branchName ?? title.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const ctx = { sessionId: sid, cwd, gitBranch: `feature/${branch}`, entrypoint: "cli" };
   let t = start;
   let out = line({ type: "user", timestamp: iso(t), ...ctx, origin: { kind: "human" }, message: { role: "user", content: prompt } });
@@ -96,6 +99,11 @@ function claudeSession({ project, title, prompt, start, steps, model, agents = [
     out += result(id, res, err);
   };
 
+  const writePlan = (items) =>
+    planTool === "TodoWrite"
+      ? tool("TodoWrite", { todos: items.map(([content, status]) => ({ content, status, activeForm: content })) })
+      : tool("mcp__ccd_turn__update_plan", { items: items.map(([content, status]) => ({ content, status })) });
+  if (plan) writePlan(plan.map(([c]) => [c, "pending"]));
   if (skill) tool("Skill", { skill });
   for (const [role, task, brief] of agents) {
     const id = nextId("toolu_");
@@ -130,6 +138,7 @@ function claudeSession({ project, title, prompt, start, steps, model, agents = [
     tool(name, name === "Bash" ? { command: pick(["npm test", "go test ./...", "terraform plan", "npm run lint"]) } : { file_path: `${cwd}/${pick(FILES)}` }, err ? "1 test failed" : "ok", err);
     if (mcp && i === Math.floor(steps / 2)) tool(mcp, {});
   }
+  if (plan) writePlan(plan);
   if (cron) tool("CronCreate", { cron: "0 2 * * *", prompt: cron, recurring: true });
   t += between(5, 20) * 1000;
   if (end === "done") {
@@ -148,7 +157,9 @@ function claudeSession({ project, title, prompt, start, steps, model, agents = [
 
 // ------------------------------------------------------------ Copilot CLI
 
-function copilotSession({ project, title, prompt, start, steps, model = "gpt-5.5", end = "done", agent }) {
+// `todos` are [id, title, final status], kept in Copilot CLI's todos table
+// through its sql tool, with an intent note as it works.
+function copilotSession({ project, title, prompt, start, steps, model = "gpt-5.5", end = "done", agent, todos, intent }) {
   const sid = uuid();
   const cwd = PROJECTS[project];
   const dir = join(home, ".copilot/session-state", sid);
@@ -158,6 +169,16 @@ function copilotSession({ project, title, prompt, start, steps, model = "gpt-5.5
   let out = ev("session.start", { context: { cwd, branch: "main" }, selectedModel: model });
   out += ev("user.message", { content: prompt });
   out += ev("assistant.turn_start", {});
+  const sqlCall = (query) => {
+    t += 3000;
+    out += ev("tool.execution_start", { toolCallId: nextId("call_"), toolName: "sql", arguments: { description: "Track todos", query } });
+  };
+  if (todos) {
+    const q = (s) => `'${s.replaceAll("'", "''")}'`;
+    sqlCall(`INSERT INTO todos (id, title, status) VALUES\n${todos.map(([id, title]) => `  (${q(id)}, ${q(title)}, 'pending')`).join(",\n")};`);
+    for (const [id, , status] of todos.filter((x) => x[2] !== "pending")) sqlCall(`UPDATE todos SET status = ${q(status)} WHERE id = ${q(id)}`);
+  }
+  if (intent) out += ev("tool.execution_start", { toolCallId: nextId("call_"), toolName: "report_intent", arguments: { intent } });
   if (agent) {
     const call = nextId("call_");
     t += 10_000;
@@ -221,13 +242,14 @@ function logs() {
   }
 
   // Live right now.
-  claudeSession({ project: "storefront-web", title: "Apple Pay at checkout", prompt: "Add Apple Pay as a payment option at checkout, behind the payments feature flag.", start: NOW - 25 * MIN, steps: 18, model: "claude-opus-5-5", agents: [ROLES[0]], end: "pending", pending: { name: "AskUserQuestion", input: { questions: [{ question: "Should Apple Pay show for guests or only signed-in shoppers?" }] } } });
-  claudeSession({ project: "billing-api", title: "Migrate to the new payments SDK", prompt: "Move billing-api to the v2 payments SDK. Split the work across a team: map, migrate, test.", start: NOW - 14 * MIN, steps: 6, model: "claude-opus-5-5", agents: [ROLES[0], ["general-purpose", "Migrate the webhook handlers", "Port internal/webhooks to the v2 SDK."], ROLES[3]], end: "team" });
+  claudeSession({ project: "storefront-web", title: "Apple Pay at checkout", prompt: "Add Apple Pay as a payment option at checkout, behind the payments feature flag.", start: NOW - 25 * MIN, steps: 18, model: "claude-opus-5-5", agents: [ROLES[0]], end: "pending", pending: { name: "AskUserQuestion", input: { questions: [{ question: "Should Apple Pay show for guests or only signed-in shoppers?" }] } }, plan: [["Add the Apple Pay button to checkout", "completed"], ["Wire up the payment sheet", "completed"], ["Decide on guest checkout", "in_progress"], ["Add the merchant ID to the staging config", "pending"], ["Write checkout tests", "pending"]] });
+  claudeSession({ project: "billing-api", title: "Payments SDK: compare v1 and v2", prompt: "Compare the v1 and v2 payments SDKs and write a migration plan.", start: NOW - DAY - 3 * 60 * MIN, steps: 10, model: "claude-opus-5-5", branchName: "payments-sdk-v2", plan: [["Compare the v1 and v2 APIs", "completed"], ["Write the migration plan", "completed"]], finalText: "The migration plan is in docs/payments-v2.md." });
+  claudeSession({ project: "billing-api", title: "Migrate to the new payments SDK", prompt: "Move billing-api to the v2 payments SDK. Split the work across a team: map, migrate, test.", start: NOW - 14 * MIN, steps: 6, model: "claude-opus-5-5", agents: [ROLES[0], ["general-purpose", "Migrate the webhook handlers", "Port internal/webhooks to the v2 SDK."], ROLES[3]], end: "team", branchName: "payments-sdk-v2", plan: [["Map every SDK call site", "completed"], ["Migrate the charge flow", "completed"], ["Migrate the webhook handlers", "in_progress"], ["Update the unit tests", "in_progress"], ["Create staging API keys", "pending"], ["Approve the rollout plan", "pending"], ["Remove the old SDK", "pending"]] });
   claudeSession({ project: "mobile-app", title: "Fix the flaky orders test", prompt: "OrdersScreen.test.tsx fails about one run in five on CI. Find out why and fix it.", start: NOW - 9 * MIN, steps: 12, model: "claude-sonnet-5-5", end: "pending", pending: { name: "Edit", input: { file_path: `${PROJECTS["mobile-app"]}/src/screens/Orders.test.tsx` } } });
-  claudeSession({ project: "docs-site", title: "Search for the docs", prompt: "Add static search to the docs site.", start: NOW - 4 * MIN, steps: 5, model: "claude-haiku-5-5", end: "pending", pending: { name: "Bash", input: { command: "npm run build" } } });
+  claudeSession({ project: "docs-site", title: "Search for the docs", prompt: "Add static search to the docs site.", start: NOW - 4 * MIN, steps: 5, model: "claude-haiku-5-5", end: "pending", pending: { name: "Bash", input: { command: "npm run build" } }, planTool: "update_plan", plan: [["Pick a search index", "completed"], ["Build the index at deploy time", "in_progress"], ["Add the search box", "pending"], ["Handle typos in queries", "pending"]] });
   claudeSession({ project: "platform-infra", title: "Nightly dependency audit", prompt: "Set up a nightly audit of our dependencies and open an issue for anything vulnerable.", start: NOW - 40 * MIN, steps: 8, model: "claude-sonnet-5-5", cron: "Audit dependencies and open issues for vulnerable ones", finalText: "The nightly audit runs at 02:00." });
   claudeSession({ project: "billing-api", title: "Prorate plan upgrades", prompt: TASKS[4][2], start: NOW - 50 * MIN, steps: 40, model: "claude-opus-5-5", end: "failed" });
-  copilotSession({ project: "platform-infra", title: "Restart the staging API", prompt: "Staging API pods are stuck on the old config. Restart them.", start: NOW - 6 * MIN, steps: 4, end: "permission" });
+  copilotSession({ project: "platform-infra", title: "Restart the staging API", prompt: "Staging API pods are stuck on the old config. Restart them.", start: NOW - 6 * MIN, steps: 4, end: "permission", todos: [["pods", "Find the stuck pods", "done"], ["restart", "Restart the staging API", "in_progress"], ["verify", "Check the new config is live", "pending"]], intent: "Restarting the API deployment" });
 
   writeFileSync(join(home, ".demo-reviews.json"), JSON.stringify(reviews));
   console.log(`Wrote fictional logs to ${home}`);

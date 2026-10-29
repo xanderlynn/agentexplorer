@@ -308,13 +308,13 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
 
     let mut out: Vec<Workstream> = groups
         .into_iter()
-        .map(|(key, rows)| build(key, rows, &stored))
+        .map(|(key, rows)| build(key, rows, &stored, now))
         .collect();
     out.sort_by_key(|w| std::cmp::Reverse(w.last_activity));
     Ok(out)
 }
 
-fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>) -> Workstream {
+fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: i64) -> Workstream {
     // Rows arrive newest first; the tree reads oldest first.
     let rows: Vec<Row> = rows.into_iter().rev().collect();
     let first = &rows[0];
@@ -357,7 +357,8 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>) -> Wo
             status: r.status,
             ended_at: r.ended,
         });
-        if r.status.group() == Group::Awaiting {
+        // Only recent sessions wait on you; an old failure is history.
+        if r.status.group() == Group::Awaiting && now - r.ended < live::LIVE_WINDOW_MS {
             ws.counts.needs_you += 1;
         }
         ws.agents.push(WsAgent {

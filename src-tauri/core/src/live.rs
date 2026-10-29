@@ -9,7 +9,7 @@ use crate::team::{AgentLiveStatus, Status as AgentStatus, Team};
 use crate::util::now_ms;
 
 /// Sessions with activity inside this window appear in the control center.
-const LIVE_WINDOW_MS: i64 = 3 * 3_600_000;
+pub const LIVE_WINDOW_MS: i64 = 3 * 3_600_000;
 /// A working session silent this long is running something long.
 const LONG_TASK_AFTER_MS: i64 = 2 * 60_000;
 /// A non-shell tool still pending after this may be waiting on a permission
