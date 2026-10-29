@@ -145,6 +145,7 @@ src-tauri/
     ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
     watcher.rs             filesystem events, periodic scans, live state pushed to a Sink
     live.rs                each session's status and today's live stats
+    codegen.rs             writes src/generated.ts (tool ids, statuses, shared thresholds); a test fails if it is stale
     status_alerts.rs       which status changes to announce, per your profile
     team.rs, toolkit.rs    sub-agents and their messages; agents, tools, MCP servers, skills
     analytics.rs, trends.rs, experiments.rs, journal.rs, playbooks.rs, git.rs
@@ -155,7 +156,7 @@ src-tauri/
     commands.rs            the Tauri command surface
 ```
 
-**Adding an agent tool.** Write its parser in `core/src/parsers/`, then a plug-in in `core/src/sources/` that implements `AgentSource` (its id, label, log folders, session discovery and parsing; resume commands and instruction files are optional), and list it in `Source::ALL` in `sources/mod.rs`. Ingest, archiving, the watcher, settings and the read models pick it up from there. The UI still names each tool in `src/api.ts` (the `Source` type) and `src/format.ts` (label and colour).
+**Adding an agent tool.** Write its parser in `core/src/parsers/`, then a plug-in in `core/src/sources/` that implements `AgentSource` (its id, label, log folders, session discovery and parsing; resume commands and instruction files are optional), and list it in `Source::ALL` in `sources/mod.rs`. Ingest, archiving, the watcher, settings and the read models pick it up from there. Then run `UPDATE_GENERATED=1 cargo test -p tilly-core generated_ts` in `src-tauri` so the UI picks up its id and labels, and give it a colour in `src/format.ts`.
 
 ## Releases and signing
 

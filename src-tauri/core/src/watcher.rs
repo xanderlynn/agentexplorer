@@ -14,7 +14,7 @@ use notify::{RecursiveMode, Watcher};
 
 use crate::db;
 use crate::ingest::{IngestReport, Ingestor};
-use crate::live::{self, LiveSummary, group};
+use crate::live::{self, Group, LiveSummary};
 use crate::status_alerts::{Alert, Tracker};
 
 /// Where the loop reports. The desktop app forwards to its window, tray,
@@ -65,7 +65,7 @@ impl LiveState {
         self.active = summary
             .sessions
             .iter()
-            .any(|s| matches!(group(&s.status), "active" | "awaiting"));
+            .any(|s| matches!(s.status.group(), Group::Active | Group::Awaiting));
         let all = summary.sessions.iter().chain(&summary.completed_today);
         let alerts = self.tracker.update(all);
         if !alerts.is_empty() {

@@ -11,6 +11,7 @@ pub const LEGACY_IDENTIFIERS: &[&str] =
 
 pub mod alerts;
 pub mod analytics;
+pub mod codegen;
 pub mod db;
 pub mod experiments;
 pub mod git;

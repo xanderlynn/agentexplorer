@@ -3,9 +3,9 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::team::{Status as AgentStatus, Team};
+use crate::team::{AgentLiveStatus, Status as AgentStatus, Team};
 use crate::util::now_ms;
 
 /// Sessions with activity inside this window appear in the control center.
@@ -45,17 +45,105 @@ pub struct Signals<'a> {
     pub upcoming_jobs: bool,
 }
 
-/// One status per session. Awaiting you: `asking`, `needs_permission`,
-/// `maybe_blocked`, `failed`. Completed: `done`, `ended`.
-pub fn status_for(s: Signals) -> &'static str {
+/// One status per session. The UI's copy of this list is generated from it
+/// (see `codegen`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveStatus {
+    Working,
+    LongTask,
+    MaybeBlocked,
+    NeedsPermission,
+    Asking,
+    Done,
+    Failed,
+    Scheduled,
+    #[default]
+    Stale,
+    Ended,
+}
+
+/// The part of the control center a status belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Group {
+    Awaiting,
+    Active,
+    Completed,
+    Scheduled,
+    Idle,
+}
+
+impl LiveStatus {
+    pub const ALL: [LiveStatus; 10] = [
+        LiveStatus::Working,
+        LiveStatus::LongTask,
+        LiveStatus::MaybeBlocked,
+        LiveStatus::NeedsPermission,
+        LiveStatus::Asking,
+        LiveStatus::Done,
+        LiveStatus::Failed,
+        LiveStatus::Scheduled,
+        LiveStatus::Stale,
+        LiveStatus::Ended,
+    ];
+
+    /// The id used in alert profiles and the UI.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LiveStatus::Working => "working",
+            LiveStatus::LongTask => "long_task",
+            LiveStatus::MaybeBlocked => "maybe_blocked",
+            LiveStatus::NeedsPermission => "needs_permission",
+            LiveStatus::Asking => "asking",
+            LiveStatus::Done => "done",
+            LiveStatus::Failed => "failed",
+            LiveStatus::Scheduled => "scheduled",
+            LiveStatus::Stale => "stale",
+            LiveStatus::Ended => "ended",
+        }
+    }
+
+    pub fn group(self) -> Group {
+        use LiveStatus::*;
+        match self {
+            Asking | NeedsPermission | MaybeBlocked | Failed => Group::Awaiting,
+            Working | LongTask => Group::Active,
+            Done | Ended => Group::Completed,
+            Scheduled => Group::Scheduled,
+            Stale => Group::Idle,
+        }
+    }
+
+    fn is_live(self) -> bool {
+        !matches!(self, LiveStatus::Stale | LiveStatus::Ended)
+    }
+}
+
+impl Group {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Group::Awaiting => "awaiting",
+            Group::Active => "active",
+            Group::Completed => "completed",
+            Group::Scheduled => "scheduled",
+            Group::Idle => "idle",
+        }
+    }
+}
+
+/// Awaiting you: `Asking`, `NeedsPermission`, `MaybeBlocked`, `Failed`.
+/// Completed: `Done`, `Ended`.
+pub fn status_for(s: Signals) -> LiveStatus {
+    use LiveStatus::*;
     let pending = s.pending_tool.unwrap_or("");
     match s.last_event {
-        Some("closed") => "ended",
+        Some("closed") => Ended,
         // A permission prompt nobody answered for this long was abandoned.
-        Some("needs_permission") if s.quiet_ms >= STALE_AFTER_MS => "stale",
-        Some("needs_permission") => "needs_permission",
-        Some("working") if ASKING_TOOLS.contains(&pending) => "asking",
-        Some("working") if s.quiet_ms >= STALE_AFTER_MS && !s.team_busy => "stale",
+        Some("needs_permission") if s.quiet_ms >= STALE_AFTER_MS => Stale,
+        Some("needs_permission") => NeedsPermission,
+        Some("working") if ASKING_TOOLS.contains(&pending) => Asking,
+        Some("working") if s.quiet_ms >= STALE_AFTER_MS && !s.team_busy => Stale,
         Some("working")
             if !pending.is_empty()
                 && !SHELL_TOOLS.contains(&pending)
@@ -63,18 +151,18 @@ pub fn status_for(s: Signals) -> &'static str {
                 && s.quiet_ms >= MAYBE_BLOCKED_AFTER_MS
                 && !s.team_busy =>
         {
-            "maybe_blocked"
+            MaybeBlocked
         }
-        Some("working") if s.quiet_ms < LONG_TASK_AFTER_MS => "working",
-        Some("working") => "long_task",
+        Some("working") if s.quiet_ms < LONG_TASK_AFTER_MS => Working,
+        Some("working") => LongTask,
         // The lead finished its turn but its team is still at work.
-        Some("turn_ended") if s.team_busy => "working",
-        Some("turn_ended") if s.failed => "failed",
-        Some("turn_ended") if s.quiet_ms >= LIVE_WINDOW_MS => "done",
-        Some("turn_ended") if s.last_message.is_some_and(asks_question) => "asking",
-        Some("turn_ended") if s.upcoming_jobs => "scheduled",
-        Some("turn_ended") => "done",
-        _ => "stale",
+        Some("turn_ended") if s.team_busy => Working,
+        Some("turn_ended") if s.failed => Failed,
+        Some("turn_ended") if s.quiet_ms >= LIVE_WINDOW_MS => Done,
+        Some("turn_ended") if s.last_message.is_some_and(asks_question) => Asking,
+        Some("turn_ended") if s.upcoming_jobs => Scheduled,
+        Some("turn_ended") => Done,
+        _ => Stale,
     }
 }
 
@@ -85,22 +173,6 @@ fn asks_question(msg: &str) -> bool {
         .ends_with('?')
 }
 
-fn is_live(status: &str) -> bool {
-    !matches!(status, "stale" | "ended")
-}
-
-/// The part of the control center a status belongs to. Mirrored by
-/// `group` in src/status.ts.
-pub fn group(status: &str) -> &'static str {
-    match status {
-        "asking" | "needs_permission" | "maybe_blocked" | "failed" => "awaiting",
-        "working" | "long_task" => "active",
-        "done" | "ended" => "completed",
-        "scheduled" => "scheduled",
-        _ => "idle",
-    }
-}
-
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveAgent {
@@ -108,8 +180,7 @@ pub struct LiveAgent {
     pub name: Option<String>,
     pub role: String,
     pub task: String,
-    /// running | quiet | done | failed | stopped
-    pub status: String,
+    pub status: AgentLiveStatus,
     pub started_at: Option<i64>,
     pub tokens: u64,
 }
@@ -122,7 +193,7 @@ pub struct LiveSession {
     pub title: Option<String>,
     pub project_path: Option<String>,
     pub git_branch: Option<String>,
-    pub status: String,
+    pub status: LiveStatus,
     /// When it entered its current status, as near as the logs tell.
     pub status_since: i64,
     pub ended_at: i64,
@@ -206,7 +277,7 @@ fn team_seen(team: &Team) -> Option<i64> {
 /// match: unreported agents are marked stopped once it goes quiet. The
 /// control center, the Teams page and the session drawer all use this, so
 /// they agree. Returns the status and how long it has been quiet.
-fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (&'static str, i64) {
+fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (LiveStatus, i64) {
     let seen = team_seen(team);
     let quiet_ms = (now - seen.map_or(ended, |s| s.max(ended))).max(0);
     let status = status_for(Signals {
@@ -215,7 +286,7 @@ fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (&'static str,
         upcoming_jobs: upcoming(team, now).0 > 0,
         ..sig
     });
-    team.settle(is_live(status) && quiet_ms < STALE_AFTER_MS);
+    team.settle(status.is_live() && quiet_ms < STALE_AFTER_MS);
     (status, quiet_ms)
 }
 
@@ -304,7 +375,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 now,
             );
             let status_since = match status {
-                "working" | "long_task" => turn_started.unwrap_or(ended),
+                LiveStatus::Working | LiveStatus::LongTask => turn_started.unwrap_or(ended),
                 _ => ended,
             };
             let agents = team
@@ -315,7 +386,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                     name: a.name.clone(),
                     role: a.role.clone(),
                     task: a.task.clone(),
-                    status: a.live_status(now, AGENT_QUIET_AFTER_MS).into(),
+                    status: a.live_status(now, AGENT_QUIET_AFTER_MS),
                     started_at: a.started_at,
                     tokens: a.tokens,
                 })
@@ -326,7 +397,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
                 title: r.get(2)?,
                 project_path: r.get(3)?,
                 git_branch: r.get(4)?,
-                status: status.to_string(),
+                status,
                 status_since,
                 ended_at: ended,
                 user_turns: r.get(7)?,
@@ -380,17 +451,17 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         }
         // Its latest turn finished and is not answered yet.
         if matches!(
-            s.status.as_str(),
-            "done" | "asking" | "failed" | "scheduled"
+            s.status,
+            LiveStatus::Done | LiveStatus::Asking | LiveStatus::Failed | LiveStatus::Scheduled
         ) && s.ended_at >= midnight
         {
             turns_today += 1;
             buckets[bucket_of(s.ended_at)].done += 1;
         }
         // A session working or awaiting you right now counts up to now.
-        let now_in = match group(&s.status) {
-            "active" => Some(&mut work),
-            "awaiting" => Some(&mut wait),
+        let now_in = match s.status.group() {
+            Group::Active => Some(&mut work),
+            Group::Awaiting => Some(&mut wait),
             _ => None,
         };
         if let Some(lane) = now_in {
@@ -422,24 +493,29 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         reply_histogram[i] += 1;
     }
 
-    let awaiting = |s: &LiveSession| group(&s.status) == "awaiting";
+    let awaiting = |s: &LiveSession| s.status.group() == Group::Awaiting;
     let (mut live, mut completed) = (Vec::new(), Vec::new());
     for (s, _, _) in all.drain(..) {
-        let done = group(&s.status) == "completed";
+        let done = s.status.group() == Group::Completed;
         if done && s.ended_at >= midnight {
             completed.push(s);
-        } else if now - s.ended_at < LIVE_WINDOW_MS || (is_live(&s.status) && s.status != "done") {
+        } else if now - s.ended_at < LIVE_WINDOW_MS
+            || (s.status.is_live() && s.status != LiveStatus::Done)
+        {
             live.push(s);
         }
     }
 
     Ok(LiveSummary {
-        working: live.iter().filter(|s| group(&s.status) == "active").count(),
+        working: live
+            .iter()
+            .filter(|s| s.status.group() == Group::Active)
+            .count(),
         awaiting: live.iter().filter(|s| awaiting(s)).count(),
         agents_running: live
             .iter()
             .flat_map(|s| &s.agents)
-            .filter(|a| matches!(a.status.as_str(), "running" | "quiet"))
+            .filter(|a| matches!(a.status, AgentLiveStatus::Running | AgentLiveStatus::Quiet))
             .count(),
         reply_median_ms: percentile(&replies, 0.5),
         reply_p75_ms: percentile(&replies, 0.75),
@@ -515,49 +591,52 @@ mod tests {
 
     #[test]
     fn working_sessions_age_into_long_tasks_then_stale() {
-        assert_eq!(status_for(st("working", 10_000)), "working");
-        assert_eq!(status_for(st("working", 5 * 60_000)), "long_task");
-        assert_eq!(status_for(st("working", 2 * 3_600_000)), "stale");
+        assert_eq!(status_for(st("working", 10_000)), LiveStatus::Working);
+        assert_eq!(status_for(st("working", 5 * 60_000)), LiveStatus::LongTask);
+        assert_eq!(status_for(st("working", 2 * 3_600_000)), LiveStatus::Stale);
     }
 
     #[test]
     fn pending_tools_tell_waiting_apart() {
         let mut s = st("working", 60_000);
         s.pending_tool = Some("Edit");
-        assert_eq!(status_for(s), "maybe_blocked");
+        assert_eq!(status_for(s), LiveStatus::MaybeBlocked);
         s.pending_tool = Some("Bash");
-        assert_eq!(status_for(s), "working");
+        assert_eq!(status_for(s), LiveStatus::Working);
         s.quiet_ms = 10 * 60_000;
-        assert_eq!(status_for(s), "long_task");
+        assert_eq!(status_for(s), LiveStatus::LongTask);
         s.pending_tool = Some("AskUserQuestion");
         s.quiet_ms = 1_000;
-        assert_eq!(status_for(s), "asking");
+        assert_eq!(status_for(s), LiveStatus::Asking);
         // A pending tool with a busy team is the team working, not a prompt.
         s.pending_tool = Some("Agent");
         s.quiet_ms = 10 * 60_000;
-        assert_eq!(status_for(s), "long_task");
+        assert_eq!(status_for(s), LiveStatus::LongTask);
     }
 
     #[test]
     fn finished_turns_are_asking_done_failed_or_scheduled() {
         let mut s = st("turn_ended", 60_000);
-        assert_eq!(status_for(s), "done");
+        assert_eq!(status_for(s), LiveStatus::Done);
         s.last_message = Some("Should I also update the tests?");
-        assert_eq!(status_for(s), "asking");
+        assert_eq!(status_for(s), LiveStatus::Asking);
         s.last_message = Some("All done.");
         s.upcoming_jobs = true;
-        assert_eq!(status_for(s), "scheduled");
+        assert_eq!(status_for(s), LiveStatus::Scheduled);
         s.failed = true;
-        assert_eq!(status_for(s), "failed");
+        assert_eq!(status_for(s), LiveStatus::Failed);
         s.team_busy = true;
-        assert_eq!(status_for(s), "working");
+        assert_eq!(status_for(s), LiveStatus::Working);
         assert_eq!(
             status_for(st("needs_permission", 60_000)),
-            "needs_permission"
+            LiveStatus::NeedsPermission
         );
-        assert_eq!(status_for(st("needs_permission", 40 * 60_000)), "stale");
-        assert_eq!(status_for(st("closed", 0)), "ended");
-        assert_eq!(status_for(Signals::default()), "stale");
+        assert_eq!(
+            status_for(st("needs_permission", 40 * 60_000)),
+            LiveStatus::Stale
+        );
+        assert_eq!(status_for(st("closed", 0)), LiveStatus::Ended);
+        assert_eq!(status_for(Signals::default()), LiveStatus::Stale);
     }
 
     #[test]

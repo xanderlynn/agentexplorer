@@ -1,7 +1,9 @@
 // Small statistics helpers for honest displays.
 
+import { MIN_SAMPLE } from "./generated";
+
 /** Below this many samples a rate is shown as "k/n" and greyed out. */
-export const MIN_N = 5;
+export const MIN_N = MIN_SAMPLE;
 
 /** 95% Wilson score interval for a proportion. Works with fractional successes. */
 export function wilson(successes: number, n: number): [number, number] | null {
