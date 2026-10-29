@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
-import { Bot, ChartColumn, Coins, Gauge, Gift, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
-import { useLive, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bot, ChartColumn, Coins, Download, Gauge, Gift, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
+import { api, useLive, useReleases, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
 import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
@@ -11,6 +11,7 @@ import { Preflight } from "./components/Preflight";
 import { QuickReview } from "./components/QuickReview";
 import { CommandPalette } from "./components/CommandPalette";
 import { CURRENT_VERSION, WhatsNew, useWhatsNew } from "./components/WhatsNew";
+import { Updates, hasUpdate } from "./components/Updates";
 import { projectName } from "./format";
 import Today from "./pages/Today";
 import Experiments from "./pages/Experiments";
@@ -92,6 +93,9 @@ export default function App() {
   const [planning, setPlanning] = useState(false);
   const [palette, setPalette] = useState(false);
   const whatsNew = useWhatsNew();
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const releases = useReleases(!!settings.data && settings.data.values["updates.autoCheck"] !== "false");
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const group = groupOf(page);
 
   // ⌘K / Ctrl+K opens the command palette from anywhere.
@@ -124,7 +128,8 @@ export default function App() {
     const unLive = listen<LiveSummary>("live", (e) => qc.setQueryData(["live"], e.payload));
     const un = listen("data-changed", () => {
       qc.invalidateQueries({ predicate: (q) => LIVE_QUERIES.has(String(q.queryKey[0])) });
-      qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])), refetchType: "none" });
+      // The release list comes from GitHub, not the logs: it keeps its own daily schedule.
+      qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])) && q.queryKey[0] !== "releases", refetchType: "none" });
     });
     return () => {
       unLive.then((f) => f());
@@ -186,6 +191,15 @@ export default function App() {
           <kbd className="font-sans text-zinc-500">⌘K</kbd>
         </button>
         <div className="mt-auto space-y-3">
+          {hasUpdate(releases.data) && (
+            <button
+              onClick={() => setUpdatesOpen(true)}
+              className="flex w-full items-center gap-2.5 rounded-lg border border-emerald-800/60 bg-emerald-950/30 px-2.5 py-1.5 text-left text-sm text-emerald-300 transition-colors hover:bg-emerald-950/60"
+            >
+              <Download size={16} aria-hidden />
+              <span className="flex-1">Update available</span>
+            </button>
+          )}
           <button
             onClick={whatsNew.show}
             className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
@@ -251,6 +265,7 @@ export default function App() {
       )}
       {planning && <Preflight onClose={() => setPlanning(false)} />}
       {whatsNew.open && <WhatsNew onClose={whatsNew.close} />}
+      {updatesOpen && <Updates releases={releases.data} loading={releases.isFetching} error={releases.error} onRefresh={() => releases.refetch()} onClose={() => setUpdatesOpen(false)} />}
       {palette && (
         <CommandPalette
           onClose={() => setPalette(false)}

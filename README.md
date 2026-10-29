@@ -81,7 +81,7 @@ Copilot inline completions are not logged to disk, so they can't be tracked.
 
 - Everything lives in a single SQLite file in the app data folder (`~/Library/Application Support/com.xanderlynn.tilly` on macOS, `%APPDATA%\com.xanderlynn.tilly` on Windows). Data from the app's earlier names, Governess and Execution Ledger, moves there on first launch, and so does a saved API key.
 - Sensitive app-data directories and files are restricted to the owning user. Archived transcripts remain until you delete the app data; disabling archiving only stops new copies. CSV exports are separate files in Downloads and remain until you delete them. See [SECURITY.md](SECURITY.md#retention-and-deletion) for deletion details.
-- Nothing leaves the machine unless you click **Generate retro**. That sends the period's metrics, session titles, opening prompts (truncated) and your notes to Claude. **Preview what's sent** shows the exact text first.
+- Update checks fetch GitHub's public release list on launch and once a day; nothing about you is sent, and **Settings › Updates** turns them off. Otherwise nothing leaves the machine unless you click **Generate retro**. That sends the period's metrics, session titles, opening prompts (truncated) and your notes to Claude. **Preview what's sent** shows the exact text first.
 - The retro uses your installed `claude` CLI and your existing subscription by default. If you choose the Anthropic API engine instead, the key is stored in the OS keychain, never in the database.
 
 ## Install
@@ -167,16 +167,18 @@ src-tauri/
 
 Versions follow [semver](https://semver.org). `0.x` releases are early: anything may change between minor versions.
 
-Release notes live in [CHANGELOG.md](CHANGELOG.md) ([Keep a Changelog](https://keepachangelog.com) format). Add to the **Unreleased** section as you go; the app shows the notes under **What's new**, opening them once after each update.
+Release notes live in [CHANGELOG.md](CHANGELOG.md) ([Keep a Changelog](https://keepachangelog.com) format). Add to the **Unreleased** section as you go; the app shows the notes under **What's new** (a dot marks unread notes after an update; it never opens by itself).
 
 `main` only accepts pull requests that pass CI, so a release takes two steps:
 
 ```bash
 npm run release -- 0.2.0          # on a release/v0.2.0 branch: moves Unreleased notes under 0.2.0, bumps every manifest, opens a PR
-npm run release -- 0.2.0 --tag    # once that PR is merged: tags main as v0.2.0 and pushes the tag
+npm run release -- 0.2.0 --tag    # once that PR is merged: tags main as v0.2.0, pushes the tag and creates the draft release
 ```
 
-The script refuses to release with no notes under Unreleased, and refuses to tag until `main` carries the new version. Only repository admins can create `v*` tags, and nobody can move or delete one. The tag starts `.github/workflows/release.yml`. It first runs CodeQL code scanning on the tagged code (`.github/workflows/codeql.yml`); an error, or a security finding rated high or critical, stops the release before anything is built. It then builds the macOS universal `.dmg` and portable `.app` ZIP, plus the Windows `-setup.exe`, `.msi`, and portable executable ZIP, into a **draft** GitHub Release. It then adds every download to `SHA256SUMS.txt`, records GitHub artifact attestations for the downloads, checksum, and SBOM, and uses the version's CHANGELOG section as the release notes. The macOS ZIP is created with `ditto` so bundle permissions, symlinks, and resource metadata are preserved. The build jobs run in the protected `release` environment, so each run waits until you approve it (the run's page, **Review deployments**). Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release.
+The script refuses to release with no notes under Unreleased, and refuses to tag until `main` carries the new version. Only repository admins can create `v*` tags, and nobody can move or delete one. The tag starts `.github/workflows/release.yml`. It first runs CodeQL code scanning on the tagged code (`.github/workflows/codeql.yml`); an error, or a security finding rated high or critical, stops the release before anything is built. It then builds the macOS universal `.dmg` and portable `.app` ZIP, plus the Windows `-setup.exe`, `.msi`, and portable executable ZIP, into a **draft** GitHub Release. It then adds every download to `SHA256SUMS.txt`, records GitHub artifact attestations for the downloads, checksum, and SBOM, and uses the version's CHANGELOG section as the release notes. The macOS ZIP is created with `ditto` so bundle permissions, symlinks, and resource metadata are preserved. The build jobs run in the protected `release` environment, so each run waits until you approve it (the run's page, **Review deployments**). Check the draft, then publish it. A version with a suffix (`0.2.0-beta.1`) is published as a pre-release. The script creates the draft release itself because the `v*` tag ruleset stops the workflow's token from doing so; the workflow uploads into it.
+
+**Updates and rollbacks.** **Settings › Updates** (and an **Update available** button in the sidebar) lists every release newer than the installed one, the installed one, and the one before it. Picking one downloads that release's signed update, verifies it, installs it and restarts, so the same flow handles rolling back. Releases are signed for the updater with a key pair: the public key is in `tauri.conf.json`, and the private key and its password must be the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The release workflow fails without them. Keep the private key safe; losing it means existing installs can't verify later updates. Releases from before signing started can't be installed from the app; download those from GitHub.
 
 Every push to `main` also builds installers and portable archives as workflow artifacts (`.github/workflows/build.yml`), for trying a change before it is released.
 

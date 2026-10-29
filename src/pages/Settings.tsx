@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { CheckCircle2, FolderOpen, RefreshCw, XCircle } from "lucide-react";
-import { api, type IngestReport } from "../api";
+import { CheckCircle2, Download, FolderOpen, RefreshCw, XCircle } from "lucide-react";
+import { api, useReleases, type IngestReport } from "../api";
 import { AppearanceSettings } from "../components/Appearance";
 import { StatusProfiles } from "../components/StatusProfiles";
+import { Updates, hasUpdate } from "../components/Updates";
+import { CURRENT_VERSION } from "../components/WhatsNew";
 import { Button, Card, ErrorNote, Field, Loading, PageHeader, SourceBadge, inputClass } from "../components/ui";
 
 export default function Settings() {
@@ -13,8 +15,10 @@ export default function Settings() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const [report, setReport] = useState<IngestReport | null>(null);
   const [key, setKey] = useState("");
+  const [updatesOpen, setUpdatesOpen] = useState(false);
 
-  const invalidate = () => qc.invalidateQueries();
+  // Everything but the release list, which comes from GitHub on its own schedule.
+  const invalidate = () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "releases" });
   const rescan = useMutation({ mutationFn: (force: boolean) => api.rescan(force), onSuccess: (r) => { setReport(r); invalidate(); } });
   const toggleSource = useMutation({ mutationFn: (v: { source: Parameters<typeof api.setSourceEnabled>[0]; enabled: boolean }) => api.setSourceEnabled(v.source, v.enabled), onSuccess: invalidate });
   const set = useMutation({ mutationFn: (v: { key: string; value: string }) => api.setSetting(v.key, v.value), onSuccess: invalidate });
@@ -24,6 +28,11 @@ export default function Settings() {
   const v = settings.data?.values ?? {};
   const bool = (k: string, d = true) => (v[k] == null ? d : v[k] === "true");
   const engine = v["retro.engine"] ?? "claude_cli";
+  const releases = useReleases(!!settings.data && bool("updates.autoCheck"));
+  const openUpdates = () => {
+    setUpdatesOpen(true);
+    if (!releases.data) releases.refetch();
+  };
 
   return (
     <>
@@ -139,6 +148,26 @@ export default function Settings() {
             </label>
           </div>
         </Card>
+
+        <Card title="Updates">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-zinc-400">
+              Version {CURRENT_VERSION}
+              {hasUpdate(releases.data) && <span className="ml-2 text-emerald-300">A newer version is available.</span>}
+            </p>
+            <Button size="sm" variant="secondary" onClick={openUpdates}>
+              <Download size={14} /> Choose version
+            </Button>
+          </div>
+          <label className="mt-3 flex items-start gap-3 text-sm text-zinc-300">
+            <input type="checkbox" className="mt-1 accent-emerald-500" checked={bool("updates.autoCheck")} onChange={(e) => set.mutate({ key: "updates.autoCheck", value: String(e.target.checked) })} />
+            <span>
+              Check for updates automatically
+              <span className="block text-xs text-zinc-500">On launch and once a day. Only GitHub's public release list is fetched; nothing about you is sent.</span>
+            </span>
+          </label>
+        </Card>
+        {updatesOpen && <Updates releases={releases.data} loading={releases.isFetching} error={releases.error} onRefresh={() => releases.refetch()} onClose={() => setUpdatesOpen(false)} />}
 
         <Card title="Data">
           <p className="text-sm text-zinc-400">Everything lives in one SQLite database on this computer.</p>

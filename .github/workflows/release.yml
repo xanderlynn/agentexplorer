@@ -4,7 +4,9 @@ name: Release
 # tagged code first; a serious finding stops the release. Then it builds the
 # macOS and Windows installers and portable archives into a draft GitHub
 # Release, and adds checksums and the version's notes from CHANGELOG.md.
-# Review the draft, then publish it.
+# Review the draft, then publish it. Builds are also signed for the in-app
+# updater (tauri.updater.conf.json, TAURI_SIGNING_PRIVATE_KEY): each release
+# carries a latest.json that the app installs from, for updates and rollbacks.
 on:
   push:
     tags: ["v*"]
@@ -106,8 +108,10 @@ jobs:
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
           tagName: ${{ github.ref_name }}
           releaseName: Tilly ${{ github.ref_name }}
           releaseBody: Notes are added when every installer is built.
@@ -153,7 +157,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd assets
-          gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe' --pattern '*.zip'
+          gh release download "$GITHUB_REF_NAME" --pattern '*.dmg' --pattern '*.msi' --pattern '*.exe' --pattern '*.zip' --pattern '*.tar.gz' --pattern '*.sig' --pattern 'latest.json'
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
@@ -165,6 +169,9 @@ jobs:
             assets/*.msi
             assets/*.exe
             assets/*.zip
+            assets/*.tar.gz
+            assets/*.sig
+            assets/latest.json
             assets/tilly-sbom.cdx.json
             assets/tilly-licenses.md
             assets/SHA256SUMS.txt
@@ -192,6 +199,8 @@ jobs:
             echo "| --- | --- |"
             echo "| macOS 11 or later (Apple Silicon and Intel) | \`Tilly_${version}_universal.dmg\` or \`Tilly_${version}_macos-universal-portable.zip\` |"
             echo "| Windows 10 and 11 (x64) | \`Tilly_${version}_x64-setup.exe\`, the \`.msi\` for managed installs, or \`Tilly_${version}_windows-x64-portable.zip\` |"
+            echo ""
+            echo "Already using Tilly? Settings › Updates installs this version, or rolls back to an earlier one."
             echo ""
             echo "Check a download against \`SHA256SUMS.txt\` with \`shasum -a 256 <file>\` (macOS) or \`Get-FileHash <file>\` (Windows)."
             echo ""

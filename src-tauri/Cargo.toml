@@ -33,6 +33,8 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "blo
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
+semver = "1"
 
 [dev-dependencies]
 tempfile = "3"
