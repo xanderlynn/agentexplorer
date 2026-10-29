@@ -114,6 +114,7 @@ Checks:
 
 ```bash
 npm run build                      # typecheck + bundle the frontend
+npm test                           # frontend unit tests (Vitest)
 cd src-tauri && cargo test --workspace         # Rust unit tests (app + core)
 cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings
 ```
