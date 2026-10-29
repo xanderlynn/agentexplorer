@@ -68,6 +68,9 @@ jobs:
       - name: Portable packaging tests
         run: npm run test:portable
 
+      - name: Frontend unit tests
+        run: npm test
+
       # Typechecks and builds dist/, which the Rust build embeds.
       - name: Build frontend
         run: npm run build
