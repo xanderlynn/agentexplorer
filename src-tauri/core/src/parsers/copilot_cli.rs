@@ -195,6 +195,7 @@ fn read_line(st: &mut State, line: &str) {
                     args,
                     ts,
                 );
+                s.tasks.apply_tool(tool, args, ts, parent.unwrap_or(LEAD));
                 if let Some(server) = d.get("mcpServerName").and_then(Value::as_str) {
                     s.note_mcp(server);
                 }

@@ -250,6 +250,9 @@ ALTER TABLE sessions ADD COLUMN pending_tool TEXT;
 ALTER TABLE sessions ADD COLUMN turn_started_at INTEGER;
 ALTER TABLE sessions ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+ALTER TABLE sessions ADD COLUMN tasks TEXT NOT NULL DEFAULT '{}';
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -326,6 +329,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "pending_tool", "TEXT"),
     ("sessions", "turn_started_at", "INTEGER"),
     ("sessions", "failed", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "tasks", "TEXT NOT NULL DEFAULT '{}'"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),

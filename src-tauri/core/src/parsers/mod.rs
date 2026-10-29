@@ -80,7 +80,7 @@ pub(crate) fn digest(s: &crate::model::ParsedSession) -> String {
                 tokens
             ),
             (agents, msgs, &s.timeline, &s.skills, &s.mcp),
-            (s.failed, s.last_event, s.subagents, &s.title),
+            (s.failed, s.last_event, s.subagents, &s.title, &s.tasks),
         )
     )
 }
