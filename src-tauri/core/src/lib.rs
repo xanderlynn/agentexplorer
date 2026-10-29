@@ -13,6 +13,7 @@ pub mod alerts;
 pub mod analytics;
 pub mod codegen;
 pub mod db;
+pub mod enrich;
 pub mod experiments;
 pub mod git;
 pub mod ingest;
