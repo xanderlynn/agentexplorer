@@ -4,52 +4,12 @@ pub mod copilot_vscode;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::model::{ParsedSession, Source};
-
 /// Prompts are stored for analysis and the weekly retro; longer ones are cut.
 pub const MAX_PROMPT_CHARS: usize = 4000;
-
-/// What a parser has read so far, so the next pass over a growing
-/// transcript reads only the lines appended since. Copilot Chat files are
-/// rewritten in place, so they are always read whole.
-#[derive(Clone)]
-pub enum Resume {
-    Claude(claude::State),
-    CopilotCli(copilot_cli::State),
-}
-
-/// Parses a session, continuing from `resume` when given. Returns the
-/// session and the state to continue from next time.
-pub fn parse_from(
-    source: Source,
-    paths: &[PathBuf],
-    resume: Option<Resume>,
-) -> Result<(Option<ParsedSession>, Option<Resume>)> {
-    Ok(match (source, resume) {
-        (Source::ClaudeCode, r) => {
-            let mut st = match r {
-                Some(Resume::Claude(st)) if !st.rewritten(paths) => st,
-                _ => claude::State::default(),
-            };
-            (claude::update(paths, &mut st)?, Some(Resume::Claude(st)))
-        }
-        (Source::CopilotCli, r) => {
-            let mut st = match r {
-                Some(Resume::CopilotCli(st)) if !st.rewritten(paths) => st,
-                _ => copilot_cli::State::default(),
-            };
-            (
-                copilot_cli::update(paths, &mut st)?,
-                Some(Resume::CopilotCli(st)),
-            )
-        }
-        (Source::CopilotVscode, _) => (copilot_vscode::parse(paths)?, None),
-    })
-}
 
 pub(super) fn open_lines(path: &Path) -> Result<BufReader<File>> {
     let f = File::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -90,7 +50,7 @@ fn shrank(path: &Path, offset: u64) -> bool {
 
 /// The parts of a session an incremental read must get right.
 #[cfg(test)]
-pub(crate) fn digest(s: &ParsedSession) -> String {
+pub(crate) fn digest(s: &crate::model::ParsedSession) -> String {
     let mut tokens: Vec<_> = s
         .tokens_by_model
         .iter()

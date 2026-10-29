@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::model::{ParsedSession, Source};
 use crate::sources::{self, Root, Unit};
 use crate::util::{now_ms, path_within, truncate};
-use crate::{db, git, journal, parsers, playbooks, signals};
+use crate::{db, git, journal, playbooks, signals};
 
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +36,7 @@ pub struct Ingestor {
     pub data_dir: PathBuf,
     /// Parse state for sessions the watcher saw change, so the next change
     /// reads only the lines appended since. Keyed by unit.
-    resume: Mutex<HashMap<String, (Instant, parsers::Resume)>>,
+    resume: Mutex<HashMap<String, (Instant, sources::Resume)>>,
 }
 
 impl Ingestor {
@@ -92,7 +92,7 @@ impl Ingestor {
             .iter()
             .filter(|(_, path)| !Path::new(path).exists())
             .filter_map(|(source, path)| {
-                let source = Source::ALL.into_iter().find(|s| s.as_str() == source)?;
+                let source = Source::from_id(source)?;
                 archived_unit(&self.data_dir, source, Path::new(path))
             })
             .collect();
@@ -200,25 +200,24 @@ impl Ingestor {
             .into_par_iter()
             .map(|(unit, fp, resume)| {
                 let had_state = resume.is_some();
-                let result =
-                    parsers::parse_from(unit.source, &unit.paths, resume).map(|(opt, next)| {
-                        if let Some(next) = next
-                            && (keep || had_state)
-                        {
-                            self.resume
-                                .lock()
-                                .expect("resume lock")
-                                .insert(unit.key(), (Instant::now(), next));
-                        }
-                        opt.map(|mut s| {
-                            s.close_open_turn();
-                            let repo = s
-                                .project_path
-                                .as_deref()
-                                .and_then(|p| cached_repo_root(&repo_cache, p));
-                            (s, repo)
-                        })
-                    });
+                let result = unit.source.parse(&unit.paths, resume).map(|(opt, next)| {
+                    if let Some(next) = next
+                        && (keep || had_state)
+                    {
+                        self.resume
+                            .lock()
+                            .expect("resume lock")
+                            .insert(unit.key(), (Instant::now(), next));
+                    }
+                    opt.map(|mut s| {
+                        s.close_open_turn();
+                        let repo = s
+                            .project_path
+                            .as_deref()
+                            .and_then(|p| cached_repo_root(&repo_cache, p));
+                        (s, repo)
+                    })
+                });
                 (unit, fp, result)
             })
             .collect();
@@ -499,10 +498,7 @@ fn upsert_session(
 /// by the id the tool uses (the transcript's file stem, or the session folder
 /// for Copilot CLI).
 fn archive_dir(data_dir: &Path, source: Source, main: &Path) -> PathBuf {
-    let id_source = match source {
-        Source::CopilotCli => main.parent().and_then(|d| d.file_name()),
-        _ => main.file_stem(),
-    };
+    let id_source = source.session_id(main);
     let safe_id: String = id_source
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
@@ -590,11 +586,11 @@ mod tests {
         std::io::Write::write_all(&mut options.open(&source).unwrap(), b"private log").unwrap();
 
         let unit = Unit {
-            source: Source::ClaudeCode,
+            source: sources::CLAUDE_CODE,
             paths: vec![source],
         };
         archive_unit(root.path(), &unit).unwrap();
-        let archive = archive_dir(root.path(), Source::ClaudeCode, &unit.paths[0]);
+        let archive = archive_dir(root.path(), sources::CLAUDE_CODE, &unit.paths[0]);
         let archived_file = archive.join("session.jsonl");
 
         assert_eq!(
@@ -730,7 +726,7 @@ mod tests {
     fn upsert_preserves_user_review() {
         let conn = db::open_in_memory().unwrap();
         let unit = Unit {
-            source: Source::ClaudeCode,
+            source: sources::CLAUDE_CODE,
             paths: vec![PathBuf::from("/x/s.jsonl")],
         };
         let mut s = ParsedSession {
@@ -738,7 +734,7 @@ mod tests {
             user_turns: 1,
             ..Default::default()
         };
-        let id = upsert_session(&conn, Source::ClaudeCode, &unit, &s, None).unwrap();
+        let id = upsert_session(&conn, sources::CLAUDE_CODE, &unit, &s, None).unwrap();
         conn.execute(
             "UPDATE sessions SET outcome = 'shipped', rating = 4 WHERE id = ?1",
             [&id],
@@ -746,7 +742,7 @@ mod tests {
         .unwrap();
 
         s.user_turns = 5;
-        upsert_session(&conn, Source::ClaudeCode, &unit, &s, None).unwrap();
+        upsert_session(&conn, sources::CLAUDE_CODE, &unit, &s, None).unwrap();
         let (turns, outcome, rating): (i64, String, i64) = conn
             .query_row(
                 "SELECT user_turns, outcome, rating FROM sessions WHERE id = ?1",

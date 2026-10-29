@@ -140,8 +140,8 @@ Tilly runs in the tray. It keeps collecting, tracking statuses and alerting (not
 src/                       React UI (pages/, components/, api.ts = typed command wrappers)
 src-tauri/
   core/src/                tilly-core: the engine, no UI dependency (shared with a future headless collector)
+    sources/               one plug-in per tool (the AgentSource trait): where its logs live, how files group into sessions, how to parse them
     parsers/               one parser per tool → a normalized ParsedSession, read incrementally
-    sources.rs             where each tool's logs live, grouping files into sessions
     ingest.rs              change detection, parallel parsing (rayon), upserts, archiving
     watcher.rs             filesystem events, periodic scans, live state pushed to a Sink
     live.rs                each session's status and today's live stats
@@ -154,6 +154,8 @@ src-tauri/
     retro.rs               the weekly retro (claude CLI or Anthropic API)
     commands.rs            the Tauri command surface
 ```
+
+**Adding an agent tool.** Write its parser in `core/src/parsers/`, then a plug-in in `core/src/sources/` that implements `AgentSource` (its id, label, log folders, session discovery and parsing; resume commands and instruction files are optional), and list it in `Source::ALL` in `sources/mod.rs`. Ingest, archiving, the watcher, settings and the read models pick it up from there. The UI still names each tool in `src/api.ts` (the `Source` type) and `src/format.ts` (label and colour).
 
 ## Releases and signing
 
