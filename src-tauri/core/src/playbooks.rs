@@ -37,6 +37,38 @@ pub fn applies_to(kind: &str, source: &str) -> bool {
     }
 }
 
+/// Deletes a prompt template. Instruction files are rediscovered on the next
+/// scan, so only templates can be deleted.
+pub fn delete_prompt_template(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM playbooks WHERE id = ?1 AND kind = 'prompt'",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// Links a session to a playbook version by hand, or removes the link.
+pub fn set_session_link(
+    conn: &Connection,
+    session_id: &str,
+    version_id: i64,
+    linked: bool,
+) -> Result<()> {
+    if linked {
+        conn.execute(
+            "INSERT INTO session_playbooks (session_id, version_id, link) VALUES (?1, ?2, 'manual')
+             ON CONFLICT(session_id, version_id) DO UPDATE SET link = 'manual'",
+            params![session_id, version_id],
+        )?;
+    } else {
+        conn.execute(
+            "DELETE FROM session_playbooks WHERE session_id = ?1 AND version_id = ?2",
+            params![session_id, version_id],
+        )?;
+    }
+    Ok(())
+}
+
 /// Git checks files out with CRLF on Windows (`core.autocrlf`) but `git show`
 /// returns LF; normalize so the same text is one version.
 fn normalize_eol(content: &str) -> String {

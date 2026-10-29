@@ -9,8 +9,8 @@ use chrono::{Duration, Local, NaiveDate};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::analytics::{Range, SessionRow, load_sessions};
 use crate::stats::{monday, success, week_of};
+use crate::store::{Range, SessionRow, load_sessions};
 use crate::team::Team;
 
 /// Weeks shown in each item's trend.

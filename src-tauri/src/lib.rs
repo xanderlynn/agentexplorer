@@ -7,7 +7,7 @@ mod sound;
 // friends working in the app's own modules.
 pub(crate) use tilly_core::{
     alerts, analytics, db, experiments, ingest, journal, live, model, playbooks, sources,
-    status_alerts, toolkit, trends, util, watcher,
+    status_alerts, store, toolkit, trends, util, watcher,
 };
 
 use std::path::PathBuf;
