@@ -77,7 +77,7 @@ pub fn play(sound: &Sound, volume: f32, data_dir: &Path) -> Result<()> {
 pub fn play_async(sound: Sound, volume: f32, data_dir: std::path::PathBuf) {
     std::thread::spawn(move || {
         if let Err(e) = play(&sound, volume, &data_dir) {
-            eprintln!("alert sound: {e:#}");
+            tracing::warn!("alert sound: {e:#}");
         }
     });
 }

@@ -148,6 +148,12 @@ export default function Settings() {
               <FolderOpen size={14} /> Show
             </Button>
           </div>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="text-xs text-zinc-500">The log records background errors and failed actions; include it when you report a problem.</span>
+            <Button size="sm" variant="ghost" onClick={() => settings.data && revealItemInDir(settings.data.logPath).catch(() => {})}>
+              <FolderOpen size={14} /> Show log
+            </Button>
+          </div>
         </Card>
         <Licenses />
       </div>

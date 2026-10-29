@@ -21,12 +21,56 @@ use crate::model::Source;
 use crate::playbooks::{self, PlaybookStats};
 use crate::retro::{self, RetroRow};
 use crate::store::{SessionFilter, SessionRow};
+use crate::util::ErrorKind;
 use crate::{AppState, db, sources, store, trends};
 
-type CmdResult<T> = Result<T, String>;
+type CmdResult<T> = Result<T, CmdError>;
 
-fn err(e: anyhow::Error) -> String {
-    format!("{e:#}")
+/// What the UI gets when a command fails: a kind to branch on and a message
+/// to show.
+#[derive(Debug, Serialize)]
+pub struct CmdError {
+    kind: ErrorKind,
+    message: String,
+}
+
+impl CmdError {
+    fn failed(message: impl Into<String>) -> Self {
+        CmdError {
+            kind: ErrorKind::Failed,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<anyhow::Error> for CmdError {
+    fn from(e: anyhow::Error) -> Self {
+        let kind = ErrorKind::of(&e);
+        if kind == ErrorKind::Failed {
+            tracing::warn!("command failed: {e:#}");
+        }
+        CmdError {
+            kind,
+            message: format!("{e:#}"),
+        }
+    }
+}
+
+/// Input the command rejects, such as a missing name.
+impl From<&str> for CmdError {
+    fn from(message: &str) -> Self {
+        CmdError::failed(message)
+    }
+}
+
+impl From<String> for CmdError {
+    fn from(message: String) -> Self {
+        CmdError::failed(message)
+    }
+}
+
+fn err(e: anyhow::Error) -> CmdError {
+    e.into()
 }
 
 fn with_db<T>(
@@ -36,7 +80,7 @@ fn with_db<T>(
     let conn = state
         .db
         .lock()
-        .map_err(|_| "database lock poisoned".to_string())?;
+        .map_err(|_| CmdError::failed("database lock poisoned"))?;
     f(&conn).map_err(err)
 }
 
@@ -53,7 +97,7 @@ async fn blocking<T: Send + 'static>(
         f(&mut conn, &data_dir)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CmdError::failed(e.to_string()))?
     .map_err(err)
 }
 
@@ -436,6 +480,7 @@ pub struct Settings {
     pub keychain_error: Option<String>,
     pub data_dir: String,
     pub db_path: String,
+    pub log_path: String,
     pub default_api_model: String,
 }
 
@@ -460,6 +505,12 @@ pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
             keychain_error,
             data_dir: state.data_dir.to_string_lossy().into_owned(),
             db_path: state.db_path.to_string_lossy().into_owned(),
+            log_path: state
+                .data_dir
+                .join("logs")
+                .join("tilly.log")
+                .to_string_lossy()
+                .into_owned(),
             default_api_model: retro::DEFAULT_API_MODEL.into(),
         })
     })
@@ -468,7 +519,7 @@ pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
 #[tauri::command(async)]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> CmdResult<()> {
     if !SETTING_KEYS.contains(&key.as_str()) {
-        return Err(format!("Unknown setting {key}"));
+        return Err(format!("Unknown setting {key}").into());
     }
     with_db(&state, |c| db::set_setting(c, &key, &value))
 }

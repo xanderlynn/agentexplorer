@@ -89,7 +89,7 @@ pub struct SessionDetail {
 
 pub fn session_detail(conn: &Connection, id: &str) -> Result<SessionDetail> {
     let Some(session) = store::session(conn, id)? else {
-        bail!("Session not found");
+        return Err(crate::util::NotFound("Session").into());
     };
     struct Extra {
         file_path: String,

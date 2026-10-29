@@ -8,6 +8,10 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+### Added
+
+- A log file for background errors and failed actions: Settings › Data › **Show log**. Include it when you report a problem.
+
 ### Changed
 
 - A new logo: a girl with a bob haircut replaces the lowercase "t", in the app icon, the window and the macOS menu bar.

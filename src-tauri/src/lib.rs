@@ -1,5 +1,6 @@
 mod background;
 mod commands;
+mod logging;
 mod retro;
 mod sound;
 
@@ -42,9 +43,10 @@ pub fn run() {
             if let Some(legacy) = legacy.filter(|_| !data_dir.exists())
                 && let Err(e) = std::fs::rename(&legacy, &data_dir)
             {
-                eprintln!("could not move {}: {e}", legacy.display());
+                tracing::warn!("could not move {}: {e}", legacy.display());
             }
             tilly_core::util::create_private_dir(&data_dir)?;
+            logging::init(&data_dir);
             let db_path = data_dir.join("ledger.sqlite3");
             let conn = db::open(&db_path)?;
             app.manage(AppState {

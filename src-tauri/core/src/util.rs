@@ -2,6 +2,49 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// How a command failed, so the UI can tell a missing or busy thing from a
+/// real failure. The UI's copy is generated (see `codegen`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    NotFound,
+    Busy,
+    Failed,
+}
+
+impl ErrorKind {
+    pub const ALL: [ErrorKind; 3] = [ErrorKind::NotFound, ErrorKind::Busy, ErrorKind::Failed];
+
+    /// The kind of an error from the engine.
+    pub fn of(e: &anyhow::Error) -> ErrorKind {
+        use rusqlite::{Error, ErrorCode};
+        if e.downcast_ref::<NotFound>().is_some() {
+            return ErrorKind::NotFound;
+        }
+        match e.downcast_ref::<Error>() {
+            Some(Error::QueryReturnedNoRows) => ErrorKind::NotFound,
+            Some(Error::SqliteFailure(f, _))
+                if matches!(f.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) =>
+            {
+                ErrorKind::Busy
+            }
+            _ => ErrorKind::Failed,
+        }
+    }
+}
+
+/// Something asked for that does not exist, such as a deleted session.
+#[derive(Debug)]
+pub struct NotFound(pub &'static str);
+
+impl std::fmt::Display for NotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} not found", self.0)
+    }
+}
+
+impl std::error::Error for NotFound {}
+
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -207,6 +250,19 @@ pub fn file_mtime_ms(p: &Path) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_errors() {
+        let missing: anyhow::Error = NotFound("Session").into();
+        assert_eq!(missing.to_string(), "Session not found");
+        assert_eq!(ErrorKind::of(&missing), ErrorKind::NotFound);
+        let busy = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            None,
+        );
+        assert_eq!(ErrorKind::of(&busy.into()), ErrorKind::Busy);
+        assert_eq!(ErrorKind::of(&anyhow::anyhow!("nope")), ErrorKind::Failed);
+    }
 
     #[test]
     fn truncates_on_char_boundary() {
