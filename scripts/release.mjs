@@ -36,6 +36,10 @@ if (flag === "--tag") {
   if (shipped !== version) fail(`main is at ${shipped}, not ${version}. Merge the release PR first.`);
   git("tag", "-a", tag, "-m", `Tilly ${tag}`, "origin/main");
   git("push", "origin", tag);
+  // The release-tag ruleset stops the workflow's token from creating a
+  // release for a v* tag, so the draft is created here, as you; the
+  // workflow uploads the builds into it.
+  run("gh", "release", "create", tag, "--draft", "--verify-tag", "--title", `Tilly ${tag}`, "--notes", "Notes are added when every installer is built.");
   console.log(`Pushed ${tag}. The release workflow builds a draft release:\n  https://github.com/xanderlynn/tilly/actions/workflows/release.yml`);
   process.exit(0);
 }

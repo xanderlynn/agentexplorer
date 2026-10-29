@@ -21,6 +21,7 @@ use crate::model::Source;
 use crate::playbooks::{self, PlaybookStats};
 use crate::retro::{self, RetroRow};
 use crate::store::{SessionFilter, SessionRow};
+use crate::updates;
 use crate::util::ErrorKind;
 use crate::{AppState, db, sources, store, trends};
 
@@ -455,6 +456,18 @@ pub fn delete_retro(state: State<AppState>, id: i64) -> CmdResult<()> {
     with_db(&state, |c| retro::delete(c, id))
 }
 
+// ----------------------------------------------------------------- updates
+
+#[tauri::command(async)]
+pub fn list_releases(app: tauri::AppHandle) -> CmdResult<Vec<updates::ReleaseInfo>> {
+    updates::list(&app).map_err(err)
+}
+
+#[tauri::command]
+pub async fn install_release(app: tauri::AppHandle, version: String) -> CmdResult<()> {
+    updates::install(app, version).await.map_err(err)
+}
+
 // ---------------------------------------------------------------- settings
 
 /// Settings the UI may write. Anything else is rejected.
@@ -469,6 +482,7 @@ const SETTING_KEYS: &[&str] = &[
     "budget.monthly",
     "context.smartZoneTokens",
     "alerts.profile",
+    "updates.autoCheck",
 ];
 
 #[derive(Serialize)]

@@ -652,6 +652,33 @@ export interface Settings {
   defaultApiModel: string;
 }
 
+/** A release you can move to; see updates.rs `list`. */
+export interface ReleaseInfo {
+  version: string;
+  publishedAt: string | null;
+  /** Release notes, in Markdown. */
+  notes: string;
+  url: string;
+  relation: "newer" | "current" | "previous";
+  /** Has signed update files, so it can be installed from the app. */
+  installable: boolean;
+}
+
+/** Download progress while installing a release (the "update-progress" event). */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}
+
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * The releases you can move to. Checks on launch and daily when automatic
+ * checks are on (the default); otherwise only when refetched by hand.
+ */
+export const useReleases = (autoCheck: boolean) =>
+  useQuery({ queryKey: ["releases"], queryFn: () => api.listReleases(), enabled: autoCheck, staleTime: DAY_MS, refetchInterval: autoCheck ? DAY_MS : false, retry: false });
+
 export interface IngestReport {
   scanned: number;
   updated: number;
@@ -823,6 +850,8 @@ export const api = {
   deleteRetro: (id: number) => call<void>("delete_retro", { id }),
 
   settings: () => call<Settings>("get_settings"),
+  listReleases: () => call<ReleaseInfo[]>("list_releases"),
+  installRelease: (version: string) => call<void>("install_release", { version }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
   importAlertAsset: (bytes: Uint8Array) => call<AlertAsset>("import_alert_asset", bytes),
   readAlertAsset: (id: string) => call<ArrayBuffer>("read_alert_asset", { id }),

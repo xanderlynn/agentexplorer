@@ -10,10 +10,12 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ### Added
 
+- **Updates and rollbacks** in Settings › Updates, and an **Update available** button in the sidebar. Pick any newer release, or the one before yours, and Tilly downloads it, checks its signature, installs it and restarts. Tilly checks GitHub for releases on launch and once a day; you can turn that off.
 - A log file for background errors and failed actions: Settings › Data › **Show log**. Include it when you report a problem.
 
 ### Changed
 
+- What's new no longer opens by itself after an update; a dot in the sidebar marks unread notes.
 - A new logo: a girl with a bob haircut replaces the lowercase "t", in the app icon, the window and the macOS menu bar.
 
 ## [0.1.2] - 2026-10-28

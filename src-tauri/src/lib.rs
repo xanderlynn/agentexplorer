@@ -3,6 +3,7 @@ mod commands;
 mod logging;
 mod retro;
 mod sound;
+mod updates;
 
 // The engine lives in tilly-core; these keep `crate::analytics` and
 // friends working in the app's own modules.
@@ -31,6 +32,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             // Coming from an earlier name: move the newest old data folder.
@@ -75,6 +77,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::list_releases,
+            commands::install_release,
             commands::get_overview,
             commands::quick_review,
             commands::list_metrics,

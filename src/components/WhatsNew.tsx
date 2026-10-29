@@ -31,8 +31,8 @@ export const CURRENT_VERSION = releases()[0]?.version ?? "";
 const SEEN_KEY = "whatsNewSeen";
 
 /**
- * Opens What's new once for each version you haven't seen (including on a
- * fresh install), and lets the sidebar reopen it.
+ * Marks What's new as unseen after each update (a dot in the sidebar) and
+ * opens it only when asked; it never opens by itself.
  */
 export function useWhatsNew() {
   const [open, setOpen] = useState(false);
@@ -45,10 +45,7 @@ export function useWhatsNew() {
       // Storage can be unavailable; then it just doesn't open by itself.
       return;
     }
-    if (CURRENT_VERSION && seen !== CURRENT_VERSION) {
-      setUnseen(true);
-      setOpen(true);
-    }
+    if (CURRENT_VERSION && seen !== CURRENT_VERSION) setUnseen(true);
   }, []);
   const close = () => {
     setOpen(false);
