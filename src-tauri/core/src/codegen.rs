@@ -9,6 +9,7 @@ use crate::live::LiveStatus;
 use crate::sources::Source;
 use crate::stats::MIN_SAMPLE;
 use crate::team::AgentLiveStatus;
+use crate::util::ErrorKind;
 
 fn union(ids: impl IntoIterator<Item = String>) -> String {
     ids.into_iter()
@@ -70,6 +71,12 @@ pub fn typescript() -> String {
         ts,
         "export type LiveAgentStatus = {};\n",
         union(AgentLiveStatus::ALL.iter().map(id_of))
+    );
+    ts += "/** How a command failed; see util.rs `ErrorKind`. */\n";
+    let _ = writeln!(
+        ts,
+        "export type ErrorKind = {};\n",
+        union(ErrorKind::ALL.iter().map(id_of))
     );
     ts += "/** Below this many samples a rate is noise: shown greyed out or not at all. */\n";
     let _ = writeln!(ts, "export const MIN_SAMPLE = {MIN_SAMPLE};");

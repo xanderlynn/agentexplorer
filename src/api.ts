@@ -1,11 +1,32 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
 // Field names mirror the Rust structs (serde camelCase).
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import type { AlertProfile, SoundChoice } from "./alerts/profile";
 
-import type { LiveAgentStatus, LiveStatus, Source } from "./generated";
-export type { LiveAgentStatus, LiveStatus, Source };
+import type { ErrorKind, LiveAgentStatus, LiveStatus, Source } from "./generated";
+export type { ErrorKind, LiveAgentStatus, LiveStatus, Source };
+
+/** A failed command. `kind` tells a missing or busy thing from a real failure; showing it gives the message. */
+export class CommandError extends Error {
+  constructor(readonly kind: ErrorKind, message: string) {
+    super(message);
+    this.name = "CommandError";
+  }
+  override toString() {
+    return this.message;
+  }
+}
+
+/** Calls a Rust command, turning its structured error into a CommandError. */
+async function call<T>(cmd: string, args?: InvokeArgs): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    if (e && typeof e === "object" && "kind" in e && "message" in e) throw new CommandError(e.kind as ErrorKind, String(e.message));
+    throw e;
+  }
+}
 export type Outcome = "shipped" | "partial" | "abandoned" | "redo";
 export const OUTCOMES: Outcome[] = ["shipped", "partial", "abandoned", "redo"];
 
@@ -626,6 +647,8 @@ export interface Settings {
   keychainError: string | null;
   dataDir: string;
   dbPath: string;
+  /** The app log: background errors and failed commands. */
+  logPath: string;
   defaultApiModel: string;
 }
 
@@ -731,44 +754,44 @@ export interface Patterns {
 }
 
 export const api = {
-  overview: (days: number) => invoke<Overview>("get_overview", { days }),
-  insights: (days: number) => invoke<Insight[]>("get_insights", { days }),
-  scorecard: (days: number) => invoke<Scorecard>("get_scorecard", { days }),
-  sessions: (filter: SessionFilter) => invoke<SessionRow[]>("list_sessions", { filter }),
-  exportSessions: (filter: SessionFilter) => invoke<string>("export_sessions", { filter }),
-  usage: (days: number) => invoke<Usage>("get_usage", { days }),
-  reality: (days: number) => invoke<Reality>("get_reality", { days }),
-  execution: (days: number) => invoke<Execution>("get_execution", { days }),
-  anomalies: (days: number) => invoke<Anomaly[]>("get_anomalies", { days }),
-  failureClusters: (days: number) => invoke<FailureCluster[]>("get_failure_clusters", { days }),
-  timelines: (since: number) => invoke<Lane[]>("get_timelines", { since }),
-  fit: (days: number) => invoke<FitCell[]>("get_fit", { days }),
-  toolHealth: (days: number) => invoke<ToolHealth[]>("get_tool_health", { days }),
-  patterns: (days: number) => invoke<Patterns>("get_patterns", { days }),
-  session: (id: string) => invoke<SessionDetail>("get_session", { id }),
+  overview: (days: number) => call<Overview>("get_overview", { days }),
+  insights: (days: number) => call<Insight[]>("get_insights", { days }),
+  scorecard: (days: number) => call<Scorecard>("get_scorecard", { days }),
+  sessions: (filter: SessionFilter) => call<SessionRow[]>("list_sessions", { filter }),
+  exportSessions: (filter: SessionFilter) => call<string>("export_sessions", { filter }),
+  usage: (days: number) => call<Usage>("get_usage", { days }),
+  reality: (days: number) => call<Reality>("get_reality", { days }),
+  execution: (days: number) => call<Execution>("get_execution", { days }),
+  anomalies: (days: number) => call<Anomaly[]>("get_anomalies", { days }),
+  failureClusters: (days: number) => call<FailureCluster[]>("get_failure_clusters", { days }),
+  timelines: (since: number) => call<Lane[]>("get_timelines", { since }),
+  fit: (days: number) => call<FitCell[]>("get_fit", { days }),
+  toolHealth: (days: number) => call<ToolHealth[]>("get_tool_health", { days }),
+  patterns: (days: number) => call<Patterns>("get_patterns", { days }),
+  session: (id: string) => call<SessionDetail>("get_session", { id }),
   saveReview: (review: { id: string; outcome: Outcome | null; rating: number | null; notes: string | null; tags: string[]; vsManual: VsManual | null }) =>
-    invoke<void>("save_review", { review }),
-  quickReview: (id: string, outcome: Outcome, vsManual: VsManual | null) => invoke<void>("quick_review", { id, outcome, vsManual }),
-  metrics: () => invoke<MetricDef[]>("list_metrics"),
-  experiments: () => invoke<Experiment[]>("list_experiments"),
+    call<void>("save_review", { review }),
+  quickReview: (id: string, outcome: Outcome, vsManual: VsManual | null) => call<void>("quick_review", { id, outcome, vsManual }),
+  metrics: () => call<MetricDef[]>("list_metrics"),
+  experiments: () => call<Experiment[]>("list_experiments"),
   createExperiment: (input: { title: string; hypothesis: string | null; metric: string; category: string | null; source: Source | null; days: number; retroId: number | null }) =>
-    invoke<number>("create_experiment", { input }),
-  experimentVerdict: (id: number, decision: "keep" | "drop" | "extend", note: string | null) => invoke<void>("experiment_verdict", { id, decision, note }),
-  deleteExperiment: (id: number) => invoke<void>("delete_experiment", { id }),
-  setExperimentApplied: (sessionId: string, experimentId: number, applied: boolean) => invoke<void>("set_experiment_applied", { sessionId, experimentId, applied }),
-  goals: () => invoke<GoalStatus[]>("list_goals"),
-  createGoal: (input: { metric: string; target: number; counterMetric: string }) => invoke<number>("create_goal", { input }),
-  retireGoal: (id: number) => invoke<void>("retire_goal", { id }),
-  preflight: (text: string, source: Source | null) => invoke<PreflightAdvice>("preflight", { text, source }),
-  live: () => invoke<LiveSummary>("get_live"),
-  teams: () => invoke<TeamSession[]>("list_teams"),
-  toolkit: (days: number, source: Source | null) => invoke<Toolkit>("get_toolkit", { days, source }),
-  rescan: (force: boolean) => invoke<IngestReport>("rescan", { force }),
-  sources: () => invoke<SourceStatus[]>("get_sources"),
-  setSourceEnabled: (source: Source, enabled: boolean) => invoke<void>("set_source_enabled", { source, enabled }),
-  projects: () => invoke<string[]>("list_projects"),
+    call<number>("create_experiment", { input }),
+  experimentVerdict: (id: number, decision: "keep" | "drop" | "extend", note: string | null) => call<void>("experiment_verdict", { id, decision, note }),
+  deleteExperiment: (id: number) => call<void>("delete_experiment", { id }),
+  setExperimentApplied: (sessionId: string, experimentId: number, applied: boolean) => call<void>("set_experiment_applied", { sessionId, experimentId, applied }),
+  goals: () => call<GoalStatus[]>("list_goals"),
+  createGoal: (input: { metric: string; target: number; counterMetric: string }) => call<number>("create_goal", { input }),
+  retireGoal: (id: number) => call<void>("retire_goal", { id }),
+  preflight: (text: string, source: Source | null) => call<PreflightAdvice>("preflight", { text, source }),
+  live: () => call<LiveSummary>("get_live"),
+  teams: () => call<TeamSession[]>("list_teams"),
+  toolkit: (days: number, source: Source | null) => call<Toolkit>("get_toolkit", { days, source }),
+  rescan: (force: boolean) => call<IngestReport>("rescan", { force }),
+  sources: () => call<SourceStatus[]>("get_sources"),
+  setSourceEnabled: (source: Source, enabled: boolean) => call<void>("set_source_enabled", { source, enabled }),
+  projects: () => call<string[]>("list_projects"),
 
-  intents: () => invoke<Intent[]>("list_intents"),
+  intents: () => call<Intent[]>("list_intents"),
   createIntent: (input: {
     goal: string;
     taskType: string;
@@ -778,34 +801,34 @@ export const api = {
     confidence: number;
     doneWhen?: string | null;
     context?: string | null;
-  }) => invoke<number>("create_intent", { input }),
+  }) => call<number>("create_intent", { input }),
   closeIntent: (input: { id: number; outcome: Outcome; actualMinutes: number | null; reflection: string | null }) =>
-    invoke<void>("close_intent", { input }),
-  reopenIntent: (id: number) => invoke<void>("reopen_intent", { id }),
-  deleteIntent: (id: number) => invoke<void>("delete_intent", { id }),
-  linkIntent: (id: number, sessionId: string | null) => invoke<void>("link_intent", { id, sessionId }),
-  calibration: (days: number) => invoke<Calibration>("get_calibration", { days }),
+    call<void>("close_intent", { input }),
+  reopenIntent: (id: number) => call<void>("reopen_intent", { id }),
+  deleteIntent: (id: number) => call<void>("delete_intent", { id }),
+  linkIntent: (id: number, sessionId: string | null) => call<void>("link_intent", { id, sessionId }),
+  calibration: (days: number) => call<Calibration>("get_calibration", { days }),
 
-  playbooks: () => invoke<Playbook[]>("list_playbooks"),
-  createPromptTemplate: (name: string, content: string) => invoke<number>("create_prompt_template", { name, content }),
+  playbooks: () => call<Playbook[]>("list_playbooks"),
+  createPromptTemplate: (name: string, content: string) => call<number>("create_prompt_template", { name, content }),
   updatePromptTemplate: (id: number, name: string, content: string) =>
-    invoke<void>("update_prompt_template", { id, name, content }),
-  deletePlaybook: (id: number) => invoke<void>("delete_playbook", { id }),
+    call<void>("update_prompt_template", { id, name, content }),
+  deletePlaybook: (id: number) => call<void>("delete_playbook", { id }),
   setSessionPlaybook: (sessionId: string, versionId: number, linked: boolean) =>
-    invoke<void>("set_session_playbook", { sessionId, versionId, linked }),
+    call<void>("set_session_playbook", { sessionId, versionId, linked }),
 
-  retros: () => invoke<Retro[]>("list_retros"),
-  previewRetro: (days: number, reflection: string | null) => invoke<string>("preview_retro", { days, reflection }),
-  generateRetro: (engine: string, days: number, reflection: string | null) => invoke<Retro>("generate_retro", { engine, days, reflection }),
-  deleteRetro: (id: number) => invoke<void>("delete_retro", { id }),
+  retros: () => call<Retro[]>("list_retros"),
+  previewRetro: (days: number, reflection: string | null) => call<string>("preview_retro", { days, reflection }),
+  generateRetro: (engine: string, days: number, reflection: string | null) => call<Retro>("generate_retro", { engine, days, reflection }),
+  deleteRetro: (id: number) => call<void>("delete_retro", { id }),
 
-  settings: () => invoke<Settings>("get_settings"),
-  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
-  importAlertAsset: (bytes: Uint8Array) => invoke<AlertAsset>("import_alert_asset", bytes),
-  readAlertAsset: (id: string) => invoke<ArrayBuffer>("read_alert_asset", { id }),
-  deleteAlertAsset: (id: string) => invoke<void>("delete_alert_asset", { id }),
-  alertProfile: (defaults: boolean) => invoke<AlertProfile>("get_alert_profile", { default: defaults }),
-  playAlertSound: (sound: NonNullable<SoundChoice>, volume: number) => invoke<void>("play_alert_sound", { sound, volume }),
-  setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
-  clearApiKey: () => invoke<void>("clear_api_key"),
+  settings: () => call<Settings>("get_settings"),
+  setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
+  importAlertAsset: (bytes: Uint8Array) => call<AlertAsset>("import_alert_asset", bytes),
+  readAlertAsset: (id: string) => call<ArrayBuffer>("read_alert_asset", { id }),
+  deleteAlertAsset: (id: string) => call<void>("delete_alert_asset", { id }),
+  alertProfile: (defaults: boolean) => call<AlertProfile>("get_alert_profile", { default: defaults }),
+  playAlertSound: (sound: NonNullable<SoundChoice>, volume: number) => call<void>("play_alert_sound", { sound, volume }),
+  setApiKey: (key: string) => call<void>("set_api_key", { key }),
+  clearApiKey: () => call<void>("clear_api_key"),
 };

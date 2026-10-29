@@ -31,5 +31,8 @@ export const STATUS_GROUP: Record<LiveStatus, SessionGroup> = {
 
 export type LiveAgentStatus = "running" | "quiet" | "done" | "failed" | "stopped";
 
+/** How a command failed; see util.rs `ErrorKind`. */
+export type ErrorKind = "not_found" | "busy" | "failed";
+
 /** Below this many samples a rate is noise: shown greyed out or not at all. */
 export const MIN_SAMPLE = 5;

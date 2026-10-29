@@ -43,10 +43,10 @@ pub fn open_window(app: &AppHandle) {
             if let Err(e) =
                 tauri::WebviewWindowBuilder::from_config(app, cfg).and_then(|b| b.build())
             {
-                eprintln!("open window: {e}");
+                tracing::warn!("open window: {e}");
             }
         }
-        None => eprintln!("open window: no window in tauri.conf.json"),
+        None => tracing::error!("open window: no window in tauri.conf.json"),
     }
 }
 

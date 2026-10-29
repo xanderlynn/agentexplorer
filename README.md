@@ -156,7 +156,8 @@ src-tauri/
     background.rs          tray, window lifecycle, and the Sink: window events, notifications, sounds
     sound.rs               alert tones (synthesised) and your WAV/Ogg files
     retro.rs               the weekly retro (claude CLI or Anthropic API)
-    commands.rs            the Tauri command surface
+    commands.rs            the Tauri command surface; failures reach the UI as { kind, message }
+    logging.rs             logs/tilly.log in the data folder (Settings › Data › Show log)
 ```
 
 **Adding an agent tool.** Write its parser in `core/src/parsers/`, then a plug-in in `core/src/sources/` that implements `AgentSource` (its id, label, log folders, session discovery and parsing; resume commands and instruction files are optional), and list it in `Source::ALL` in `sources/mod.rs`. Ingest, archiving, the watcher, settings and the read models pick it up from there. Then run `UPDATE_GENERATED=1 cargo test -p tilly-core generated_ts` in `src-tauri` so the UI picks up its id and labels, and give it a colour in `src/format.ts`.

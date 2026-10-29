@@ -42,7 +42,7 @@ pub fn start(sink: impl Sink, db_path: PathBuf, data_dir: PathBuf) {
         .name("ingest".into())
         .spawn(move || {
             if let Err(e) = run(&sink, &db_path, &data_dir) {
-                eprintln!("ingest thread stopped: {e:#}");
+                tracing::error!("ingest thread stopped: {e:#}");
             }
         })
         .expect("spawn ingest thread");
@@ -60,7 +60,7 @@ impl LiveState {
     fn refresh(&mut self, conn: &rusqlite::Connection, sink: &impl Sink) {
         let summary = match live::summary(conn) {
             Ok(s) => s,
-            Err(e) => return eprintln!("live summary: {e:#}"),
+            Err(e) => return tracing::warn!("live summary: {e:#}"),
         };
         self.active = summary
             .sessions
@@ -93,7 +93,7 @@ fn run(sink: &impl Sink, db_path: &Path, data_dir: &Path) -> anyhow::Result<()> 
     // updates; the periodic full scan retries it.
     match ingestor.ingest_all(&mut conn, false) {
         Ok(report) => emit(&report),
-        Err(e) => eprintln!("initial scan: {e:#}"),
+        Err(e) => tracing::warn!("initial scan: {e:#}"),
     }
 
     let (tx, rx) = channel();
@@ -150,7 +150,7 @@ fn run(sink: &impl Sink, db_path: &Path, data_dir: &Path) -> anyhow::Result<()> 
                 match ingestor.ingest_paths(&mut conn, &paths) {
                     Ok(r) if r.updated > 0 => emit(&r),
                     Ok(_) => {}
-                    Err(e) => eprintln!("ingest: {e:#}"),
+                    Err(e) => tracing::warn!("ingest: {e:#}"),
                 }
             }
         }
@@ -161,7 +161,7 @@ fn run(sink: &impl Sink, db_path: &Path, data_dir: &Path) -> anyhow::Result<()> 
             match ingestor.ingest_all(&mut conn, false) {
                 Ok(r) if r.changed => emit(&r),
                 Ok(_) => {}
-                Err(e) => eprintln!("full scan: {e:#}"),
+                Err(e) => tracing::warn!("full scan: {e:#}"),
             }
         }
         state.refresh(&conn, sink);
