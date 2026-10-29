@@ -96,6 +96,8 @@ pub struct ParsedSession {
     pub subagents: u64,
     /// Sub-agents, their messages, and work scheduled for later.
     pub team: crate::team::Team,
+    /// The task list its agents keep, and their progress notes.
+    pub tasks: crate::tasks::TaskList,
     /// Tool calls the lead started that have no result yet: (call id, tool).
     pub pending: Vec<(String, String)>,
     /// The latest turn ended in an error (API error, output limit).

@@ -28,6 +28,7 @@ pub mod sources;
 pub mod stats;
 pub mod status_alerts;
 pub mod store;
+pub mod tasks;
 pub mod team;
 pub mod toolkit;
 pub mod trends;

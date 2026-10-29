@@ -248,6 +248,9 @@ fn read_line(line: &str, agent: Option<&str>, f: &mut FileState, s: &mut ParsedS
                         if item.get("type").and_then(Value::as_str) == Some("tool_use") {
                             note_team_tool(&mut s.team, me, item, ts, is_subagent);
                             note_toolkit(s, item);
+                            if let Some(name) = item.get("name").and_then(Value::as_str) {
+                                s.tasks.apply_tool(name, &item["input"], ts, me);
+                            }
                         }
                     }
                 }
