@@ -1,5 +1,6 @@
 mod background;
 mod commands;
+mod goto;
 mod logging;
 mod retro;
 mod sound;
@@ -30,6 +31,16 @@ use tilly_core::LEGACY_IDENTIFIERS;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Run by Claude Code as a hook: record the prompt and exit, no window.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == tilly_core::hooks::HOOK_FLAG) {
+        if let Some(db) = args.get(i + 1) {
+            let mut input = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+            let _ = tilly_core::hooks::record(std::path::Path::new(db), &input);
+        }
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -52,6 +63,13 @@ pub fn run() {
             logging::init(&data_dir);
             let db_path = data_dir.join("ledger.sqlite3");
             let conn = db::open(&db_path)?;
+            // Log folders you added in Settings, before the first scan.
+            sources::set_extra_dirs(
+                db::get_setting(&conn, sources::EXTRA_DIRS_KEY)
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+            );
             app.manage(AppState {
                 db: Mutex::new(conn),
                 db_path: db_path.clone(),
@@ -97,6 +115,9 @@ pub fn run() {
             commands::delete_workstream,
             commands::import_workstream,
             commands::sync_workstream,
+            commands::progress_report,
+            commands::post_progress,
+            commands::label_item,
             commands::open_tracker_link,
             commands::install_release,
             commands::get_overview,
@@ -129,6 +150,10 @@ pub fn run() {
             commands::get_live,
             commands::get_since,
             commands::take_open_request,
+            commands::claude_hook_status,
+            commands::set_claude_hook,
+            commands::go_to_agent,
+            commands::test_notification,
             commands::list_teams,
             commands::import_alert_asset,
             commands::read_alert_asset,

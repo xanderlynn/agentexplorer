@@ -29,6 +29,10 @@ impl AgentSource for CopilotCli {
         vec![config.join("session-state")]
     }
 
+    fn logs_in(&self) -> Option<&'static str> {
+        Some("session-state")
+    }
+
     fn discover(&self, root: &Path) -> Vec<Vec<PathBuf>> {
         read_dirs(root)
             .iter()

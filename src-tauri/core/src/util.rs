@@ -45,6 +45,17 @@ impl std::fmt::Display for NotFound {
 
 impl std::error::Error for NotFound {}
 
+/// "6h 20m", "45m" or "30s".
+pub fn human_duration(ms: i64) -> String {
+    let m = ms / 60_000;
+    match (m / 60, m % 60) {
+        (0, 0) => format!("{}s", ms / 1000),
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -249,6 +260,55 @@ pub fn find_program(name: &str, extra: &[&str]) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Runs `cmd` (with piped stdout and stderr) and collects its output, or
+/// kills it and returns none if it runs past `limit`.
+pub fn output_with_timeout(
+    cmd: &mut Command,
+    limit: std::time::Duration,
+) -> std::io::Result<Option<std::process::Output>> {
+    use std::io::Read;
+    let mut child = cmd.spawn()?;
+    // Read both pipes on their own threads, so a full pipe can't stall the child.
+    let pipe = |r: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = pipe(
+        child
+            .stdout
+            .take()
+            .map(|r| Box::new(r) as Box<dyn Read + Send>),
+    );
+    let err = pipe(
+        child
+            .stderr
+            .take()
+            .map(|r| Box::new(r) as Box<dyn Read + Send>),
+    );
+    let deadline = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    Ok(Some(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    }))
+}
+
 /// A `Command` that never flashes a console window on Windows.
 pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     #[allow(unused_mut)]
@@ -272,6 +332,27 @@ pub fn file_mtime_ms(p: &Path) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn gives_up_on_slow_commands() {
+        let quick = output_with_timeout(
+            Command::new("sh")
+                .args(["-c", "echo hi"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(quick.stdout, b"hi\n");
+        let slow = output_with_timeout(
+            Command::new("sleep").arg("5"),
+            std::time::Duration::from_millis(200),
+        )
+        .unwrap();
+        assert!(slow.is_none());
+    }
 
     #[test]
     fn classifies_errors() {

@@ -39,6 +39,11 @@ pub trait AgentSource: Sync {
     }
     /// Folders the tool writes its logs to; ones that don't exist are skipped.
     fn roots(&self) -> Vec<PathBuf>;
+    /// The folder inside a config folder that holds its logs, such as
+    /// "projects" in `~/.claude`, for folders you add in Settings.
+    fn logs_in(&self) -> Option<&'static str> {
+        None
+    }
     /// Every session under `root`, as its files with the primary one first.
     fn discover(&self, root: &Path) -> Vec<Vec<PathBuf>>;
     /// The files of the session that `changed`, a file under `root`, belongs to.
@@ -158,8 +163,42 @@ pub struct Root {
     pub path: PathBuf,
 }
 
+/// The setting holding folders you added, as JSON: `{"claude_code": ["/x"]}`.
+pub const EXTRA_DIRS_KEY: &str = "sources.extraDirs";
+
+static EXTRA: std::sync::RwLock<Vec<Root>> = std::sync::RwLock::new(Vec::new());
+
+/// Folders you added in Settings, beyond each tool's usual ones: a config
+/// folder (such as another `CLAUDE_CONFIG_DIR`) or its logs folder itself.
+pub fn set_extra_dirs(json: Option<&str>) {
+    let map: std::collections::BTreeMap<String, Vec<String>> = json
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
+    let roots = map
+        .iter()
+        .filter_map(|(id, dirs)| Some((Source::from_id(id)?, dirs)))
+        .flat_map(|(source, dirs)| {
+            dirs.iter().filter(|d| !d.trim().is_empty()).map(move |d| {
+                let d = d.trim();
+                // "~/x" as a shell would read it.
+                let dir = match d.strip_prefix("~/") {
+                    Some(rest) => crate::util::home().join(rest),
+                    None => PathBuf::from(d),
+                };
+                let path = source
+                    .logs_in()
+                    .map(|sub| dir.join(sub))
+                    .filter(|p| p.is_dir())
+                    .unwrap_or(dir);
+                Root { source, path }
+            })
+        })
+        .collect();
+    *EXTRA.write().unwrap_or_else(|e| e.into_inner()) = roots;
+}
+
 pub fn roots() -> Vec<Root> {
-    Source::ALL
+    let mut out: Vec<Root> = Source::ALL
         .iter()
         .flat_map(|&source| {
             source
@@ -167,7 +206,13 @@ pub fn roots() -> Vec<Root> {
                 .into_iter()
                 .map(move |path| Root { source, path })
         })
-        .collect()
+        .collect();
+    for r in EXTRA.read().unwrap_or_else(|e| e.into_inner()).iter() {
+        if !out.iter().any(|o| o.source == r.source && o.path == r.path) {
+            out.push(r.clone());
+        }
+    }
+    out
 }
 
 pub fn discover(root: &Root) -> Vec<Unit> {
@@ -249,6 +294,27 @@ mod tests {
         assert_eq!(unit.paths[0], proj.join("s1.jsonl"));
         assert_eq!(unit.paths.len(), 2);
         assert_eq!(discover(&root).len(), 1);
+    }
+
+    #[test]
+    fn adds_your_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+        let d = dir.path().to_string_lossy().replace('\\', "/");
+        set_extra_dirs(Some(&format!(
+            r#"{{"claude_code": ["{d}"], "copilot_cli": ["/x/state"], "nope": ["/y"]}}"#
+        )));
+        let r = roots();
+        assert!(
+            r.iter()
+                .any(|r| r.source == CLAUDE_CODE && r.path == dir.path().join("projects"))
+        );
+        assert!(
+            r.iter()
+                .any(|r| r.source == COPILOT_CLI && r.path == Path::new("/x/state"))
+        );
+        set_extra_dirs(None);
+        assert!(!roots().iter().any(|r| r.path == Path::new("/x/state")));
     }
 
     #[test]

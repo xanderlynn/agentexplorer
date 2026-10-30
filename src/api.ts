@@ -35,6 +35,11 @@ export interface SessionRow {
   source: Source;
   /** Which app ran it: "cli", "claude-desktop", "copilot-app", "vscode"… */
   entrypoint: string | null;
+  /** Pull requests it opened or worked on. */
+  prs: string[];
+  /** For an unrated session, the outcome its commits or PRs point to, and why; yours to confirm. */
+  suggestedOutcome: Outcome | null;
+  evidence: string | null;
   title: string | null;
   firstPrompt: string | null;
   projectPath: string | null;
@@ -672,6 +677,13 @@ export interface WsTask {
   updatedAt: number | null;
   /** A tracker item's page. */
   url: string | null;
+  /** A tracker item assigned to you. */
+  mine: boolean;
+  /** The tracker item it sits under, and how deep (0 at the top). */
+  parent: string | null;
+  depth: number;
+  /** Sessions that worked on this tracker item. */
+  sessions: string[];
 }
 
 export interface Workstream {
@@ -686,14 +698,33 @@ export interface Workstream {
   syncedAt: number | null;
   /** Why the last fetch from the tracker failed, until one succeeds. */
   syncError: string | null;
+  /** The imported epic is closed in its tracker. */
+  closed: boolean;
+  /** "owner/repo" of an imported GitHub epic. */
+  trackerRepo: string | null;
   repo: string | null;
   branch: string | null;
   lastActivity: number;
-  sessions: { id: string; source: Source; entrypoint: string | null; title: string | null; status: LiveStatus; endedAt: number }[];
+  sessions: {
+    id: string;
+    source: Source;
+    entrypoint: string | null;
+    title: string | null;
+    status: LiveStatus;
+    endedAt: number;
+    activeMs: number;
+    costUsd: number | null;
+    costIsEstimate: boolean;
+    tokens: number;
+    commits: number;
+    prs: string[];
+    outcome: Outcome | null;
+  }[];
   agents: { sessionId: string; id: string; name: string | null; role: string; active: boolean }[];
   tasks: WsTask[];
   updates: { at: number | null; sessionId: string; agent: string; taskKey: string | null; text: string }[];
-  counts: { done: number; inProgress: number; needsYou: number; pending: number; agent: number; human: number };
+  /** Progress counts: an imported epic's leaf items, else agents' tasks. */
+  counts: { done: number; inProgress: number; needsYou: number; decisions: number; waiting: number; pending: number; agent: number; human: number };
 }
 
 /** A release you can move to; see updates.rs `list`. */
@@ -855,6 +886,10 @@ export const api = {
   retireGoal: (id: number) => call<void>("retire_goal", { id }),
   preflight: (text: string, source: Source | null) => call<PreflightAdvice>("preflight", { text, source }),
   live: () => call<LiveSummary>("get_live"),
+  testNotification: () => call<void>("test_notification"),
+  goToAgent: (id: string) => call<string>("go_to_agent", { id }),
+  claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
+  setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
   takeOpenRequest: () => call<string | null>("take_open_request"),
   since: (since: number) => call<LiveSession[]>("get_since", { since }),
   teams: () => call<TeamSession[]>("list_teams"),
@@ -908,6 +943,9 @@ export const api = {
   deleteWorkstream: (key: string) => call<void>("delete_workstream", { key }),
   importWorkstream: (url: string) => call<string>("import_workstream", { url }),
   syncWorkstream: (key: string) => call<void>("sync_workstream", { key }),
+  progressReport: (key: string) => call<string>("progress_report", { key }),
+  postProgress: (key: string, body: string) => call<string>("post_progress", { key, body }),
+  labelItem: (taskKey: string, kind: TaskKind) => call<void>("label_item", { taskKey, kind }),
   openTrackerLink: (url: string) => call<void>("open_tracker_link", { url }),
   installRelease: (version: string) => call<void>("install_release", { version }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),

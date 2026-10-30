@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, Responsiv
 import { api, type Source } from "../api";
 import type { Drill } from "../App";
 import { Card, Empty, ErrorNote, Legend, Loading, PageHeader, RANGE_OPTIONS, Rate, Segmented, Stat } from "../components/ui";
-import { SOURCE_COLOR, SOURCE_LABEL, compact, money, pct, sourceLabel } from "../format";
+import { SOURCE_COLOR, SOURCE_LABEL, compact, money, onSubscription, pct, sourceLabel } from "../format";
 import { chart } from "../theme";
 
 const SOURCES = Object.keys(SOURCE_LABEL) as Source[];
@@ -16,7 +16,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
   const header = (
     <PageHeader
       title="Usage"
-      subtitle="Tokens and spend by tool and model. On a subscription, tokens decide when you hit limits; Claude Code costs are as recorded, Copilot's are API-equivalent estimates."
+      subtitle={onSubscription() ? "Tokens by tool and model: on your subscription they decide when you hit limits. Dollar amounts (≈) are what the same work would cost at API prices." : "Tokens and spend by tool and model. Costs are as the logs record them where they do, otherwise estimated at API prices (~); Copilot's are always estimates."}
       actions={
         <>
           <Segmented options={[{ value: "tokens", label: "Tokens" }, { value: "cost", label: "Cost" }]} value={unit} onChange={setUnit} />

@@ -315,6 +315,14 @@ fn read_line(line: &str, agent: Option<&str>, f: &mut FileState, s: &mut ParsedS
                     s.title = Some(truncate(t, 200));
                 }
             }
+            // A pull request the session opened or worked on.
+            "pr-link" => {
+                if let Some(url) = v.get("prUrl").and_then(Value::as_str)
+                    && !s.prs.iter().any(|p| p == url)
+                {
+                    s.prs.push(url.to_string());
+                }
+            }
             "summary" if s.title.is_none() => {
                 if let Some(t) = v.get("summary").and_then(Value::as_str) {
                     s.title = Some(truncate(t, 200));

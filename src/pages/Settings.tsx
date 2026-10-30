@@ -7,7 +7,7 @@ import { AppearanceSettings } from "../components/Appearance";
 import { StatusProfiles } from "../components/StatusProfiles";
 import { Updates, hasUpdate } from "../components/Updates";
 import { CURRENT_VERSION } from "../components/WhatsNew";
-import { Button, Card, ErrorNote, Field, Loading, PageHeader, Segmented, SourceBadge, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Field, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -62,6 +62,11 @@ export default function Settings() {
                   <div className="mt-0.5 space-y-0.5">
                     {s.paths.length ? s.paths.map((p) => <div key={p} className="truncate font-mono text-xs text-zinc-500">{p}</div>) : <div className="text-xs text-zinc-500">Not found on this computer</div>}
                   </div>
+                  <ExtraDirs
+                    source={s.source}
+                    json={v["sources.extraDirs"]}
+                    onSave={(value) => set.mutate({ key: "sources.extraDirs", value }, { onSuccess: () => rescan.mutate(false) })}
+                  />
                 </div>
                 <label className="flex shrink-0 items-center gap-2 text-xs text-zinc-400">
                   <input type="checkbox" className="accent-emerald-500" checked={s.enabled} onChange={(e) => toggleSource.mutate({ source: s.source, enabled: e.target.checked })} />
@@ -167,6 +172,23 @@ export default function Settings() {
             </span>
           </label>
         </Card>
+        <Card title="How you pay for agents">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm text-zinc-300">Plan</span>
+            <Segmented
+              options={[
+                { value: "api", label: "Pay per use (API)" },
+                { value: "subscription", label: "Subscription" },
+              ]}
+              value={v["billing.plan"] ?? "api"}
+              onChange={(value) => set.mutate({ key: "billing.plan", value })}
+            />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            On a subscription (Claude Pro or Max, a Copilot plan) you don't pay per token, so dollar amounts show as ≈, what the same work would cost at API prices: useful to compare, not a bill.
+          </p>
+        </Card>
+        <ClaudeHookCard />
         <Card title="Workstreams">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-sm text-zinc-300">Sync imported epics</span>
@@ -263,5 +285,76 @@ function Licenses() {
         {error && <p className="mt-2 text-xs text-rose-400">Could not load notices: {error}</p>}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Claude Code doesn't log permission prompts; with this hook it tells Tilly
+ * when one appears, for Claude Code in a terminal and in the Claude app.
+ */
+function ClaudeHookCard() {
+  const qc = useQueryClient();
+  const hook = useQuery({ queryKey: ["claudeHook"], queryFn: api.claudeHook });
+  const set = useMutation({ mutationFn: (on: boolean) => api.setClaudeHook(on), onSuccess: (h) => qc.setQueryData(["claudeHook"], h) });
+  const on = hook.data?.installed ?? false;
+  return (
+    <Card title="Claude Code permission prompts">
+      <p className="text-sm text-zinc-400">
+        Claude Code doesn't record its permission prompts, so Tilly can only guess that one is waiting (Might need approval), and can't see Bash prompts at all. Add Tilly&apos;s
+        hook to Claude Code and each prompt shows as <span className="text-zinc-200">Needs permission</span> the moment it appears, in the terminal and in the Claude app.
+      </p>
+      <p className="mt-2 text-xs text-zinc-500">
+        Adds one Notification hook to {hook.data?.settingsPath ?? "Claude Code's settings"} (the file before is kept as settings.json.tilly-backup). The hook passes Tilly the
+        session and the tool it asks for, nothing else. Remove it here any time.
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <Button size="sm" variant={on ? "secondary" : "primary"} busy={set.isPending} onClick={() => set.mutate(!on)}>
+          {on ? "Remove the hook" : "Add the hook"}
+        </Button>
+        <span className={cx("text-xs", on ? "text-emerald-300" : "text-zinc-500")}>{hook.isLoading ? "Checking…" : on ? "Installed" : "Not installed"}</span>
+      </div>
+      <ErrorNote error={set.error ?? hook.error} />
+    </Card>
+  );
+}
+
+/**
+ * More folders to read a tool's logs from, beyond its usual one: another
+ * config folder (such as a CLAUDE_CONFIG_DIR a Finder-launched Tilly can't
+ * see) or its logs folder itself. One per line; saved on leaving the field.
+ */
+function ExtraDirs({ source, json, onSave }: { source: string; json: string | undefined; onSave: (json: string) => void }) {
+  let all: Record<string, string[]> = {};
+  try {
+    all = json ? JSON.parse(json) : {};
+  } catch {
+    all = {};
+  }
+  const mine = (all[source] ?? []).join("\n");
+  const [text, setText] = useState(mine);
+  const [open, setOpen] = useState(mine.length > 0);
+  if (!open) {
+    return (
+      <button className="mt-1 text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setOpen(true)}>
+        + Also read logs from another folder
+      </button>
+    );
+  }
+  return (
+    <label className="mt-2 block">
+      <span className="text-xs text-zinc-500">Also read logs from (one folder per line). New folders are watched live after a restart.</span>
+      <textarea
+        rows={2}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          if (text === mine) return;
+          const dirs = text.split("\n").map((d) => d.trim()).filter(Boolean);
+          onSave(JSON.stringify({ ...all, [source]: dirs }));
+        }}
+        placeholder={source === "claude_code" ? "~/.claude-work" : source === "copilot_cli" ? "~/.copilot-work" : "/path/to/logs"}
+        className={cx(inputClass, "mt-1 font-mono text-xs")}
+      />
+    </label>
   );
 }

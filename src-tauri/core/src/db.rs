@@ -302,6 +302,36 @@ CREATE TABLE workstream_items (
 ALTER TABLE workstream_prefs ADD COLUMN sync_error TEXT;
 ALTER TABLE workstream_prefs ADD COLUMN sync_tried_at INTEGER;
 "#,
+    // Nested epic items, which are yours, the epic's own title, state and
+    // repository, and which sessions worked on which item.
+    r#"
+ALTER TABLE workstream_items ADD COLUMN parent TEXT;
+ALTER TABLE workstream_items ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_items ADD COLUMN mine INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_prefs ADD COLUMN source_title TEXT;
+ALTER TABLE workstream_prefs ADD COLUMN source_closed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_prefs ADD COLUMN source_repo TEXT;
+CREATE TABLE workstream_item_sessions (
+    ws_key     TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    PRIMARY KEY (ws_key, item_key, session_id)
+);
+"#,
+    // Permission prompts Claude Code's hook reported, newest per session.
+    r#"
+CREATE TABLE hook_events (
+    external_id TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    detail      TEXT,
+    at          INTEGER NOT NULL,
+    PRIMARY KEY (external_id, kind)
+);
+"#,
+    // Pull requests each session opened or worked on, as JSON.
+    r#"
+ALTER TABLE sessions ADD COLUMN prs TEXT NOT NULL DEFAULT '[]';
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -379,6 +409,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "turn_started_at", "INTEGER"),
     ("sessions", "failed", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "tasks", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "prs", "TEXT NOT NULL DEFAULT '[]'"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),

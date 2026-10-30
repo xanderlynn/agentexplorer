@@ -86,10 +86,20 @@ export function hours(h: number): string {
   return h < 10 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`;
 }
 
+/**
+ * On a subscription (Claude Pro or Max, a Copilot plan) dollars aren't what
+ * you pay: amounts are shown as API-equivalent (≈). Set from Settings.
+ */
+let subscription = false;
+export const setSubscription = (on: boolean) => {
+  subscription = on;
+};
+export const onSubscription = () => subscription;
+
 export function money(usd: number | null | undefined, estimate = false): string {
   if (usd == null) return "—";
   const v = usd >= 100 ? `$${Math.round(usd).toLocaleString()}` : `$${usd.toFixed(2)}`;
-  return estimate ? `~${v}` : v;
+  return subscription ? `≈${v}` : estimate ? `~${v}` : v;
 }
 
 /** A fixed-precision number, or a dash when missing. */

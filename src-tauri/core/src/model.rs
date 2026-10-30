@@ -98,6 +98,8 @@ pub struct ParsedSession {
     pub team: crate::team::Team,
     /// The task list its agents keep, and their progress notes.
     pub tasks: crate::tasks::TaskList,
+    /// Pull requests the session opened or worked on.
+    pub prs: Vec<String>,
     /// Tool calls the lead started that have no result yet: (call id, tool).
     pub pending: Vec<(String, String)>,
     /// The latest turn ended in an error (API error, output limit).

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::State;
 
@@ -548,7 +548,45 @@ pub async fn import_workstream(state: State<'_, AppState>, url: String) -> CmdRe
     // On its own connection, as the tracker can be slow to answer.
     blocking(&state, move |c, _| {
         let epic = trackers::fetch(&trackers::parse(&url)?)?;
-        workstreams::import(c, &epic)
+        workstreams::import(c, &epic, &url)
+    })
+    .await
+}
+
+/// A progress comment for an imported epic, to preview and edit.
+#[tauri::command(async)]
+pub fn progress_report(state: State<AppState>, key: String) -> CmdResult<String> {
+    with_db(&state, |c| workstreams::progress_report(c, &key))
+}
+
+/// Posts `body` as a comment on the imported epic, as you, after you've
+/// read it. Returns the comment's link.
+#[tauri::command]
+pub async fn post_progress(
+    state: State<'_, AppState>,
+    key: String,
+    body: String,
+) -> CmdResult<String> {
+    blocking(&state, move |c, _| {
+        let url = workstreams::source_url(c, &key)?;
+        trackers::comment(&trackers::parse(&url)?, &body)
+    })
+    .await
+}
+
+/// Labels (or tags) an epic item as agent or human work in its tracker.
+#[tauri::command]
+pub async fn label_item(
+    state: State<'_, AppState>,
+    task_key: String,
+    kind: workstreams::TaskKind,
+) -> CmdResult<()> {
+    blocking(&state, move |c, _| {
+        let url = workstreams::item_url(c, &task_key)?;
+        trackers::label_kind(
+            &trackers::parse(&url)?,
+            kind == workstreams::TaskKind::Human,
+        )
     })
     .await
 }
@@ -612,6 +650,8 @@ const SETTING_KEYS: &[&str] = &[
     "alerts.profile",
     "updates.autoCheck",
     crate::tracker_sync::SETTING,
+    "billing.plan",
+    sources::EXTRA_DIRS_KEY,
 ];
 
 #[derive(Serialize)]
@@ -625,6 +665,65 @@ pub struct Settings {
     pub db_path: String,
     pub log_path: String,
     pub default_api_model: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeHook {
+    pub installed: bool,
+    /// Claude Code's settings file the hook goes in.
+    pub settings_path: String,
+}
+
+/// Brings forward the app or terminal a session runs in, and says what it did.
+#[tauri::command]
+pub async fn go_to_agent(state: State<'_, AppState>, id: String) -> CmdResult<String> {
+    blocking(&state, move |c, _| {
+        let (source, entrypoint, cwd, external_id): (String, Option<String>, Option<String>, String) = c
+            .query_row(
+                "SELECT source, entrypoint, COALESCE(project_path, repo_root), external_id FROM sessions WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?
+            .ok_or(tilly_core::util::NotFound("Session"))?;
+        let resume = sources::Source::from_id(&source)
+            .and_then(|s| s.resume_command(cwd.as_deref(), &external_id));
+        crate::goto::go(&crate::goto::Target { source, entrypoint, cwd, external_id, resume })
+    })
+    .await
+}
+
+/// Shows a notification, so you can check they're allowed (macOS asks the
+/// first time).
+#[tauri::command]
+pub fn test_notification(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title("Tilly can reach you")
+        .body("This is how you'll hear that an agent is waiting on you.")
+        .show()
+        .map_err(|e| err(anyhow::anyhow!("{e}")))
+}
+
+/// Whether Tilly's permission-prompt hook is in Claude Code's settings.
+#[tauri::command(async)]
+pub fn claude_hook_status() -> CmdResult<ClaudeHook> {
+    let path = tilly_core::hooks::claude_settings();
+    Ok(ClaudeHook {
+        installed: tilly_core::hooks::installed(&path).map_err(err)?,
+        settings_path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Adds or removes Tilly's hook in Claude Code's settings, at your request.
+#[tauri::command(async)]
+pub fn set_claude_hook(state: State<AppState>, on: bool) -> CmdResult<ClaudeHook> {
+    let exe = std::env::current_exe().map_err(|e| err(e.into()))?;
+    let path = tilly_core::hooks::claude_settings();
+    tilly_core::hooks::set_installed(&path, on, &exe, &state.db_path).map_err(err)?;
+    claude_hook_status()
 }
 
 #[tauri::command(async)]
@@ -663,6 +762,9 @@ pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> CmdResult<()> {
     if !SETTING_KEYS.contains(&key.as_str()) {
         return Err(format!("Unknown setting {key}").into());
+    }
+    if key == sources::EXTRA_DIRS_KEY {
+        sources::set_extra_dirs(Some(&value));
     }
     with_db(&state, |c| db::set_setting(c, &key, &value))
 }

@@ -1,3 +1,4 @@
+import { setSubscription } from "./format";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -96,6 +97,8 @@ export default function App() {
   const whatsNew = useWhatsNew();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const releases = useReleases(!!settings.data && settings.data.values["updates.autoCheck"] !== "false");
+  // On a subscription, dollar amounts are API-equivalent, not what you pay.
+  setSubscription(settings.data?.values["billing.plan"] === "subscription");
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const group = groupOf(page);
 

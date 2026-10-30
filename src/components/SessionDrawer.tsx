@@ -8,6 +8,7 @@ import { StatusBadge } from "./status";
 import { MODE_COLOR, MODE_LABEL, STYLE_LABEL, compact, dateTime, duration, money, projectName } from "../format";
 import { Button, ErrorNote, Field, Heuristic, inputClass, Loading, Metric, OutcomePicker, Rating, SourceBadge, cx } from "./ui";
 import { Fold, TeamView } from "./TeamView";
+import { GoToAgent } from "./GoToAgent";
 
 /**
  * One view of a session: what it is doing and who is on it on the left,
@@ -286,6 +287,9 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
               </div>
             )}
           </section>
+          <div className="flex justify-end">
+            <GoToAgent id={id} />
+          </div>
           {d.resumeCommand && <ResumeCommand command={d.resumeCommand} />}
           <section>
             <h3 className="mb-2 text-sm font-medium text-zinc-200">Commits ({d.commits.length})</h3>

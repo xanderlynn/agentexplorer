@@ -1,12 +1,13 @@
+import { GoToAgent } from "../components/GoToAgent";
 import { memo, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowRight, ChevronDown, Radio, Star, TriangleAlert, X } from "lucide-react";
+import { ArrowRight, ChevronDown, Radio, TriangleAlert, X } from "lucide-react";
 import { api, useLive, type LiveBucket, type LiveSession, type LiveSummary, type Source } from "../api";
 import { StatusAvatar, StatusBadge, TeamStack } from "../components/status";
 import { Swimlanes } from "../components/Swimlanes";
 import { Card, Empty, ErrorNote, Meter, PageHeader, Segmented, SourceBadge, Stat, cx } from "../components/ui";
-import { MODE_LABEL, SMART_ZONE_DEFAULT, SOURCE_LABEL, SOURCE_OPTIONS, compact, duration, projectName } from "../format";
+import { MODE_LABEL, OUTCOME_CLASS, OUTCOME_LABEL, SMART_ZONE_DEFAULT, SOURCE_LABEL, SOURCE_OPTIONS, compact, duration, projectName } from "../format";
 import { MIN_N } from "../stats";
 import { STATUS, isActive, isAwaiting, urgency } from "../status";
 import { chart } from "../theme";
@@ -211,7 +212,7 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
   const t = STATUS[s.status];
   const note = s.status === "maybe_blocked" && s.pendingTool ? `Waiting on ${s.pendingTool} — check the terminal for a permission prompt.` : s.lastMessage;
   return (
-    <li>
+    <li className="relative">
       <button
         data-card
         onClick={() => onOpen(s.id)}
@@ -238,6 +239,8 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
           Open <ArrowRight size={13} aria-hidden />
         </span>
       </button>
+      {/* Beside the card, not in it: a button can't hold another. */}
+      <GoToAgent id={s.id} className="absolute bottom-3 right-3" />
     </li>
   );
 });
@@ -323,15 +326,12 @@ const CompletedRow = memo(function CompletedRow({ s, onOpen }: { s: LiveSession;
       <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">{s.title ?? "Untitled session"}</span>
       {failed > 0 && <span className="shrink-0 text-xs text-rose-300">{failed} agent{failed > 1 ? "s" : ""} failed</span>}
       <span className="shrink-0 text-xs tabular-nums text-zinc-500">{duration(s.activeMs)}</span>
-      <span className="inline-flex w-9 shrink-0 items-center justify-end gap-0.5 text-xs tabular-nums text-zinc-400" title={s.rating ? `You rated it ${s.rating} of 5` : "Not rated yet"}>
-        {s.rating ? (
-          <>
-            <Star size={11} aria-hidden /> {s.rating}
-          </>
-        ) : (
-          "—"
-        )}
-      </span>
+      {/* The same outcome scale as everywhere else. */}
+      {s.outcome ? (
+        <span className={cx("shrink-0 rounded px-1.5 py-0.5 text-[11px] ring-1 ring-inset", OUTCOME_CLASS[s.outcome])}>{OUTCOME_LABEL[s.outcome]}</span>
+      ) : (
+        <span className="w-16 shrink-0 text-right text-xs text-zinc-500">Unrated</span>
+      )}
     </button>
   );
 });

@@ -17,6 +17,9 @@ const LONG_TASK_AFTER_MS: i64 = 2 * 60_000;
 const MAYBE_BLOCKED_AFTER_MS: i64 = 45_000;
 /// Silent this long while working, it has stalled or the tool was closed.
 const STALE_AFTER_MS: i64 = 30 * 60_000;
+/// A hook report this close before the session's last log line still
+/// counts: the line asking for the tool is written just before the prompt.
+const HOOK_SLACK_MS: i64 = 2_000;
 /// A question or permission prompt stays waiting on you this long, so one
 /// left overnight is still there in the morning.
 pub const AWAIT_HOLD_MS: i64 = 24 * 3_600_000;
@@ -382,8 +385,11 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
                 active_ms, last_message, outcome, timeline, last_context,
                 team, pending_tool, turn_started_at, failed, rating,
-                input_tokens + output_tokens + cache_read_tokens + cache_write_tokens, entrypoint
-         FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 300",
+                input_tokens + output_tokens + cache_read_tokens + cache_write_tokens, entrypoint,
+                h.at, h.detail
+         FROM sessions
+         LEFT JOIN hook_events h ON h.external_id = sessions.external_id AND h.kind = 'permission'
+         WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 300",
     )?;
     let rows: Vec<Row> = stmt
         .query_map([since], |r| {
@@ -396,7 +402,7 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
             let pending_tool: Option<String> = r.get(14)?;
             let turn_started: Option<i64> = r.get(15)?;
             let (scheduled, next_run) = upcoming(&team, now);
-            let (status, _) = derive(
+            let (mut status, _) = derive(
                 &mut team,
                 Signals {
                     last_event: last_event.as_deref(),
@@ -408,9 +414,28 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
                 ended,
                 now,
             );
+            // Claude Code's hook saw a permission prompt the log hasn't moved
+            // past: it's waiting on you, for that tool.
+            let hook: Option<i64> = r.get(20)?;
+            let mut pending_tool = pending_tool;
+            let prompted = hook.filter(|at| {
+                *at + HOOK_SLACK_MS >= ended
+                    && now - at < AWAIT_HOLD_MS
+                    && matches!(
+                        status,
+                        LiveStatus::Working
+                            | LiveStatus::LongTask
+                            | LiveStatus::MaybeBlocked
+                            | LiveStatus::Stale
+                    )
+            });
+            if prompted.is_some() {
+                status = LiveStatus::NeedsPermission;
+                pending_tool = r.get::<_, Option<String>>(21)?.or(pending_tool);
+            }
             let status_since = match status {
                 LiveStatus::Working | LiveStatus::LongTask => turn_started.unwrap_or(ended),
-                _ => ended,
+                _ => prompted.unwrap_or(ended),
             };
             let agents = team
                 .agents
@@ -706,6 +731,38 @@ mod tests {
         assert_eq!(status_for(night), LiveStatus::Done);
         assert_eq!(status_for(st("closed", 0)), LiveStatus::Ended);
         assert_eq!(status_for(Signals::default()), LiveStatus::Stale);
+    }
+
+    #[test]
+    fn hook_reports_permission_prompts_until_the_log_moves_on() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let now = now_ms();
+        let session = |ended: i64| {
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (id, source, external_id, file_path, started_at, ended_at, active_ms,
+                   user_turns, last_event, pending_tool, ingested_at)
+                 VALUES ('a', 'claude_code', 'x', '/f', ?1, ?1, 0, 1, 'working', 'Bash', ?1)",
+                [ended],
+            )
+            .unwrap();
+        };
+        session(now - 5_000);
+        let status = || summary(&conn).unwrap().sessions[0].clone();
+        // Bash running a while looks like work, without the hook.
+        assert_ne!(status().status, LiveStatus::NeedsPermission);
+        conn.execute(
+            "INSERT INTO hook_events (external_id, kind, detail, at) VALUES ('x', 'permission', 'Bash', ?1)",
+            [now - 4_000],
+        )
+        .unwrap();
+        let s = status();
+        assert_eq!(
+            (s.status, s.pending_tool.as_deref()),
+            (LiveStatus::NeedsPermission, Some("Bash"))
+        );
+        // Answered: the log moved past the prompt.
+        session(now - 1_000);
+        assert_ne!(status().status, LiveStatus::NeedsPermission);
     }
 
     #[test]

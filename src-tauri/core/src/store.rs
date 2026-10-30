@@ -43,6 +43,12 @@ pub struct SessionRow {
     pub source: String,
     /// Which app ran it: "cli", "claude-desktop", "copilot-app", "vscode"…
     pub entrypoint: Option<String>,
+    /// Pull requests it opened or worked on.
+    pub prs: Vec<String>,
+    /// For an unrated session, the outcome its git work points to, and why:
+    /// for you to confirm, never counted until you do.
+    pub suggested_outcome: Option<String>,
+    pub evidence: Option<String>,
     pub title: Option<String>,
     pub first_prompt: Option<String>,
     pub project_path: Option<String>,
@@ -131,7 +137,7 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
        s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms,
        s.planned OR EXISTS(SELECT 1 FROM intents i WHERE i.session_id = s.id),
-       s.peak_context, s.mode_ms, s.entrypoint
+       s.peak_context, s.mode_ms, s.entrypoint, s.prs
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai, SUM(reworked) AS rw
@@ -145,7 +151,13 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     let user_turns: i64 = r.get(11)?;
     let active_ms: i64 = r.get(10)?;
     let planned: bool = r.get(46)?;
+    let prs: Vec<String> = serde_json::from_str(&r.get::<_, String>(50)?).unwrap_or_default();
+    let outcome: Option<String> = r.get(20)?;
+    let (suggested_outcome, evidence) = suggest(outcome.as_deref(), r.get(22)?, r.get(44)?, &prs);
     Ok(SessionRow {
+        prs,
+        suggested_outcome,
+        evidence,
         friction: signals::friction(
             match r.get::<_, i64>(42)? {
                 // Parsed before ask scores existed: score the stored opening.
@@ -178,7 +190,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         cost_usd: r.get(17)?,
         cost_is_estimate: r.get(18)?,
         premium_requests: r.get(19)?,
-        outcome: r.get(20)?,
+        outcome,
         rating: r.get(21)?,
         commits: r.get(22)?,
         insertions: r.get(23)?,
@@ -208,6 +220,34 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         mode_ms: serde_json::from_str(&r.get::<_, String>(48)?).unwrap_or_default(),
         style: style_of(planned, user_turns),
     })
+}
+
+/// What an unrated session's git work says about it: commits that stood, or
+/// a pull request, look shipped. Reworked commits suggest nothing.
+fn suggest(
+    outcome: Option<&str>,
+    commits: i64,
+    reworked: bool,
+    prs: &[String],
+) -> (Option<String>, Option<String>) {
+    if outcome.is_some() || reworked || (commits == 0 && prs.is_empty()) {
+        return (None, None);
+    }
+    let mut why = vec![];
+    if commits > 0 {
+        why.push(format!(
+            "{commits} commit{}",
+            if commits == 1 { "" } else { "s" }
+        ));
+    }
+    for pr in prs.iter().take(2) {
+        why.push(
+            pr.rsplit_once("/pull/")
+                .map(|(_, n)| format!("PR #{n}"))
+                .unwrap_or_else(|| "a PR".into()),
+        );
+    }
+    (Some("shipped".into()), Some(why.join(", ")))
 }
 
 pub fn load_sessions(conn: &Connection, range: Range) -> Result<Vec<SessionRow>> {
