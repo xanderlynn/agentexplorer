@@ -28,6 +28,8 @@ export default function Sessions({
   const [category, setCategory] = useState("");
   const [exported, setExported] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "startedAt", desc: true });
+  // A power user's month is over a thousand sessions: draw a page at a time.
+  const [shown, setShown] = useState(PAGE);
 
   // A drill-through from a chart narrows the list on top of the controls; a
   // specific day or session set ignores the range picker.
@@ -62,7 +64,7 @@ export default function Sessions({
 
   return (
     <>
-      <PageHeader title="Sessions" subtitle="Every tracked session. Open one to rate it; ratings are what make the insights work." actions={<Segmented options={RANGE_OPTIONS} value={days} onChange={setDays} />} />
+      <PageHeader title="Sessions" subtitle="Every tracked session. Open one to rate it; ratings are what make the insights work." actions={<Segmented options={[{ value: 1, label: "24h" }, ...RANGE_OPTIONS]} value={days} onChange={setDays} />} />
       {drill && (
         <div className="mb-3 flex items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
@@ -122,7 +124,7 @@ export default function Sessions({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
-              {rows.map((s) => (
+              {rows.slice(0, shown).map((s) => (
                 <tr key={s.id} className="cursor-pointer hover:bg-zinc-800/30 [&>td]:px-3 [&>td]:py-2" onClick={() => onOpen(s.id)}>
                   <td className="max-w-md">
                     <div className="flex items-center gap-1.5 truncate text-zinc-100">
@@ -152,8 +154,19 @@ export default function Sessions({
               ))}
             </tbody>
           </table>
+          {rows.length > shown && (
+            <div className="flex items-center justify-center gap-3 border-t border-zinc-800/60 py-3 text-xs text-zinc-500">
+              Showing {shown} of {rows.length}
+              <Button size="sm" variant="secondary" onClick={() => setShown((n) => n + PAGE)}>
+                Show {Math.min(PAGE, rows.length - shown)} more
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </>
   );
 }
+
+/** Rows drawn at a time. */
+const PAGE = 100;

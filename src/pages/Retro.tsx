@@ -5,6 +5,7 @@ import { api, type Retro as RetroT, type Suggestion } from "../api";
 import { NewExperiment } from "./Experiments";
 import type { Page } from "../App";
 import { Markdown } from "../components/Markdown";
+import { WeekDigest } from "../components/WeekDigest";
 import { Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, inputClass } from "../components/ui";
 import { date, dateTime } from "../format";
 
@@ -45,6 +46,7 @@ export default function Retro({ go }: { go: (p: Page) => void }) {
   return (
     <>
       <PageHeader title="Weekly retro" subtitle="Claude reviews your period: what worked, where execution leaked, and three experiments to try next. It follows up on last time's experiments." />
+      <WeekDigest />
       <Card>
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Period">

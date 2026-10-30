@@ -38,6 +38,26 @@ fn matches(words: &[String], keyword: &str) -> bool {
 /// Ordered: the first category whose keywords match wins, so the more
 /// specific intents come before the generic "feature".
 const CATEGORIES: &[(&str, &[&str])] = &[
+    // Finding out why something misbehaves, which may end in an answer
+    // rather than a change.
+    (
+        "troubleshooting",
+        &[
+            "why does",
+            "why do",
+            "why is",
+            "why are",
+            "figure out why",
+            "find out why",
+            "investigate*",
+            "debug*",
+            "diagnos*",
+            "troubleshoot*",
+            "root cause",
+            "what's causing",
+            "whats causing",
+        ],
+    ),
     (
         "review",
         &["review", "reviewing", "audit*", "critique", "look over"],
@@ -362,6 +382,14 @@ mod tests {
             "research"
         );
         assert_eq!(categorize("hello", ""), "other");
+        assert_eq!(
+            categorize("Why does the staging deploy fail", ""),
+            "troubleshooting"
+        );
+        assert_eq!(
+            categorize("Investigate the slow invoices query", ""),
+            "troubleshooting"
+        );
         // Whole words only.
         assert_eq!(categorize("Explain the latest changes", ""), "research");
         assert_eq!(categorize("Add a preview pane", ""), "feature");

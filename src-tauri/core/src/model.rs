@@ -219,6 +219,8 @@ pub const ACTIVE_GAP_CAP_MS: i64 = 5 * 60 * 1000;
 /// A gap longer than this means the human stepped away, not that they were
 /// slow to respond, so it is left out of response-latency figures.
 pub const WAIT_SAMPLE_CAP_MS: i64 = 30 * 60 * 1000;
+/// Longer than this between turns, you came back another day: not a wait.
+pub const AWAY_SPAN_CAP_MS: i64 = 12 * 3_600_000;
 
 #[derive(Debug, Clone)]
 pub struct Derived {
@@ -290,6 +292,10 @@ impl ParsedSession {
             let gap = t - end;
             if (0..=WAIT_SAMPLE_CAP_MS).contains(&gap) {
                 self.wait_samples.push(gap);
+                self.push_span(end, t, 0);
+            } else if (0..=AWAY_SPAN_CAP_MS).contains(&gap) {
+                // Away (a meeting, lunch): the agent still waited, so it's in
+                // the timeline for Your attention, but it isn't a slow reply.
                 self.push_span(end, t, 0);
             }
         }

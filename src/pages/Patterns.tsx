@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Benchmark, type Patterns as PatternsT } from "../api";
+import { AttentionCard } from "../components/Attention";
 import type { Drill } from "../App";
 import { Card, Empty, ErrorNote, Heuristic, Loading, Meter, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
 import { duration, fixed, pct } from "../format";
@@ -42,6 +43,7 @@ export default function Patterns({
   return (
     <>
       {header}
+      <AttentionCard days={days} />
       <Card title="Activity over the last year" action={<HeatLegend label="active minutes" />}>
         <Calendar days={p.calendar} onDay={(date) => drill({ label: `sessions on ${date}`, date })} />
       </Card>
@@ -113,7 +115,7 @@ export default function Patterns({
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="tool" width={130} tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
-                <Bar dataKey="count" name="Calls" fill={chart.accent} radius={[0, 3, 3, 0]} />
+                <Bar isAnimationActive={false} dataKey="count" name="Calls" fill={chart.accent} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -218,7 +220,7 @@ function Multiple({
             {marks.map((m) => (
               <ReferenceLine key={m.week + m.label} x={m.week} stroke="var(--color-sky-500)" strokeDasharray="1 3" />
             ))}
-            <Line type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+            <Line isAnimationActive={false} type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </div>

@@ -145,6 +145,12 @@ pub struct Workstream {
     pub source_kind: Option<String>,
     /// The tracker's repository ("owner/repo") for an imported epic.
     pub tracker_repo: Option<String>,
+    /// You archived it out of the Active list.
+    pub archived: bool,
+    /// How many sessions it has; the list sends this instead of the sessions.
+    pub session_count: usize,
+    /// When its earliest session ended, for how long it has run.
+    pub started_at: i64,
     pub repo: Option<String>,
     pub branch: Option<String>,
     pub last_activity: i64,
@@ -499,6 +505,9 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         ws.tasks.splice(0..0, item_tasks);
         recount(ws, now);
     }
+    for w in &mut out {
+        w.session_count = w.sessions.len();
+    }
     out.sort_by_key(|w| {
         (
             std::cmp::Reverse(w.starred),
@@ -507,6 +516,74 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         )
     });
     Ok(out)
+}
+
+/// The workstream list as the cards need it: each workstream without its
+/// task tree and with only its latest update, so the live list stays small
+/// (a power user's month is ~300 workstreams). Open one with `workstream`.
+pub fn summaries(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
+    let mut all = workstreams(conn, days)?;
+    for w in &mut all {
+        w.tasks = vec![];
+        w.updates.truncate(1);
+        w.sessions = vec![];
+    }
+    Ok(all)
+}
+
+/// Archives a workstream out of the Active list, or brings it back.
+pub fn set_archived(conn: &Connection, key: &str, archived: bool) -> Result<()> {
+    upsert_prefs(conn, key)?;
+    conn.execute(
+        "UPDATE workstream_prefs SET archived = ?2 WHERE ws_key = ?1",
+        params![key, archived],
+    )?;
+    Ok(())
+}
+
+/// A workstream that finished: every task done, or its epic closed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Finished {
+    pub key: String,
+    pub title: String,
+    pub finished_at: i64,
+    pub started_at: i64,
+    pub sessions: usize,
+    pub tasks: usize,
+    pub cost_usd: f64,
+}
+
+/// What you finished in the last `days` days, newest first: the "what did I
+/// ship this quarter" list.
+pub fn finished(conn: &Connection, days: i64) -> Result<Vec<Finished>> {
+    let mut out: Vec<Finished> = workstreams(conn, days)?
+        .into_iter()
+        .filter(|w| {
+            let c = &w.counts;
+            let total = c.done + c.in_progress + c.pending;
+            w.closed || (total > 0 && c.done == total)
+        })
+        .map(|w| Finished {
+            sessions: w.sessions.len(),
+            tasks: w.counts.done,
+            cost_usd: w.sessions.iter().filter_map(|s| s.cost_usd).sum(),
+            finished_at: w.last_activity,
+            started_at: w.started_at,
+            key: w.key,
+            title: w.title,
+        })
+        .collect();
+    out.sort_by_key(|f| std::cmp::Reverse(f.finished_at));
+    Ok(out)
+}
+
+/// One workstream in full, from the same window as the list it was opened from.
+pub fn workstream(conn: &Connection, key: &str, days: i64) -> Result<Workstream> {
+    workstreams(conn, days)?
+        .into_iter()
+        .find(|w| w.key == key)
+        .ok_or_else(|| NotFound("Workstream").into())
 }
 
 fn pairs(conn: &Connection, sql: &str) -> Result<HashMap<String, String>> {
@@ -528,6 +605,7 @@ struct Prefs {
     closed: bool,
     tracker_repo: Option<String>,
     source_kind: Option<String>,
+    archived: bool,
 }
 
 impl Prefs {
@@ -542,6 +620,7 @@ impl Prefs {
         ws.sync_error = self.sync_error;
         ws.closed = self.closed;
         ws.source_kind = self.source_kind;
+        ws.archived = self.archived;
         if self.tracker_repo.is_some() {
             ws.tracker_repo = self.tracker_repo;
         }
@@ -551,7 +630,7 @@ impl Prefs {
 fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
     let mut st = conn.prepare(
         "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at, sync_error,
-                source_closed, source_repo, source_kind
+                source_closed, source_repo, source_kind, archived
          FROM workstream_prefs",
     )?;
     let out = st
@@ -569,6 +648,7 @@ fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
                     closed: r.get(8)?,
                     tracker_repo: r.get(9)?,
                     source_kind: r.get(10)?,
+                    archived: r.get(11)?,
                 },
             ))
         })?
@@ -587,6 +667,9 @@ fn empty(key: String, created_at: i64) -> Workstream {
         sync_error: None,
         closed: false,
         source_kind: None,
+        archived: false,
+        session_count: 0,
+        started_at: 0,
         tracker_repo: None,
         repo: None,
         branch: None,
@@ -1210,6 +1293,9 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         sync_error: None,
         closed: false,
         source_kind: None,
+        archived: false,
+        session_count: 0,
+        started_at: rows.iter().map(|r| r.ended).min().unwrap_or(0),
         tracker_repo: None,
         repo: first.repo.clone(),
         branch,
@@ -1720,6 +1806,48 @@ mod tests {
         // Items without a link have nothing to label.
         assert!(item_url(&conn, &format!("item:{key}:2")).is_err());
         assert_eq!(crate::util::human_duration(380 * 60_000), "6h 20m");
+    }
+
+    #[test]
+    fn archives_and_lists_what_finished() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let now = now_ms();
+        let done = r#"{"tasks":[{"id":"1","title":"Ship it","status":"done"}]}"#;
+        let open = r#"{"tasks":[{"id":"1","title":"Ship it","status":"pending"}]}"#;
+        insert(&conn, "a", Some("feature/done-one"), done, now - 9_000);
+        insert(&conn, "b", Some("feature/done-one"), "{}", now - 5_000);
+        insert(&conn, "c", Some("feature/still-going"), open, now - 1_000);
+        let f = finished(&conn, 30).unwrap();
+        assert_eq!(
+            f.iter().map(|x| x.title.as_str()).collect::<Vec<_>>(),
+            ["Done one"]
+        );
+        assert_eq!(
+            (f[0].sessions, f[0].tasks, f[0].started_at),
+            (2, 1, now - 9_000)
+        );
+        let key = workstreams(&conn, 30)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.title == "Still going")
+            .unwrap()
+            .key;
+        set_archived(&conn, &key, true).unwrap();
+        let w = workstreams(&conn, 30)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.key == key)
+            .unwrap();
+        assert!(w.archived);
+        set_archived(&conn, &key, false).unwrap();
+        assert!(
+            !workstreams(&conn, 30)
+                .unwrap()
+                .into_iter()
+                .find(|w| w.key == key)
+                .unwrap()
+                .archived
+        );
     }
 
     #[test]

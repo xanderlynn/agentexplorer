@@ -328,6 +328,8 @@ export interface LiveSession {
   agents: LiveAgent[];
   scheduled: number;
   nextRun: number | null;
+  /** Waiting on you for over 3 hours: listed apart, not counted as waiting now. */
+  parked: boolean;
 }
 
 export interface LiveBucket {
@@ -347,7 +349,11 @@ export interface LiveSummary {
   replyP75Ms: number | null;
   replyN: number;
   agentMsToday: number;
+  /** Agent time waiting on you today in waits up to 30 min; longer ones are awayMsToday. */
   waitMsToday: number;
+  awayMsToday: number;
+  /** Sessions waiting on you but parked. */
+  parked: number;
   turnsToday: number;
   agentsDoneToday: number;
   agentsFailedToday: number;
@@ -702,6 +708,12 @@ export interface Workstream {
   closed: boolean;
   /** What was imported: "Issue", or a work item type such as "User Story". */
   sourceKind: string | null;
+  /** You archived it out of the Active list. */
+  archived: boolean;
+  /** How many sessions it has. The list leaves `sessions` empty; open one for them. */
+  sessionCount: number;
+  /** When its earliest session ended. */
+  startedAt: number;
   /** "owner/repo" of an imported GitHub epic. */
   trackerRepo: string | null;
   repo: string | null;
@@ -892,6 +904,16 @@ export const api = {
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
+  archiveWorkstream: (key: string, archived: boolean) => call<void>("archive_workstream", { key, archived }),
+  finishedWorkstreams: (days: number) =>
+    call<{ key: string; title: string; finishedAt: number; startedAt: number; sessions: number; tasks: number; costUsd: number }[]>("finished_workstreams", { days }),
+  storage: () =>
+    call<{ dbBytes: number; archiveBytes: number; archiveSessions: number; sessions: number; detailed: number; detailDays: number; archiveDays: number; archiveEnabled: boolean }>("get_storage"),
+  applyRetention: () => call<void>("apply_retention"),
+  progress: (days: number) => call<ProgressT>("get_progress", { days }),
+  bulkReview: (ids: string[], outcome: Outcome) => call<number>("bulk_review", { ids, outcome }),
+  dismissSession: (id: string) => call<void>("dismiss_session", { id }),
+  attention: (days: number) => call<Attention>("get_attention", { days }),
   takeOpenRequest: () => call<string | null>("take_open_request"),
   since: (since: number) => call<LiveSession[]>("get_since", { since }),
   teams: () => call<TeamSession[]>("list_teams"),
@@ -934,7 +956,9 @@ export const api = {
 
   settings: () => call<Settings>("get_settings"),
   listReleases: () => call<ReleaseInfo[]>("list_releases"),
+  /** Cards only: no task tree, just the latest update. */
   workstreams: (days: number) => call<Workstream[]>("list_workstreams", { days }),
+  workstream: (key: string, days: number) => call<Workstream>("get_workstream", { key, days }),
   setTaskKind: (taskKey: string, kind: TaskKind | null) => call<void>("set_task_kind", { taskKey, kind }),
   createWorkstream: (title: string, sessions: string[]) => call<string>("create_workstream", { title, sessions }),
   renameWorkstream: (key: string, title: string) => call<void>("rename_workstream", { key, title }),
@@ -959,3 +983,34 @@ export const api = {
   setApiKey: (key: string) => call<void>("set_api_key", { key }),
   clearApiKey: () => call<void>("clear_api_key"),
 };
+
+/** Where your attention goes; see attention.rs. */
+export interface Attention {
+  shortMs: number;
+  awayMs: number;
+  waits: number;
+  awaySpells: number;
+  medianReplyMs: number | null;
+  byHour: { hour: number; shortMs: number; awayMs: number; waits: number }[];
+  projects: { project: string; waitMs: number; waits: number }[];
+  worstHour: number | null;
+}
+
+/** A group of sessions in "what pays off"; see progress.rs. */
+export interface PayoffGroup {
+  label: string;
+  sessions: number;
+  rated: number;
+  success: number | null;
+  avgCostUsd: number | null;
+  costPerShipped: number | null;
+}
+
+/** Month-by-month progress and what pays off; see progress.rs. */
+export interface ProgressT {
+  months: { month: string; sessions: number; rated: number; success: number | null; costUsd: number; costPerShipped: number | null; replyMs: number | null; waitedMs: number; activeMs: number }[];
+  headline: string | null;
+  byTeam: PayoffGroup[];
+  byApp: PayoffGroup[];
+  byKind: PayoffGroup[];
+}

@@ -336,6 +336,25 @@ ALTER TABLE sessions ADD COLUMN prs TEXT NOT NULL DEFAULT '[]';
     r#"
 ALTER TABLE workstream_prefs ADD COLUMN source_kind TEXT;
 "#,
+    // Sessions you dismissed from "waiting on you", until they move again.
+    r#"
+CREATE TABLE dismissed (
+    session_id TEXT PRIMARY KEY,
+    at         INTEGER NOT NULL
+);
+"#,
+    // Whether each pull request a session opened was merged, from gh.
+    r#"
+CREATE TABLE pr_states (
+    url        TEXT PRIMARY KEY,
+    state      TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+);
+"#,
+    // Workstreams you archived out of the Active list.
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

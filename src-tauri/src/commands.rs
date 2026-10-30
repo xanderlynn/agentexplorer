@@ -208,6 +208,68 @@ pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<S
     req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
+/// Archives a workstream out of the Active list, or brings it back.
+#[tauri::command(async)]
+pub fn archive_workstream(state: State<AppState>, key: String, archived: bool) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::set_archived(c, &key, archived))
+}
+
+/// What you finished in the last `days` days.
+#[tauri::command(async)]
+pub fn finished_workstreams(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<Vec<workstreams::Finished>> {
+    with_db(&state, |c| workstreams::finished(c, days))
+}
+
+/// Database and archive sizes, and how much history is kept.
+#[tauri::command(async)]
+pub fn get_storage(state: State<AppState>) -> CmdResult<tilly_core::retention::Storage> {
+    with_db(&state, |c| {
+        tilly_core::retention::storage(c, &state.data_dir, &state.db_path)
+    })
+}
+
+/// Runs the retention pass now, after you change how much history to keep.
+#[tauri::command]
+pub async fn apply_retention(state: State<'_, AppState>) -> CmdResult<()> {
+    blocking(&state, |c, data_dir| {
+        tilly_core::retention::maintain(c, data_dir).map(|_| ())
+    })
+    .await
+}
+
+/// Month-by-month progress and what pays off, over the last `days` days.
+#[tauri::command(async)]
+pub fn get_progress(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<tilly_core::progress::Progress> {
+    with_db(&state, |c| tilly_core::progress::progress(c, days))
+}
+
+/// Confirms one outcome for many sessions, such as all those that look shipped.
+#[tauri::command(async)]
+pub fn bulk_review(state: State<AppState>, ids: Vec<String>, outcome: String) -> CmdResult<usize> {
+    with_db(&state, |c| store::bulk_review(c, &ids, &outcome))
+}
+
+/// Takes a session off "waiting on you" until it does something new.
+#[tauri::command(async)]
+pub fn dismiss_session(state: State<AppState>, id: String) -> CmdResult<()> {
+    with_db(&state, |c| live::dismiss(c, &id))
+}
+
+/// Where your attention goes: short waits vs away spells, by hour and project.
+#[tauri::command(async)]
+pub fn get_attention(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<tilly_core::attention::Attention> {
+    with_db(&state, |c| tilly_core::attention::attention(c, days))
+}
+
 /// Sessions that finished, failed or started waiting on you since `since`.
 #[tauri::command(async)]
 pub fn get_since(state: State<AppState>, since: i64) -> CmdResult<Vec<live::LiveSession>> {
@@ -476,7 +538,17 @@ pub fn list_workstreams(
     state: State<AppState>,
     days: i64,
 ) -> CmdResult<Vec<workstreams::Workstream>> {
-    with_db(&state, |c| workstreams::workstreams(c, days))
+    with_db(&state, |c| workstreams::summaries(c, days))
+}
+
+/// One workstream in full: its task tree, updates and sessions.
+#[tauri::command(async)]
+pub fn get_workstream(
+    state: State<AppState>,
+    key: String,
+    days: i64,
+) -> CmdResult<workstreams::Workstream> {
+    with_db(&state, |c| workstreams::workstream(c, &key, days))
 }
 
 /// `kind` is "agent" or "human"; none clears your choice.
@@ -651,6 +723,8 @@ const SETTING_KEYS: &[&str] = &[
     "updates.autoCheck",
     crate::tracker_sync::SETTING,
     "billing.plan",
+    tilly_core::retention::DETAIL_DAYS_KEY,
+    tilly_core::retention::ARCHIVE_DAYS_KEY,
     sources::EXTRA_DIRS_KEY,
 ];
 

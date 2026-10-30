@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChartColumn, Coins, Download, Gauge, Gift, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
 import { api, useLive, useReleases, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
-import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
+import { STATUS, isActive, isAwaiting, mostUrgent, waitingNow } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
 import { SessionDrawer } from "./components/SessionDrawer";
@@ -28,13 +28,14 @@ import Patterns from "./pages/Patterns";
 import Usage from "./pages/Usage";
 import Playbooks from "./pages/Playbooks";
 import Scorecard from "./pages/Scorecard";
+import Progress from "./pages/Progress";
 import Retro from "./pages/Retro";
 import Settings from "./pages/Settings";
 
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "control" | "teams" | "workstreams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "progress" | "control" | "teams" | "workstreams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -45,7 +46,7 @@ const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Pag
   { id: "agents", label: "Agents", icon: Bot, tabs: [{ page: "control", label: "Control center" }, { page: "workstreams", label: "Workstreams" }, { page: "teams", label: "Teams" }] },
   { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }] },
   { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
-  { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
+  { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "progress", label: "Progress" }, { page: "scorecard", label: "Delivery & reality" }] },
   {
     id: "habits",
     label: "Habits",
@@ -66,7 +67,7 @@ const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p)
 
 
 /** Queries that show live state and refetch as soon as data changes. */
-const LIVE_QUERIES = new Set(["teams", "session", "workstreams"]);
+const LIVE_QUERIES = new Set(["teams", "session", "workstreams", "workstream"]);
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -136,7 +137,7 @@ export default function App() {
       qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])) && q.queryKey[0] !== "releases", refetchType: "none" });
     });
     // Imported workstreams synced from their tracker in the background.
-    const unWs = listen("workstreams-changed", () => qc.invalidateQueries({ queryKey: ["workstreams"] }));
+    const unWs = listen("workstreams-changed", () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workstreams" || q.queryKey[0] === "workstream" }));
     // A session picked in the tray or from a notification; one picked before
     // this window existed is waiting to be taken.
     const unOpen = listen<string>("open-session", (e) => {
@@ -158,7 +159,7 @@ export default function App() {
   // Finished sessions move to completedToday; the review prompt watches both.
   const tracked = useMemo(() => live.data && [...live.data.sessions, ...live.data.completedToday], [live.data]);
 
-  const awaiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
+  const awaiting = live.data?.sessions.filter(waitingNow) ?? [];
   // The badge takes the most urgent waiting status's colour.
   const urgent = STATUS[mostUrgent(awaiting.map((s) => s.status)) ?? "asking"];
   const go = (p: Page) => {
@@ -271,6 +272,7 @@ export default function App() {
           {page === "journal" && <Journal days={days} setDays={setDays} onOpen={setOpenSession} />}
           {page === "playbooks" && <Playbooks />}
           {page === "scorecard" && <Scorecard days={days} setDays={setDays} drill={openSessions} />}
+          {page === "progress" && <Progress />}
           {page === "retro" && <Retro go={go} />}
           {page === "settings" && <Settings />}
         </div>

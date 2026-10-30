@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use super::{Totals, group_by, source_label, success_rate, totals};
 use crate::journal;
-use crate::stats::{MIN_SAMPLE, pct};
+use crate::stats::{MIN_SAMPLE, pct, significant};
 use crate::store::{Range, SessionRow, load_sessions};
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,14 +147,19 @@ fn success_spread<'a, 'b>(
         .collect();
     let best = scored.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
     let worst = scored.iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
-    (best.1 - worst.1 >= 0.2).then_some((best.0, best.1, worst.0, worst.1))
+    (best.1 - worst.1 >= 0.2 && significant(best.1, best.0.rated(), worst.1, worst.0.rated()))
+        .then_some((best.0, best.1, worst.0, worst.1))
 }
 
 /// Success with none of something against two or more, when it drops by `gap`.
 fn first_vs_last<'a, 'b>(bs: &'b [Bucket<'a>], gap: f64) -> Option<(f64, f64)> {
     let (first, last) = (bs.first()?, bs.last()?);
     let (a, b) = (first.success()?, last.success()?);
-    (first.rated() >= MIN_SAMPLE && last.rated() >= MIN_SAMPLE && a - b >= gap).then_some((a, b))
+    (first.rated() >= MIN_SAMPLE
+        && last.rated() >= MIN_SAMPLE
+        && a - b >= gap
+        && significant(a, first.rated(), b, last.rated()))
+    .then_some((a, b))
 }
 
 fn by_prompt_length(rows: &[SessionRow]) -> Vec<Bucket<'_>> {
@@ -171,17 +176,21 @@ fn by_prompt_length(rows: &[SessionRow]) -> Vec<Bucket<'_>> {
     )
 }
 
+/// Rated sessions in the range that are enough for comparisons to work.
+const ENOUGH_RATED: usize = 40;
+
 fn rate_more(c: &Ctx) -> Result<Vec<Insight>> {
     let rows = c.rows;
     let rated = rows.iter().filter(|s| s.outcome.is_some()).count();
-    if rated * 2 >= rows.len() {
+    // Enough to compare with: no nagging about the rest.
+    if rated >= ENOUGH_RATED || rated * 2 >= rows.len() {
         return Ok(vec![]);
     }
     Ok(vec![insight(
         "rate-more",
         "info",
-        format!("Rate {} more sessions to sharpen these insights", rows.len() - rated),
-        "Most comparisons need outcomes. Mark sessions shipped, partial, abandoned or redo on the Sessions page; it takes a few seconds each.".into(),
+        format!("A few more outcomes would sharpen these insights ({rated} so far)"),
+        "Confirm the sessions Tilly thinks shipped on Today (one click each, or all at once), or mark a few as shipped, partial, abandoned or redo.".into(),
         format!("{rated} of {} sessions rated", rows.len()),
     )
     .about(rows.iter().filter(|s| s.outcome.is_none()))])

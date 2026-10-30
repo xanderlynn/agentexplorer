@@ -11,6 +11,7 @@ pub const LEGACY_IDENTIFIERS: &[&str] =
 
 pub mod alerts;
 pub mod analytics;
+pub mod attention;
 pub mod codegen;
 pub mod db;
 pub mod enrich;
@@ -24,6 +25,8 @@ pub mod model;
 pub mod parsers;
 pub mod playbooks;
 pub mod pricing;
+pub mod progress;
+pub mod retention;
 pub mod signals;
 pub mod sources;
 pub mod stats;

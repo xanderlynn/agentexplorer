@@ -77,7 +77,7 @@ export default function Overview({
           spark={tr.successRate}
           usual={usualPct(tr.successRate)}
           onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}
-          hint={t.rated < t.sessions ? `${t.sessions - t.rated} unrated: click to rate` : undefined}
+          hint={`Shipped counts 1, partial ½, abandoned and redo 0${t.rated < t.sessions ? ` · ${t.sessions - t.rated} unrated` : ""}`}
         />
         <Stat
           label="Shipped"
@@ -87,7 +87,7 @@ export default function Overview({
           usual={usualNum(tr.shipped, (x) => String(Math.round(x)))}
           onClick={() => drill({ label: "shipped sessions", outcome: "shipped" })}
         />
-        <Stat label="Commits" value={t.commits} change={delta(t.commits, p?.commits)} spark={tr.commits} hint={`${t.aiCommits} with AI trailers`} />
+        <Stat label="Commits" quiet="None linked. Commits made in a session's git repository, or marked Co-Authored-By an agent, count here." value={t.commits} change={delta(t.commits, p?.commits)} spark={tr.commits} hint={`${t.aiCommits} with AI trailers`} />
         <Stat
           label="Agents waited on you"
           value={hours(t.waitHours)}
@@ -99,6 +99,7 @@ export default function Overview({
         <Stat label="Sessions" value={t.sessions} change={delta(t.sessions, p?.sessions)} spark={tr.sessions} hint={`${hours(t.activeHours)} active`} />
         <Stat
           label="Interruptions / session"
+          quiet="You haven't interrupted an agent in this range."
           value={(t.interruptions / Math.max(1, t.sessions)).toFixed(1)}
           spark={tr.interruptionsPerSession}
           goodWhenUp={false}
@@ -178,8 +179,8 @@ export default function Overview({
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
-                <Bar dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
-                <Bar dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
+                <Bar isAnimationActive={false} dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
+                <Bar isAnimationActive={false} dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -199,7 +200,7 @@ export default function Overview({
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
-                <Area type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
+                <Area isAnimationActive={false} type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -214,7 +215,7 @@ export default function Overview({
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => sourceLabel(k)} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
-                <Bar dataKey="activeHours" radius={[0, 4, 4, 0]}>
+                <Bar isAnimationActive={false} dataKey="activeHours" radius={[0, 4, 4, 0]}>
                   {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? chart.muted} />)}
                 </Bar>
               </BarChart>

@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
-import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass, inputBase } from "../components/ui";
 import { ago, compact, duration, money, projectName, roleOf } from "../format";
 import { cardState, importedLabel, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
@@ -38,10 +38,24 @@ const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: str
 /** Imported workstreams fetch their issue or work item again when opened after this long. */
 const SYNC_AFTER_MS = 15 * 60_000;
 
+/** Days since its last activity within which a workstream counts as active. */
+const ACTIVE_DAYS = 3;
+
+/**
+ * The default view: what's in flight. Recent, starred or needing you, and
+ * not finished (done or closed ones are archived out of it, still under All).
+ */
+function isActiveWs(w: Workstream) {
+  if (w.archived) return false;
+  const state = cardState(w);
+  if (state.label === "Done" || state.label === "Closed") return w.counts.needsYou > 0;
+  return w.starred || w.counts.needsYou > 0 || Date.now() - w.lastActivity < ACTIVE_DAYS * 86_400_000;
+}
+
 /** A change to your workstreams; the list reloads after it. */
 function useWsChange<A>(fn: (arg: A) => Promise<unknown>) {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: ["workstreams"] }) });
+  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workstreams" || q.queryKey[0] === "workstream" }) });
 }
 
 const agentLabel = (a: { name: string | null; role: string }) => a.name ?? (a.role === "lead" ? "Lead" : roleOf(a.role)[0]);
@@ -53,7 +67,7 @@ const agentLabel = (a: { name: string | null; role: string }) => a.name ?? (a.ro
  */
 export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }) {
   const [days, setDays] = useState(30);
-  const [filter, setFilter] = useState<"all" | "starred" | "you">("all");
+  const [filter, setFilter] = useState<"active" | "all" | "starred" | "you">("active");
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   // The open workstream is remembered, so it stays open across restarts.
@@ -73,18 +87,23 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
       // Without storage it just isn't remembered.
     }
   };
-  const q = useQuery({ queryKey: ["workstreams", days], queryFn: () => api.workstreams(days) });
-  const list = useMemo(
-    () => sortForYou(q.data ?? []).filter((w) => filter === "all" || (filter === "starred" ? w.starred : w.counts.needsYou > 0)),
-    [q.data, filter],
-  );
+  const [search, setSearch] = useState("");
+  const q = useQuery({ queryKey: ["workstreams", days], queryFn: () => api.workstreams(days), enabled: !open });
+  const full = useQuery({ queryKey: ["workstream", open, days], queryFn: () => api.workstream(open!, days), enabled: !!open });
+  const list = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return sortForYou(q.data ?? [])
+      .filter((w) => (filter === "active" ? isActiveWs(w) : filter === "starred" ? w.starred : filter === "you" ? w.counts.needsYou > 0 : true))
+      .filter((w) => !needle || [w.title, w.repo, w.branch, w.trackerRepo].some((x) => x?.toLowerCase().includes(needle)));
+  }, [q.data, filter, search]);
   const create = useWsChange(({ title, ids }: { title: string; ids: string[] }) => api.createWorkstream(title, ids));
-  const selected = q.data?.find((w) => w.key === open);
 
-  if (selected) return <Detail ws={selected} onBack={() => setOpen(null)} onOpen={onOpen} />;
+  if (open && full.data) return <Detail ws={full.data} onBack={() => setOpen(null)} onOpen={onOpen} />;
+  if (open && full.isLoading) return <Loading />;
 
   const needYou = (q.data ?? []).filter((w) => w.counts.needsYou > 0).length;
   const starred = (q.data ?? []).filter((w) => w.starred).length;
+  const active = (q.data ?? []).filter(isActiveWs).length;
   return (
     <>
       <PageHeader
@@ -94,6 +113,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
               options={[
+                { value: "active" as const, label: `Active ${active}` },
                 { value: "all" as const, label: "All" },
                 { value: "starred" as const, label: `Starred ${starred}` },
                 { value: "you" as const, label: `Needs you ${needYou}` },
@@ -101,6 +121,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
               value={filter}
               onChange={setFilter}
             />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search workstreams" className={cx(inputBase, "w-40")} />
             <Segmented options={[{ value: 7, label: "7d" }, { value: 30, label: "30d" }, { value: 0, label: "All" }]} value={days} onChange={setDays} />
             <Button size="sm" onClick={() => setImporting(true)}>
               <Download size={14} /> Import from tracker
@@ -242,7 +263,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
             <div className="truncate text-sm font-medium text-zinc-100">{ws.title}</div>
             <div className="truncate text-xs text-zinc-500">
               {ws.sourceUrl ? `${importedLabel(ws)}${ws.trackerRepo ? ` · ${ws.trackerRepo}` : ""}` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
-              {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
+              {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessionCount} {ws.sessionCount === 1 ? "session" : "sessions"}
             </div>
           </div>
           <span
@@ -269,7 +290,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <Avatars ws={ws} />
-          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : ws.sessions.length > 1 ? `${ws.sessions.length} leads` : ws.sessions.length ? "Lead" : ""}</span>
+          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : ws.sessionCount > 1 ? `${ws.sessionCount} leads` : ws.sessionCount ? "Lead" : ""}</span>
         </div>
         <div className="border-t border-zinc-800 pt-2 text-sm">
           {latest ? (
@@ -281,7 +302,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
             </>
           ) : (
             <div className="text-xs text-zinc-500">
-              {ws.sessions.length === 0 ? "No sessions yet: open it to add some." : `No updates yet. Last active ${ago(Date.now() - ws.lastActivity)}.`}
+              {ws.sessionCount === 0 ? "No sessions yet: open it to add some." : `No updates yet. Last active ${ago(Date.now() - ws.lastActivity)}.`}
             </div>
           )}
         </div>
@@ -302,6 +323,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
   const rename = useWsChange((title: string) => api.renameWorkstream(ws.key, title));
   const del = useWsChange(() => api.deleteWorkstream(ws.key));
   const sync = useWsChange(() => api.syncWorkstream(ws.key));
+  const archive = useWsChange((on: boolean) => api.archiveWorkstream(ws.key, on));
   const items = trackerTasks(ws);
   const syncNow = sync.mutate;
   // Imported ones refresh from the tracker when opened, if it's been a while.
@@ -360,6 +382,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
             {ws.trackerRepo ? <span>{ws.trackerRepo}</span> : ws.repo && <span>{projectName(ws.repo)}</span>}
             {!ws.sourceUrl && ws.branch && <span className="inline-flex items-center gap-1"><GitBranch size={12} aria-hidden /> {ws.branch}</span>}
             {ws.closed && <span className="text-zinc-400">Closed</span>}
+            {ws.startedAt > 0 && <span title="Since its first session">running {ago(Date.now() - ws.startedAt).replace(" ago", "")}</span>}
             <span>{ws.counts.done + ws.counts.inProgress + ws.counts.pending ? `${ws.counts.done} of ${ws.counts.done + ws.counts.inProgress + ws.counts.pending} done` : "No task list"}</span>
             {ws.counts.decisions > 0 && <span className="text-amber-300">{ws.counts.decisions} for you</span>}
             {ws.counts.waiting > 0 && <span className="text-amber-300">{ws.counts.waiting} agent{ws.counts.waiting === 1 ? "" : "s"} waiting</span>}
@@ -379,6 +402,9 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 <Send size={13} /> Share progress
               </Button>
             )}
+            <Button size="sm" variant="ghost" busy={archive.isPending} onClick={() => archive.mutate(!ws.archived)} title={ws.archived ? "Bring it back to Active" : "Hide it from Active; it stays under All"}>
+              {ws.archived ? "Unarchive" : "Archive"}
+            </Button>
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus size={13} /> Add sessions
             </Button>
@@ -528,7 +554,7 @@ function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: stri
   const qc = useQueryClient();
   const set = useMutation({
     mutationFn: (kind: TaskKind | null) => api.setTaskKind(t.key, kind),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["workstreams"] }),
+    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workstreams" || q.queryKey[0] === "workstream" }),
   });
   const label = useMutation({ mutationFn: (kind: TaskKind) => api.labelItem(t.key, kind) });
   const st = STATE[taskState(t)];
