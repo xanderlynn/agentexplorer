@@ -260,6 +260,27 @@ CREATE TABLE task_kinds (
     updated_at INTEGER NOT NULL
 );
 "#,
+    // Your workstreams: stars, names and the ones you made, the sessions you
+    // put in them, and the branches whose sessions join them.
+    r#"
+CREATE TABLE workstream_prefs (
+    ws_key     TEXT PRIMARY KEY,
+    title      TEXT,
+    starred    INTEGER NOT NULL DEFAULT 0,
+    custom     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE workstream_members (
+    session_id TEXT PRIMARY KEY,
+    ws_key     TEXT NOT NULL
+);
+CREATE TABLE workstream_branches (
+    repo   TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    ws_key TEXT NOT NULL,
+    PRIMARY KEY (repo, branch)
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

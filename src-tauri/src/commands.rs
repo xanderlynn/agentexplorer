@@ -476,6 +476,62 @@ pub fn set_task_kind(
     with_db(&state, |c| workstreams::set_kind(c, &task_key, kind))
 }
 
+#[tauri::command(async)]
+pub fn create_workstream(
+    state: State<AppState>,
+    title: String,
+    sessions: Vec<String>,
+) -> CmdResult<String> {
+    with_db(&state, |c| workstreams::create(c, &title, &sessions))
+}
+
+#[tauri::command(async)]
+pub fn rename_workstream(state: State<AppState>, key: String, title: String) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::rename(c, &key, &title))
+}
+
+#[tauri::command(async)]
+pub fn star_workstream(
+    state: State<AppState>,
+    key: String,
+    starred: bool,
+    repo: Option<String>,
+    branch: Option<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        workstreams::set_starred(c, &key, starred, repo.as_deref(), branch.as_deref())
+    })
+}
+
+#[tauri::command(async)]
+pub fn add_to_workstream(
+    state: State<AppState>,
+    key: String,
+    session_ids: Vec<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        session_ids
+            .iter()
+            .try_for_each(|id| workstreams::add_session(c, &key, id))
+    })
+}
+
+#[tauri::command(async)]
+pub fn remove_from_workstream(
+    state: State<AppState>,
+    key: String,
+    session_id: String,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        workstreams::remove_session(c, &key, &session_id)
+    })
+}
+
+#[tauri::command(async)]
+pub fn delete_workstream(state: State<AppState>, key: String) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::delete(c, &key))
+}
+
 // ----------------------------------------------------------------- updates
 
 #[tauri::command(async)]

@@ -671,6 +671,10 @@ export interface WsTask {
 export interface Workstream {
   key: string;
   title: string;
+  /** Listed first, and whatever its age. */
+  starred: boolean;
+  /** You made it, rather than Tilly grouping it. */
+  custom: boolean;
   repo: string | null;
   branch: string | null;
   lastActivity: number;
@@ -882,6 +886,13 @@ export const api = {
   listReleases: () => call<ReleaseInfo[]>("list_releases"),
   workstreams: (days: number) => call<Workstream[]>("list_workstreams", { days }),
   setTaskKind: (taskKey: string, kind: TaskKind | null) => call<void>("set_task_kind", { taskKey, kind }),
+  createWorkstream: (title: string, sessions: string[]) => call<string>("create_workstream", { title, sessions }),
+  renameWorkstream: (key: string, title: string) => call<void>("rename_workstream", { key, title }),
+  starWorkstream: (ws: Pick<Workstream, "key" | "repo" | "branch">, starred: boolean) =>
+    call<void>("star_workstream", { key: ws.key, starred, repo: ws.repo, branch: ws.branch }),
+  addToWorkstream: (key: string, sessionIds: string[]) => call<void>("add_to_workstream", { key, sessionIds }),
+  removeFromWorkstream: (key: string, sessionId: string) => call<void>("remove_from_workstream", { key, sessionId }),
+  deleteWorkstream: (key: string) => call<void>("delete_workstream", { key }),
   installRelease: (version: string) => call<void>("install_release", { version }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
   importAlertAsset: (bytes: Uint8Array) => call<AlertAsset>("import_alert_asset", bytes),

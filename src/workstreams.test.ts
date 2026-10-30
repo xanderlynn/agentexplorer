@@ -6,6 +6,8 @@ const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", t
 const ws = (over: Partial<Workstream>): Workstream => ({
   key: "k",
   title: "W",
+  starred: false,
+  custom: false,
   repo: null,
   branch: null,
   lastActivity: 0,
@@ -41,13 +43,17 @@ describe("workstreams", () => {
       tasks: [task({ sessionId: "b", key: "b:1" })],
     });
     expect(tree(w).map((n) => n.session.id)).toEqual(["b"]);
+    // In one you made, every session you put in shows.
+    expect(tree({ ...w, custom: true }).map((n) => n.session.id)).toEqual(["a", "b"]);
   });
 
-  it("makes initials and puts what needs you first", () => {
+  it("makes initials and puts starred, then what needs you, first", () => {
     expect(initials("Code reviewer")).toBe("CR");
     expect(initials("lead")).toBe("Le");
     const a = ws({ key: "a", lastActivity: 5 });
     const b = ws({ key: "b", lastActivity: 1, counts: { ...a.counts, needsYou: 2 } });
     expect(sortForYou([a, b]).map((w) => w.key)).toEqual(["b", "a"]);
+    const c = ws({ key: "c", lastActivity: 0, starred: true });
+    expect(sortForYou([a, b, c]).map((w) => w.key)).toEqual(["c", "b", "a"]);
   });
 });
