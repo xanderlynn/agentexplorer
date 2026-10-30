@@ -1,10 +1,11 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
 import { api, useLive } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { StatusBadge } from "../components/status";
-import { STATUS, isAwaiting, mostUrgent } from "../status";
+import { STATUS, isActive, isAwaiting, mostUrgent } from "../status";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
@@ -35,7 +36,11 @@ export default function Today({
   const insights = useQuery({ queryKey: ["insights", 30], queryFn: () => api.insights(30) });
   const unusual = useQuery({ queryKey: ["anomalies", 14], queryFn: () => api.anomalies(14) });
 
+  const away = useAway();
   const waiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
+  // Not finished yet: nothing to rate while it's working or waiting on you.
+  const unfinished = new Set(live.data?.sessions.filter((s) => isAwaiting(s.status) || isActive(s.status)).map((s) => s.id));
+  const rateable = toRate.data?.filter((s) => !unfinished.has(s.id));
   const active = exps.data?.filter((e) => e.status === "active") ?? [];
   const open = intents.data?.filter((i) => i.closedAt == null) ?? [];
   const now = new Date();
@@ -53,6 +58,8 @@ export default function Today({
         }
       />
 
+      {away && <AwayDigest since={away} onOpen={onOpen} />}
+
       {waiting.length > 0 && (
         <button
           onClick={() => go("control")}
@@ -69,16 +76,16 @@ export default function Today({
       )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card title={`Rate recent sessions (${toRate.data?.length ?? 0})`} className="xl:col-span-2" action={toRate.data?.length ? <button className="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}>All unrated →</button> : undefined}>
+        <Card title={`Rate recent sessions (${rateable?.length ?? 0})`} className="xl:col-span-2" action={toRate.data?.length ? <button className="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}>All unrated →</button> : undefined}>
           {toRate.isLoading && <Loading />}
-          {toRate.data?.length === 0 && <p className="text-sm text-zinc-500">All caught up.</p>}
+          {rateable?.length === 0 && <p className="text-sm text-zinc-500">All caught up.</p>}
           <ul className="divide-y divide-zinc-800/70">
-            {toRate.data?.slice(0, 6).map((s) => (
+            {rateable?.slice(0, 6).map((s) => (
               <li key={s.id} className="py-3">
                 <button className="mb-2 block w-full text-left" onClick={() => onOpen(s.id)}>
                   <span className="block truncate text-sm text-zinc-100">{s.title ?? "Untitled"}</span>
                   <span className="flex items-center gap-2 text-xs text-zinc-500">
-                    <SourceBadge source={s.source} /> · {projectName(s.repoRoot ?? s.projectPath)} · {duration(s.activeMs)} · {dateTime(s.startedAt)}
+                    <SourceBadge source={s.source} entrypoint={s.entrypoint} /> · {projectName(s.repoRoot ?? s.projectPath)} · {duration(s.activeMs)} · {dateTime(s.startedAt)}
                     {s.commits > 0 && ` · ${s.commits} commits`}
                   </span>
                 </button>
@@ -193,5 +200,72 @@ export default function Today({
         </Card>
       )}
     </>
+  );
+}
+
+/** Away at least this long, Today says what happened meanwhile. */
+const AWAY_MS = 30 * 60_000;
+
+/**
+ * When you last had Tilly in front of you, if it was a while ago: kept in
+ * local storage and updated whenever the window loses focus or hides.
+ */
+function useAway() {
+  const [away] = useState<number | null>(() => {
+    try {
+      const last = Number(localStorage.getItem("lastSeen"));
+      return last && Date.now() - last > AWAY_MS ? last : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const mark = () => {
+      try {
+        localStorage.setItem("lastSeen", String(Date.now()));
+      } catch {
+        // Without storage there's no digest; nothing else depends on it.
+      }
+    };
+    mark();
+    const tick = window.setInterval(() => document.hasFocus() && mark(), 60_000);
+    window.addEventListener("blur", mark);
+    document.addEventListener("visibilitychange", mark);
+    return () => {
+      window.clearInterval(tick);
+      window.removeEventListener("blur", mark);
+      document.removeEventListener("visibilitychange", mark);
+    };
+  }, []);
+  return away;
+}
+
+/** What finished, failed or started waiting on you while you were away. */
+function AwayDigest({ since, onOpen }: { since: number; onOpen: (id: string) => void }) {
+  const q = useQuery({ queryKey: ["since", since], queryFn: () => api.since(since) });
+  const list = q.data ?? [];
+  if (!list.length) return null;
+  const waiting = list.filter((s) => isAwaiting(s.status));
+  const failed = list.filter((s) => s.status === "failed");
+  const done = list.filter((s) => !isAwaiting(s.status));
+  return (
+    <Card title={`While you were away · ${duration(Date.now() - since)}`} className="mb-4">
+      <p className="text-sm text-zinc-400">
+        {done.length} finished{failed.length ? `, ${failed.length} failed` : ""}
+        {waiting.length ? `, ${waiting.length - failed.length} waiting on you` : ""}.
+      </p>
+      <ul className="mt-2 divide-y divide-zinc-800/70">
+        {[...waiting, ...done].slice(0, 8).map((s) => (
+          <li key={s.id}>
+            <button className="flex w-full items-center gap-3 py-1.5 text-left text-sm hover:text-zinc-100" onClick={() => onOpen(s.id)}>
+              <StatusBadge status={s.status} size="xs" />
+              <span className="min-w-0 flex-1 truncate text-zinc-300">{s.title ?? "Untitled session"}</span>
+              <SourceBadge source={s.source} entrypoint={s.entrypoint} />
+              <span className="shrink-0 text-xs text-zinc-500">{projectName(s.projectPath)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }

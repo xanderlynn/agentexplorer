@@ -17,7 +17,7 @@ export type TaskState = "done" | "doing" | "yours" | "blocked" | "todo";
 export function taskState(t: WsTask): TaskState {
   if (t.status === "done") return "done";
   if (t.kind === "human") return "yours";
-  if (t.blockedBy.length > 0) return "blocked";
+  if (t.status === "blocked" || t.blockedBy.length > 0) return "blocked";
   if (t.status === "in_progress") return "doing";
   return "todo";
 }

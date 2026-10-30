@@ -84,7 +84,7 @@ export function SessionDrawer({ id, onClose }: { id: string; onClose: () => void
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                {s && <SourceBadge source={s.source} />}
+                {s && <SourceBadge source={s.source} entrypoint={s.entrypoint} />}
                 {now && <StatusBadge status={now.status} />}
               </div>
               <h2 className="mt-1 truncate text-base font-semibold text-zinc-50">{s?.title ?? "Session"}</h2>

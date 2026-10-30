@@ -17,14 +17,17 @@ pub enum TaskStatus {
     #[default]
     Pending,
     InProgress,
+    /// The agent says it can't go on.
+    Blocked,
     Done,
     Cancelled,
 }
 
 impl TaskStatus {
-    pub const ALL: [TaskStatus; 4] = [
+    pub const ALL: [TaskStatus; 5] = [
         TaskStatus::Pending,
         TaskStatus::InProgress,
+        TaskStatus::Blocked,
         TaskStatus::Done,
         TaskStatus::Cancelled,
     ];
@@ -33,6 +36,7 @@ impl TaskStatus {
         match self {
             TaskStatus::Pending => "pending",
             TaskStatus::InProgress => "in_progress",
+            TaskStatus::Blocked => "blocked",
             TaskStatus::Done => "done",
             TaskStatus::Cancelled => "cancelled",
         }
@@ -40,7 +44,8 @@ impl TaskStatus {
 
     pub(crate) fn parse(s: &str) -> Option<TaskStatus> {
         Some(match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "pending" | "not_started" | "todo" | "open" | "blocked" => TaskStatus::Pending,
+            "pending" | "not_started" | "todo" | "open" => TaskStatus::Pending,
+            "blocked" | "waiting" | "on_hold" => TaskStatus::Blocked,
             "in_progress" | "active" | "doing" | "started" => TaskStatus::InProgress,
             "done" | "completed" | "complete" | "finished" => TaskStatus::Done,
             "cancelled" | "canceled" | "deleted" | "skipped" => TaskStatus::Cancelled,
@@ -242,6 +247,7 @@ impl TaskList {
                 TaskStatus::InProgress => "Started",
                 TaskStatus::Done => "Finished",
                 TaskStatus::Cancelled => "Dropped",
+                TaskStatus::Blocked => "Blocked",
                 TaskStatus::Pending => unreachable!(),
             };
             let (id, text) = (t.id.clone(), format!("{verb}: {}", t.title));

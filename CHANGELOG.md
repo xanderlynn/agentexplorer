@@ -15,8 +15,16 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - **Updates and rollbacks** in Settings › Updates, and an **Update available** button in the sidebar. Pick any newer release, or the one before yours, and Tilly downloads it, checks its signature, installs it and restarts. Tilly checks GitHub for releases on launch and once a day; you can turn that off.
 - A log file for background errors and failed actions: Settings › Data › **Show log**. Include it when you report a problem.
 
+- **While you were away** on Today: what finished, failed or started waiting on you since you last looked.
+- The tray menu lists the sessions waiting on you; pick one to open it.
+- Sessions are labelled by the app that ran them: the **Claude app** and the **Copilot app** apart from their command-line tools.
+- Agents' tasks can be **Blocked**, as Copilot reports them.
+
 ### Changed
 
+- Waiting on you is harder to miss: a question asked overnight, or a permission prompt left through a meeting, stays in the Control center for a day instead of turning Done or Idle. Notifications say what the agent wants, remind you every 15 minutes (up to three times) while it waits, and open the session when clicked. "Might need approval" now notifies by default.
+- "Waited on you" today counts the waits still open, not only the ones you've answered.
+- Today no longer asks you to rate sessions that are still working or waiting on you.
 - What's new no longer opens by itself after an update; a dot in the sidebar marks unread notes.
 - A new logo: a girl with a bob haircut replaces the lowercase "t", in the app icon, the window and the macOS menu bar.
 

@@ -58,6 +58,15 @@ export const SOURCE_OPTIONS: { value: Source | "all"; label: string }[] = [
 
 export const sourceLabel = (s: string) => SOURCE_LABEL[s as Source] ?? s;
 
+/** The app a session ran in, where the tool has more than one. */
+const APP_LABEL: Record<string, string> = {
+  "claude-desktop": "Claude app",
+  "copilot-app": "Copilot app",
+};
+
+/** "Claude app" or "Copilot app" for sessions from those apps; else the tool. */
+export const appLabel = (source: string, entrypoint?: string | null) => (entrypoint && APP_LABEL[entrypoint]) ?? sourceLabel(source);
+
 export function projectName(path: string | null | undefined): string {
   if (!path) return "—";
   const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);

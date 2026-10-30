@@ -201,6 +201,19 @@ pub fn get_live(state: State<AppState>) -> CmdResult<LiveSummary> {
     with_db(&state, live::summary)
 }
 
+/// A session picked from the tray or a notification before the window was
+/// ready to open it; taken once.
+#[tauri::command]
+pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<String> {
+    req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Sessions that finished, failed or started waiting on you since `since`.
+#[tauri::command(async)]
+pub fn get_since(state: State<AppState>, since: i64) -> CmdResult<Vec<live::LiveSession>> {
+    with_db(&state, |c| live::since(c, since))
+}
+
 #[tauri::command(async)]
 pub fn get_toolkit(
     state: State<AppState>,

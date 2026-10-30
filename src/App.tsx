@@ -134,10 +134,18 @@ export default function App() {
     });
     // Imported workstreams synced from their tracker in the background.
     const unWs = listen("workstreams-changed", () => qc.invalidateQueries({ queryKey: ["workstreams"] }));
+    // A session picked in the tray or from a notification; one picked before
+    // this window existed is waiting to be taken.
+    const unOpen = listen<string>("open-session", (e) => {
+      api.takeOpenRequest().catch(() => null);
+      setOpenSession(e.payload);
+    });
+    api.takeOpenRequest().then((id) => id && setOpenSession(id)).catch(() => {});
     return () => {
       unLive.then((f) => f());
       un.then((f) => f());
       unWs.then((f) => f());
+      unOpen.then((f) => f());
     };
   }, [qc]);
 

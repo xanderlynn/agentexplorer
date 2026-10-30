@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Loader2 } from "lucide-react";
 import type { GroupStat, Outcome, Source } from "../api";
 import { OUTCOMES } from "../api";
-import { OUTCOME_CLASS, OUTCOME_LABEL, SOURCE_COLOR, hours, pct, sourceLabel } from "../format";
+import { OUTCOME_CLASS, OUTCOME_LABEL, SOURCE_COLOR, hours, pct, appLabel } from "../format";
 import { MIN_N, wilson } from "../stats";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
@@ -196,12 +196,13 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
-export function SourceBadge({ source }: { source: Source | string }) {
+/** The tool, or the app when it has one (Claude app, Copilot app). */
+export function SourceBadge({ source, entrypoint }: { source: Source | string; entrypoint?: string | null }) {
   const color = SOURCE_COLOR[source as Source] ?? "#a1a1aa";
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-300">
       <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      {sourceLabel(source)}
+      {appLabel(source, entrypoint)}
     </span>
   );
 }

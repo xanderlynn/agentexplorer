@@ -34,7 +34,7 @@ The **Control center** is where Tilly opens. Each session gets one status, worke
 | **Completed** / **Closed** | Finished its turn without asking you anything, or the tool closed the session. |
 | **Idle** | No activity for 30 minutes: stalled, or the tool was closed. |
 
-Sessions stay in the live view for three hours after their last turn, and the sidebar's **Agents** badge counts the ones awaiting you.
+Sessions stay in the live view for three hours after their last turn, and one waiting on you (a question or a permission prompt) stays for a day, so a question asked overnight is still there in the morning. The sidebar's **Agents** badge counts the ones awaiting you, and the menu-bar (tray) menu lists them, each a click away. Notifications say what the agent wants and remind you a few times, every 15 minutes, while it's still waiting; clicking one opens that session. **Today** opens with what finished, failed or started waiting while you were away. Sessions are labelled by the app that ran them: Claude Code, the Claude app, Copilot CLI, the Copilot app or Copilot in VS Code.
 
 **Workstreams** shows larger efforts that span sessions: everything on one feature branch, or a session whose agent kept a task list. Each card shows progress (done, in progress, waiting on you), the agents on it and their latest update. Open one for its task tree, built from the agents' own task lists (Claude Code's todos and plans, Copilot's todos): each task is marked as agent work or yours (approvals, decisions, credentials, release steps, or anything the agent is waiting on you for), and you can change who it's for.
 

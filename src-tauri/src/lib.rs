@@ -82,6 +82,7 @@ pub fn run() {
                 && matches!(event, tauri::WindowEvent::Focused(true))
             {
                 tracker_sync::wake(window.app_handle());
+                background::focused(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -126,6 +127,8 @@ pub fn run() {
             commands::get_session,
             commands::save_review,
             commands::get_live,
+            commands::get_since,
+            commands::take_open_request,
             commands::list_teams,
             commands::import_alert_asset,
             commands::read_alert_asset,

@@ -41,6 +41,8 @@ impl Range {
 pub struct SessionRow {
     pub id: String,
     pub source: String,
+    /// Which app ran it: "cli", "claude-desktop", "copilot-app", "vscode"…
+    pub entrypoint: Option<String>,
     pub title: Option<String>,
     pub first_prompt: Option<String>,
     pub project_path: Option<String>,
@@ -129,7 +131,7 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
        s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms,
        s.planned OR EXISTS(SELECT 1 FROM intents i WHERE i.session_id = s.id),
-       s.peak_context, s.mode_ms
+       s.peak_context, s.mode_ms, s.entrypoint
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai, SUM(reworked) AS rw
@@ -157,6 +159,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         ),
         id: r.get(0)?,
         source: r.get(1)?,
+        entrypoint: r.get(49)?,
         title: r.get(2)?,
         first_prompt: r.get(3)?,
         project_path: r.get(4)?,

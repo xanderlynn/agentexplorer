@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SOURCES } from "./generated";
-import { SOURCE_COLOR, SOURCE_LABEL, SOURCE_OPTIONS, ago, cronText, delta, duration, money, pct, projectName, roleOf, sourceLabel } from "./format";
+import { SOURCE_COLOR, SOURCE_LABEL, SOURCE_OPTIONS, ago, appLabel, cronText, delta, duration, money, pct, projectName, roleOf, sourceLabel } from "./format";
 
 describe("sources", () => {
   it("label, colour and offer every tool the engine supports", () => {
@@ -10,6 +10,9 @@ describe("sources", () => {
       expect(SOURCE_OPTIONS.some((o) => o.value === s.id)).toBe(true);
     }
     expect(sourceLabel("something_new")).toBe("something_new");
+    expect(appLabel("claude_code", "claude-desktop")).toBe("Claude app");
+    expect(appLabel("copilot_cli", "copilot-app")).toBe("Copilot app");
+    expect(appLabel("claude_code", "cli")).toBe(sourceLabel("claude_code"));
   });
 });
 

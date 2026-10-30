@@ -17,6 +17,9 @@ const LONG_TASK_AFTER_MS: i64 = 2 * 60_000;
 const MAYBE_BLOCKED_AFTER_MS: i64 = 45_000;
 /// Silent this long while working, it has stalled or the tool was closed.
 const STALE_AFTER_MS: i64 = 30 * 60_000;
+/// A question or permission prompt stays waiting on you this long, so one
+/// left overnight is still there in the morning.
+pub const AWAIT_HOLD_MS: i64 = 24 * 3_600_000;
 /// A running sub-agent seen within this long keeps its session working.
 const TEAM_BUSY_MS: i64 = 10 * 60_000;
 /// A running sub-agent silent this long is shown as quiet.
@@ -139,8 +142,8 @@ pub fn status_for(s: Signals) -> LiveStatus {
     let pending = s.pending_tool.unwrap_or("");
     match s.last_event {
         Some("closed") => Ended,
-        // A permission prompt nobody answered for this long was abandoned.
-        Some("needs_permission") if s.quiet_ms >= STALE_AFTER_MS => Stale,
+        // A permission prompt nobody answered for a day was abandoned.
+        Some("needs_permission") if s.quiet_ms >= AWAIT_HOLD_MS => Stale,
         Some("needs_permission") => NeedsPermission,
         Some("working") if ASKING_TOOLS.contains(&pending) => Asking,
         Some("working") if s.quiet_ms >= STALE_AFTER_MS && !s.team_busy => Stale,
@@ -157,9 +160,14 @@ pub fn status_for(s: Signals) -> LiveStatus {
         Some("working") => LongTask,
         // The lead finished its turn but its team is still at work.
         Some("turn_ended") if s.team_busy => Working,
-        Some("turn_ended") if s.failed => Failed,
+        Some("turn_ended") if s.failed && s.quiet_ms < AWAIT_HOLD_MS => Failed,
+        // An unanswered question still waits on you, even the next morning.
+        Some("turn_ended")
+            if s.quiet_ms < AWAIT_HOLD_MS && s.last_message.is_some_and(asks_question) =>
+        {
+            Asking
+        }
         Some("turn_ended") if s.quiet_ms >= LIVE_WINDOW_MS => Done,
-        Some("turn_ended") if s.last_message.is_some_and(asks_question) => Asking,
         Some("turn_ended") if s.upcoming_jobs => Scheduled,
         Some("turn_ended") => Done,
         _ => Stale,
@@ -190,6 +198,8 @@ pub struct LiveAgent {
 pub struct LiveSession {
     pub id: String,
     pub source: String,
+    /// Which app runs it: "cli", "claude-desktop", "copilot-app", "vscode"…
+    pub entrypoint: Option<String>,
     pub title: Option<String>,
     pub project_path: Option<String>,
     pub git_branch: Option<String>,
@@ -366,18 +376,16 @@ fn percentile(sorted: &[i64], p: f64) -> Option<i64> {
     (!sorted.is_empty()).then(|| sorted[((sorted.len() - 1) as f64 * p).round() as usize])
 }
 
-pub fn summary(conn: &Connection) -> Result<LiveSummary> {
-    let now = now_ms();
-    let midnight = crate::stats::local_midnight_ms(chrono::Local::now().date_naive());
-    let since = midnight.min(now - LIVE_WINDOW_MS);
+/// Sessions active since `since`, newest first, with their live status.
+fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
     let mut stmt = conn.prepare(
         "SELECT id, source, title, project_path, git_branch, last_event, ended_at, user_turns,
                 active_ms, last_message, outcome, timeline, last_context,
                 team, pending_tool, turn_started_at, failed, rating,
-                input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+                input_tokens + output_tokens + cache_read_tokens + cache_write_tokens, entrypoint
          FROM sessions WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 300",
     )?;
-    let mut all: Vec<Row> = stmt
+    let rows: Vec<Row> = stmt
         .query_map([since], |r| {
             let last_event: Option<String> = r.get(5)?;
             let ended: i64 = r.get(6)?;
@@ -420,6 +428,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             let session = LiveSession {
                 id: r.get(0)?,
                 source: r.get(1)?,
+                entrypoint: r.get(19)?,
                 title: r.get(2)?,
                 project_path: r.get(3)?,
                 git_branch: r.get(4)?,
@@ -442,6 +451,25 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             Ok((session, spans, team))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// What changed while you were away: sessions active since `since` that
+/// finished, failed or are waiting on you, newest first.
+pub fn since(conn: &Connection, since: i64) -> Result<Vec<LiveSession>> {
+    Ok(rows(conn, since, now_ms())?
+        .into_iter()
+        .map(|(s, _, _)| s)
+        .filter(|s| matches!(s.status.group(), Group::Awaiting | Group::Completed))
+        .collect())
+}
+
+pub fn summary(conn: &Connection) -> Result<LiveSummary> {
+    let now = now_ms();
+    let midnight = crate::stats::local_midnight_ms(chrono::Local::now().date_naive());
+    // Back far enough for anything still waiting on you.
+    let since = midnight.min(now - AWAIT_HOLD_MS);
+    let mut all = rows(conn, since, now)?;
 
     // Today's statistics, from every session active today.
     let clip = |a: i64, b: i64| (b.min(now) - a.max(midnight)).max(0);
@@ -483,6 +511,10 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         {
             turns_today += 1;
             buckets[bucket_of(s.ended_at)].done += 1;
+        }
+        // Waiting on you right now: that wait counts up to now.
+        if s.status.group() == Group::Awaiting {
+            wait_ms_today += clip(s.status_since, now);
         }
         // A session working or awaiting you right now counts up to now.
         let now_in = match s.status.group() {
@@ -526,6 +558,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         if done && s.ended_at >= midnight {
             completed.push(s);
         } else if now - s.ended_at < LIVE_WINDOW_MS
+            || awaiting(&s)
             || (s.status.is_live() && s.status != LiveStatus::Done)
         {
             live.push(s);
@@ -657,10 +690,20 @@ mod tests {
             status_for(st("needs_permission", 60_000)),
             LiveStatus::NeedsPermission
         );
+        // A prompt left through a meeting, or overnight, still waits on you.
         assert_eq!(
             status_for(st("needs_permission", 40 * 60_000)),
+            LiveStatus::NeedsPermission
+        );
+        assert_eq!(
+            status_for(st("needs_permission", AWAIT_HOLD_MS)),
             LiveStatus::Stale
         );
+        let mut night = st("turn_ended", 10 * 3_600_000);
+        night.last_message = Some("Want me to open the PR?");
+        assert_eq!(status_for(night), LiveStatus::Asking);
+        night.last_message = Some("All done.");
+        assert_eq!(status_for(night), LiveStatus::Done);
         assert_eq!(status_for(st("closed", 0)), LiveStatus::Ended);
         assert_eq!(status_for(Signals::default()), LiveStatus::Stale);
     }
