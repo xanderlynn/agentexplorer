@@ -20,6 +20,7 @@ import Overview from "./pages/Overview";
 import Sessions from "./pages/Sessions";
 import ControlCenter from "./pages/ControlCenter";
 import Teams from "./pages/Teams";
+import Workstreams from "./pages/Workstreams";
 import Toolkit from "./pages/Toolkit";
 import Journal from "./pages/Journal";
 import Patterns from "./pages/Patterns";
@@ -32,7 +33,7 @@ import Settings from "./pages/Settings";
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "control" | "teams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "control" | "teams" | "workstreams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -40,7 +41,7 @@ export type Page = "today" | "experiments" | "execution" | "overview" | "control
  * the page.
  */
 const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Page; label: string }[] }[] = [
-  { id: "agents", label: "Agents", icon: Bot, tabs: [{ page: "control", label: "Control center" }, { page: "teams", label: "Teams" }] },
+  { id: "agents", label: "Agents", icon: Bot, tabs: [{ page: "control", label: "Control center" }, { page: "workstreams", label: "Workstreams" }, { page: "teams", label: "Teams" }] },
   { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }] },
   { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
   { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
@@ -64,7 +65,7 @@ const groupOf = (p: Page) => GROUPS.find((g) => g.tabs.some((t) => t.page === p)
 
 
 /** Queries that show live state and refetch as soon as data changes. */
-const LIVE_QUERIES = new Set(["teams", "session"]);
+const LIVE_QUERIES = new Set(["teams", "session", "workstreams"]);
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -248,6 +249,7 @@ export default function App() {
           {page === "overview" && <Overview days={days} setDays={setDays} onOpen={setOpenSession} go={go} drill={openSessions} />}
           {page === "control" && <ControlCenter onOpen={setOpenSession} />}
           {page === "teams" && <Teams onOpen={setOpenSession} />}
+          {page === "workstreams" && <Workstreams onOpen={setOpenSession} />}
           {page === "toolkit" && <Toolkit days={days} setDays={setDays} />}
           {page === "sessions" && <Sessions days={days} setDays={setDays} onOpen={setOpenSession} drill={drill} clearDrill={() => setDrill(null)} />}
           {page === "patterns" && <Patterns days={days} setDays={setDays} onOpen={setOpenSession} drill={openSessions} />}

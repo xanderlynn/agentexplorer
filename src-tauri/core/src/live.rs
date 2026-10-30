@@ -9,7 +9,7 @@ use crate::team::{AgentLiveStatus, Status as AgentStatus, Team};
 use crate::util::now_ms;
 
 /// Sessions with activity inside this window appear in the control center.
-const LIVE_WINDOW_MS: i64 = 3 * 3_600_000;
+pub const LIVE_WINDOW_MS: i64 = 3 * 3_600_000;
 /// A working session silent this long is running something long.
 const LONG_TASK_AFTER_MS: i64 = 2 * 60_000;
 /// A non-shell tool still pending after this may be waiting on a permission
@@ -288,6 +288,32 @@ fn derive(team: &mut Team, sig: Signals, ended: i64, now: i64) -> (LiveStatus, i
     });
     team.settle(status.is_live() && quiet_ms < STALE_AFTER_MS);
     (status, quiet_ms)
+}
+
+/// A stored session's status now, for views beyond the live window. Settles
+/// its team the same way the live views do.
+pub fn status_of(
+    team: &mut Team,
+    last_event: Option<&str>,
+    pending_tool: Option<&str>,
+    last_message: Option<&str>,
+    failed: bool,
+    ended: i64,
+    now: i64,
+) -> LiveStatus {
+    derive(
+        team,
+        Signals {
+            last_event,
+            pending_tool,
+            last_message,
+            failed,
+            ..Default::default()
+        },
+        ended,
+        now,
+    )
+    .0
 }
 
 /// A stored team without its message log, which the live views never show.

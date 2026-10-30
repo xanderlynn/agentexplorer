@@ -4,8 +4,8 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import type { AlertProfile, SoundChoice } from "./alerts/profile";
 
-import type { ErrorKind, LiveAgentStatus, LiveStatus, Source } from "./generated";
-export type { ErrorKind, LiveAgentStatus, LiveStatus, Source };
+import type { ErrorKind, LiveAgentStatus, LiveStatus, Source, TaskKind, TaskStatus } from "./generated";
+export type { ErrorKind, LiveAgentStatus, LiveStatus, Source, TaskKind, TaskStatus };
 
 /** A failed command. `kind` tells a missing or busy thing from a real failure; showing it gives the message. */
 export class CommandError extends Error {
@@ -652,6 +652,35 @@ export interface Settings {
   defaultApiModel: string;
 }
 
+/** A task in a workstream; see workstreams.rs. */
+export interface WsTask {
+  /** `<session id>:<task id>`. */
+  key: string;
+  sessionId: string;
+  title: string;
+  status: TaskStatus;
+  kind: TaskKind;
+  /** Why it is human work, or "Set by you". */
+  reason: string | null;
+  agent: string | null;
+  /** Keys of unfinished tasks it waits for. */
+  blockedBy: string[];
+  updatedAt: number | null;
+}
+
+export interface Workstream {
+  key: string;
+  title: string;
+  repo: string | null;
+  branch: string | null;
+  lastActivity: number;
+  sessions: { id: string; source: Source; title: string | null; status: LiveStatus; endedAt: number }[];
+  agents: { sessionId: string; id: string; name: string | null; role: string; active: boolean }[];
+  tasks: WsTask[];
+  updates: { at: number | null; sessionId: string; agent: string; taskKey: string | null; text: string }[];
+  counts: { done: number; inProgress: number; needsYou: number; pending: number; agent: number; human: number };
+}
+
 /** A release you can move to; see updates.rs `list`. */
 export interface ReleaseInfo {
   version: string;
@@ -851,6 +880,8 @@ export const api = {
 
   settings: () => call<Settings>("get_settings"),
   listReleases: () => call<ReleaseInfo[]>("list_releases"),
+  workstreams: (days: number) => call<Workstream[]>("list_workstreams", { days }),
+  setTaskKind: (taskKey: string, kind: TaskKind | null) => call<void>("set_task_kind", { taskKey, kind }),
   installRelease: (version: string) => call<void>("install_release", { version }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
   importAlertAsset: (bytes: Uint8Array) => call<AlertAsset>("import_alert_asset", bytes),

@@ -253,6 +253,13 @@ ALTER TABLE sessions ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
     r#"
 ALTER TABLE sessions ADD COLUMN tasks TEXT NOT NULL DEFAULT '{}';
 "#,
+    r#"
+CREATE TABLE task_kinds (
+    task_key   TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('agent','human')),
+    updated_at INTEGER NOT NULL
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
