@@ -478,9 +478,13 @@ pub fn set_task_kind(
 
 // ----------------------------------------------------------------- updates
 
-#[tauri::command(async)]
-pub fn list_releases(app: tauri::AppHandle) -> CmdResult<Vec<updates::ReleaseInfo>> {
-    updates::list(&app).map_err(err)
+/// Off the async runtime: the blocking HTTP client panics when dropped on it.
+#[tauri::command]
+pub async fn list_releases(app: tauri::AppHandle) -> CmdResult<Vec<updates::ReleaseInfo>> {
+    tauri::async_runtime::spawn_blocking(move || updates::list(&app))
+        .await
+        .map_err(|e| CmdError::failed(e.to_string()))?
+        .map_err(err)
 }
 
 #[tauri::command]
