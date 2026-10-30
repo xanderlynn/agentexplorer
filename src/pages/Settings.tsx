@@ -188,6 +188,7 @@ export default function Settings() {
             On a subscription (Claude Pro or Max, a Copilot plan) you don't pay per token, so dollar amounts show as ≈, what the same work would cost at API prices: useful to compare, not a bill.
           </p>
         </Card>
+        <StorageCard />
         <ClaudeHookCard />
         <Card title="Workstreams">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -356,5 +357,62 @@ function ExtraDirs({ source, json, onSave }: { source: string; json: string | un
         className={cx(inputClass, "mt-1 font-mono text-xs")}
       />
     </label>
+  );
+}
+
+const mb = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
+
+/**
+ * How much history Tilly keeps, and what it takes on disk. Every session's
+ * summary stays forever; its detail and the raw transcript copies don't
+ * have to.
+ */
+function StorageCard() {
+  const qc = useQueryClient();
+  const st = useQuery({ queryKey: ["storage"], queryFn: api.storage });
+  const set = useMutation({
+    mutationFn: async (v: { key: string; value: string }) => {
+      await api.setSetting(v.key, v.value);
+      await api.applyRetention();
+    },
+    onSuccess: () => qc.invalidateQueries(),
+  });
+  const s = st.data;
+  const days = (d: number) => (d === 0 ? "forever" : d === 365 ? "a year" : `${d} days`);
+  return (
+    <Card title="Storage and history">
+      {s && (
+        <p className="text-sm text-zinc-400">
+          Database {mb(s.dbBytes)} ({s.sessions.toLocaleString()} sessions, {s.detailed.toLocaleString()} with full detail)
+          {s.archiveEnabled ? ` · transcript archive ${mb(s.archiveBytes)} (${s.archiveSessions.toLocaleString()} sessions)` : " · transcript archive off"}.
+        </p>
+      )}
+      <div className="mt-3 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-zinc-300">Keep session detail for</span>
+          <Segmented
+            options={[90, 180, 365, 0].map((d) => ({ value: String(d), label: days(d) }))}
+            value={String(s?.detailDays ?? 180)}
+            onChange={(value) => set.mutate({ key: "history.detailDays", value })}
+          />
+        </div>
+        <p className="text-xs text-zinc-500">
+          Every session's summary (cost, time, waits, outcome, workstream) is kept forever, for trends and progress. After this, its prompts, sub-agent detail and timeline are
+          dropped.
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-zinc-300">Keep transcript copies for</span>
+          <Segmented
+            options={[30, 90, 365, 0].map((d) => ({ value: String(d), label: days(d) }))}
+            value={String(s?.archiveDays ?? 90)}
+            onChange={(value) => set.mutate({ key: "archive.days", value })}
+          />
+        </div>
+        <p className="text-xs text-zinc-500">
+          Raw transcripts are the big part: about 1.6 MB a session, compressed once they stop changing. A heavy user's year is 14–22 GB uncompressed.
+        </p>
+      </div>
+      <ErrorNote error={set.error ?? st.error} />
+    </Card>
   );
 }

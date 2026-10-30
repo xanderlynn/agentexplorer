@@ -58,6 +58,19 @@ pub fn wake(app: &AppHandle) {
 
 fn round(app: &AppHandle, db_path: &Path) -> anyhow::Result<()> {
     let conn = db::open(db_path)?;
+    // Once a day: compact old session detail, compress and prune the archive.
+    if tilly_core::retention::due(&conn) {
+        let data_dir = app.state::<crate::AppState>().data_dir.clone();
+        match tilly_core::retention::maintain(&conn, &data_dir) {
+            Ok(p) => tracing::info!(
+                "retention: compacted {} sessions, compressed {} transcripts, pruned {} archived sessions",
+                p.compacted,
+                p.compressed,
+                p.pruned
+            ),
+            Err(e) => tracing::warn!("retention: {e:#}"),
+        }
+    }
     let minutes = db::get_setting(&conn, SETTING)?
         .and_then(|v| v.trim().parse::<i64>().ok())
         .unwrap_or(DEFAULT_MINUTES);

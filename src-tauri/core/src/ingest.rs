@@ -100,6 +100,7 @@ impl Ingestor {
             let (r, _) = self.ingest_units(conn, &from_archive, false, false)?;
             report.updated += r.updated;
             report.errors.extend(r.errors);
+            let _ = std::fs::remove_dir_all(self.data_dir.join("unpacked"));
         }
         // A full pass re-links every session so new commits, instruction-file
         // edits and intents reach sessions whose transcripts did not change.
@@ -471,18 +472,34 @@ fn archive_dir(data_dir: &Path, source: Source, main: &Path) -> PathBuf {
     data_dir.join("archive").join(source.as_str()).join(safe_id)
 }
 
-/// The archived copy of a session whose original transcript is gone.
+/// The archived copy of a session whose original transcript is gone. A
+/// compressed copy is unpacked into `unpacked/` first, for the parser.
 fn archived_unit(data_dir: &Path, source: Source, original_main: &Path) -> Option<Unit> {
     let dir = archive_dir(data_dir, source, original_main);
-    let main = dir.join(original_main.file_name()?);
-    if !main.is_file() {
-        return None;
-    }
+    let name = original_main.file_name()?;
+    let plain = |p: PathBuf| -> Option<PathBuf> {
+        if p.is_file() {
+            return Some(p);
+        }
+        let gz = crate::retention::gz_path(&p);
+        let raw = crate::retention::read_gz(&gz).ok()?;
+        let rel = p.strip_prefix(data_dir).ok()?;
+        let out = data_dir.join("unpacked").join(rel);
+        crate::util::create_private_dir(out.parent()?).ok()?;
+        crate::util::write_private(&out, &raw).ok()?;
+        Some(out)
+    };
+    let main = plain(dir.join(name))?;
     let mut paths = vec![main];
     if let Ok(rd) = std::fs::read_dir(dir.join("sub")) {
         let mut subs: Vec<PathBuf> = rd
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .filter_map(|p| {
+                let s = p.to_string_lossy();
+                let jsonl = s.strip_suffix(".gz").unwrap_or(&s);
+                jsonl.ends_with(".jsonl").then(|| PathBuf::from(jsonl))
+            })
+            .filter_map(plain)
             .collect();
         subs.sort();
         paths.extend(subs);
@@ -514,6 +531,15 @@ fn archive_unit(data_dir: &Path, unit: &Unit) -> Result<()> {
         }
         // Transcripts only grow, so an equal size means nothing new to copy.
         if std::fs::metadata(&target).is_ok_and(|t| t.len() == meta.len()) {
+            continue;
+        }
+        // Compressed once it stopped changing: copy again only if it changed since.
+        let gz = crate::retention::gz_path(&target);
+        if let (Ok(g), Ok(m)) = (
+            std::fs::metadata(&gz).and_then(|g| g.modified()),
+            meta.modified(),
+        ) && m <= g
+        {
             continue;
         }
         crate::util::copy_private(p, &target)?;

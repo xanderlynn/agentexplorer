@@ -905,6 +905,9 @@ export const api = {
   archiveWorkstream: (key: string, archived: boolean) => call<void>("archive_workstream", { key, archived }),
   finishedWorkstreams: (days: number) =>
     call<{ key: string; title: string; finishedAt: number; startedAt: number; sessions: number; tasks: number; costUsd: number }[]>("finished_workstreams", { days }),
+  storage: () =>
+    call<{ dbBytes: number; archiveBytes: number; archiveSessions: number; sessions: number; detailed: number; detailDays: number; archiveDays: number; archiveEnabled: boolean }>("get_storage"),
+  applyRetention: () => call<void>("apply_retention"),
   progress: (days: number) => call<ProgressT>("get_progress", { days }),
   bulkReview: (ids: string[], outcome: Outcome) => call<number>("bulk_review", { ids, outcome }),
   dismissSession: (id: string) => call<void>("dismiss_session", { id }),

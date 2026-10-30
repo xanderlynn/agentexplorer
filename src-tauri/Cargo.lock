@@ -4662,6 +4662,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "flate2",
  "notify",
  "rayon",
  "rusqlite",

@@ -223,6 +223,23 @@ pub fn finished_workstreams(
     with_db(&state, |c| workstreams::finished(c, days))
 }
 
+/// Database and archive sizes, and how much history is kept.
+#[tauri::command(async)]
+pub fn get_storage(state: State<AppState>) -> CmdResult<tilly_core::retention::Storage> {
+    with_db(&state, |c| {
+        tilly_core::retention::storage(c, &state.data_dir, &state.db_path)
+    })
+}
+
+/// Runs the retention pass now, after you change how much history to keep.
+#[tauri::command]
+pub async fn apply_retention(state: State<'_, AppState>) -> CmdResult<()> {
+    blocking(&state, |c, data_dir| {
+        tilly_core::retention::maintain(c, data_dir).map(|_| ())
+    })
+    .await
+}
+
 /// Month-by-month progress and what pays off, over the last `days` days.
 #[tauri::command(async)]
 pub fn get_progress(
@@ -706,6 +723,8 @@ const SETTING_KEYS: &[&str] = &[
     "updates.autoCheck",
     crate::tracker_sync::SETTING,
     "billing.plan",
+    tilly_core::retention::DETAIL_DAYS_KEY,
+    tilly_core::retention::ARCHIVE_DAYS_KEY,
     sources::EXTRA_DIRS_KEY,
 ];
 
