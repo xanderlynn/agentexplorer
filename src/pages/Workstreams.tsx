@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
-import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass, inputBase } from "../components/ui";
 import { ago, compact, duration, money, projectName, roleOf } from "../format";
 import { cardState, importedLabel, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
@@ -121,7 +121,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
               value={filter}
               onChange={setFilter}
             />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search workstreams" className={cx(inputClass, "w-40")} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search workstreams" className={cx(inputBase, "w-40")} />
             <Segmented options={[{ value: 7, label: "7d" }, { value: 30, label: "30d" }, { value: 0, label: "All" }]} value={days} onChange={setDays} />
             <Button size="sm" onClick={() => setImporting(true)}>
               <Download size={14} /> Import from tracker
@@ -263,7 +263,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
             <div className="truncate text-sm font-medium text-zinc-100">{ws.title}</div>
             <div className="truncate text-xs text-zinc-500">
               {ws.sourceUrl ? `${importedLabel(ws)}${ws.trackerRepo ? ` · ${ws.trackerRepo}` : ""}` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
-              {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
+              {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessionCount} {ws.sessionCount === 1 ? "session" : "sessions"}
             </div>
           </div>
           <span
@@ -290,7 +290,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <Avatars ws={ws} />
-          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : ws.sessions.length > 1 ? `${ws.sessions.length} leads` : ws.sessions.length ? "Lead" : ""}</span>
+          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : ws.sessionCount > 1 ? `${ws.sessionCount} leads` : ws.sessionCount ? "Lead" : ""}</span>
         </div>
         <div className="border-t border-zinc-800 pt-2 text-sm">
           {latest ? (
@@ -302,7 +302,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
             </>
           ) : (
             <div className="text-xs text-zinc-500">
-              {ws.sessions.length === 0 ? "No sessions yet: open it to add some." : `No updates yet. Last active ${ago(Date.now() - ws.lastActivity)}.`}
+              {ws.sessionCount === 0 ? "No sessions yet: open it to add some." : `No updates yet. Last active ${ago(Date.now() - ws.lastActivity)}.`}
             </div>
           )}
         </div>

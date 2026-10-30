@@ -548,12 +548,13 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             let (i, j) = (bucket_of(a), bucket_of(b));
             if kind == 0 {
                 // A wait starts when a turn finished: one per answered turn.
+                // Time away isn't a slow reply: it's counted apart.
                 if b - a > AWAY_AFTER_MS {
                     away_ms_today += clip(a, b);
                 } else {
                     wait_ms_today += clip(a, b);
+                    replies.push(b - a);
                 }
-                replies.push(b - a);
                 wait[i..=j].iter_mut().for_each(|x| *x = true);
                 if a >= midnight {
                     turns_today += 1;

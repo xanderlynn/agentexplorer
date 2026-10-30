@@ -710,6 +710,8 @@ export interface Workstream {
   sourceKind: string | null;
   /** You archived it out of the Active list. */
   archived: boolean;
+  /** How many sessions it has. The list leaves `sessions` empty; open one for them. */
+  sessionCount: number;
   /** When its earliest session ended. */
   startedAt: number;
   /** "owner/repo" of an imported GitHub epic. */

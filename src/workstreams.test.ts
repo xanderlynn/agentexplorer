@@ -16,6 +16,7 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   trackerRepo: null,
   sourceKind: null,
   archived: false,
+  sessionCount: 1,
   startedAt: 0,
   repo: null,
   branch: null,

@@ -147,6 +147,8 @@ pub struct Workstream {
     pub tracker_repo: Option<String>,
     /// You archived it out of the Active list.
     pub archived: bool,
+    /// How many sessions it has; the list sends this instead of the sessions.
+    pub session_count: usize,
     /// When its earliest session ended, for how long it has run.
     pub started_at: i64,
     pub repo: Option<String>,
@@ -503,6 +505,9 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         ws.tasks.splice(0..0, item_tasks);
         recount(ws, now);
     }
+    for w in &mut out {
+        w.session_count = w.sessions.len();
+    }
     out.sort_by_key(|w| {
         (
             std::cmp::Reverse(w.starred),
@@ -521,6 +526,7 @@ pub fn summaries(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
     for w in &mut all {
         w.tasks = vec![];
         w.updates.truncate(1);
+        w.sessions = vec![];
     }
     Ok(all)
 }
@@ -662,6 +668,7 @@ fn empty(key: String, created_at: i64) -> Workstream {
         closed: false,
         source_kind: None,
         archived: false,
+        session_count: 0,
         started_at: 0,
         tracker_repo: None,
         repo: None,
@@ -1287,6 +1294,7 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         closed: false,
         source_kind: None,
         archived: false,
+        session_count: 0,
         started_at: rows.iter().map(|r| r.ended).min().unwrap_or(0),
         tracker_repo: None,
         repo: first.repo.clone(),
