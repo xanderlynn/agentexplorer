@@ -8,6 +8,8 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
 ### Added
 
 - **Workstreams** under Agents: larger efforts across sessions as cards, with progress, the agents on each and their latest update. Open one for its task tree, built from the agents' own task lists (Claude Code and Copilot), with each task marked as agent work or yours.
@@ -125,7 +127,8 @@ The first release of Tilly: a desktop app that keeps your AI coding agents in li
 - Lean on resources: Tilly reads only the new lines of each log, pushes changes to the window instead of polling, and frees its window's memory when you close it. In the tray with agents busy, it uses under 1% of one CPU core and about 100 MB of memory.
 - Upgrading from Governess or Execution Ledger: your data and saved API key move over on first launch.
 
-[Unreleased]: https://github.com/xanderlynn/tilly/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/xanderlynn/tilly/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/xanderlynn/tilly/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/xanderlynn/tilly/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/xanderlynn/tilly/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/xanderlynn/tilly/releases/tag/v0.1.0
