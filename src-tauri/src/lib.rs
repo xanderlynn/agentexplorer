@@ -9,7 +9,7 @@ mod updates;
 // friends working in the app's own modules.
 pub(crate) use tilly_core::{
     alerts, analytics, db, experiments, ingest, journal, live, model, playbooks, sources,
-    status_alerts, store, toolkit, trends, util, watcher, workstreams,
+    status_alerts, store, toolkit, trackers, trends, util, watcher, workstreams,
 };
 
 use std::path::PathBuf;
@@ -86,6 +86,9 @@ pub fn run() {
             commands::add_to_workstream,
             commands::remove_from_workstream,
             commands::delete_workstream,
+            commands::import_workstream,
+            commands::sync_workstream,
+            commands::open_tracker_link,
             commands::install_release,
             commands::get_overview,
             commands::quick_review,

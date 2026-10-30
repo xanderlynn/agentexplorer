@@ -31,6 +31,7 @@ pub mod store;
 pub mod tasks;
 pub mod team;
 pub mod toolkit;
+pub mod trackers;
 pub mod trends;
 pub mod util;
 pub mod watcher;

@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Workstream, WsTask } from "./api";
-import { initials, progress, sortForYou, taskState, tree } from "./workstreams";
+import { initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
 
-const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, ...over });
+const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, url: null, ...over });
 const ws = (over: Partial<Workstream>): Workstream => ({
   key: "k",
   title: "W",
   starred: false,
   custom: false,
+  sourceUrl: null,
+  syncedAt: null,
   repo: null,
   branch: null,
   lastActivity: 0,
@@ -55,5 +57,13 @@ describe("workstreams", () => {
     expect(sortForYou([a, b]).map((w) => w.key)).toEqual(["b", "a"]);
     const c = ws({ key: "c", lastActivity: 0, starred: true });
     expect(sortForYou([a, b, c]).map((w) => w.key)).toEqual(["c", "b", "a"]);
+  });
+
+  it("keeps tracker items apart from session tasks", () => {
+    const w = ws({ tasks: [task({}), task({ key: "item:k:12", sessionId: "" })] });
+    expect(trackerTasks(w).map((t) => t.key)).toEqual(["item:k:12"]);
+    expect(tree(w)[0].tasks.map((t) => t.key)).toEqual(["s:1"]);
+    expect(trackerName("https://github.com/o/r/issues/1")).toBe("GitHub");
+    expect(trackerName("https://dev.azure.com/o/p/_workitems/edit/1")).toBe("Azure DevOps");
   });
 });

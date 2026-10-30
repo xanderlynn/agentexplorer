@@ -1,11 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Circle, CircleAlert, CircleCheck, GitBranch, LoaderCircle, Lock, Pencil, Plus, Star, Trash2, User, X, type LucideIcon } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  Download,
+  ExternalLink,
+  GitBranch,
+  LoaderCircle,
+  Lock,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Star,
+  Trash2,
+  User,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
 import { ago, projectName, roleOf } from "../format";
-import { initials, progress, sortForYou, taskState, tree, type TaskState } from "../workstreams";
+import { initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
 const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: string }> = {
   done: { icon: CircleCheck, className: "text-emerald-400", label: "Done" },
@@ -14,6 +33,9 @@ const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: str
   blocked: { icon: Lock, className: "text-zinc-500", label: "Waiting on another task" },
   todo: { icon: Circle, className: "text-zinc-600", label: "Not started" },
 };
+
+/** Imported workstreams fetch their epic again when opened after this long. */
+const SYNC_AFTER_MS = 15 * 60_000;
 
 /** A change to your workstreams; the list reloads after it. */
 function useWsChange<A>(fn: (arg: A) => Promise<unknown>) {
@@ -32,6 +54,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
   const [days, setDays] = useState(30);
   const [filter, setFilter] = useState<"all" | "starred" | "you">("all");
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   // The open workstream is remembered, so it stays open across restarts.
   const [open, setOpenState] = useState<string | null>(() => {
     try {
@@ -78,12 +101,24 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
               onChange={setFilter}
             />
             <Segmented options={[{ value: 7, label: "7d" }, { value: 30, label: "30d" }, { value: 0, label: "All" }]} value={days} onChange={setDays} />
+            <Button size="sm" onClick={() => setImporting(true)}>
+              <Download size={14} /> Import epic
+            </Button>
             <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
               <Plus size={14} /> New workstream
             </Button>
           </div>
         }
       />
+      {importing && (
+        <ImportDialog
+          onClose={() => setImporting(false)}
+          onDone={(key) => {
+            setImporting(false);
+            setOpen(key);
+          }}
+        />
+      )}
       {creating && (
         <SessionPicker
           heading="New workstream"
@@ -112,7 +147,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
         <Empty title={filter === "you" ? "Nothing is waiting on you" : filter === "starred" ? "Nothing starred yet" : "No workstreams yet"}>
           {filter === "starred"
             ? "Star a workstream to keep it here, whatever its age."
-            : "Work on a feature branch, or let an agent keep a task list (Claude Code's todos and plans, Copilot's todos), and its effort shows up here. Or make your own with New workstream."}
+            : "Work on a feature branch, or let an agent keep a task list (Claude Code's todos and plans, Copilot's todos), and its effort shows up here. Or make your own with New workstream, or import a GitHub or Azure DevOps epic."}
         </Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -196,8 +231,8 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-zinc-100">{ws.title}</div>
             <div className="truncate text-xs text-zinc-500">
-              {ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
-              {ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
+              {ws.sourceUrl ? `${trackerName(ws.sourceUrl)} epic` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
+              {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
             </div>
           </div>
           {ws.counts.needsYou > 0 ? (
@@ -245,6 +280,13 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
   const remove = useWsChange((id: string) => api.removeFromWorkstream(ws.key, id));
   const rename = useWsChange((title: string) => api.renameWorkstream(ws.key, title));
   const del = useWsChange(() => api.deleteWorkstream(ws.key));
+  const sync = useWsChange(() => api.syncWorkstream(ws.key));
+  const items = trackerTasks(ws);
+  const syncNow = sync.mutate;
+  // Imported ones refresh from the tracker when opened, if it's been a while.
+  useEffect(() => {
+    if (ws.sourceUrl && Date.now() - (ws.syncedAt ?? 0) > SYNC_AFTER_MS) syncNow();
+  }, [ws.key, ws.sourceUrl, ws.syncedAt, syncNow]);
   const task = ws.tasks.find((t) => t.key === sel) ?? null;
   const titleOf = (key: string) => ws.tasks.find((t) => t.key === key)?.title ?? key;
   const updates = task ? ws.updates.filter((u) => u.taskKey === task.key) : ws.updates;
@@ -278,6 +320,22 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
             </div>
           )}
           <div className="flex flex-wrap items-center gap-x-3 text-xs text-zinc-500">
+            {ws.sourceUrl && (
+              <button className="inline-flex items-center gap-1 hover:text-zinc-200" onClick={() => api.openTrackerLink(ws.sourceUrl!)}>
+                <ExternalLink size={12} aria-hidden /> {trackerName(ws.sourceUrl)} epic
+              </button>
+            )}
+            {ws.sourceUrl && (
+              <button
+                className="inline-flex items-center gap-1 hover:text-zinc-200 disabled:opacity-60"
+                disabled={sync.isPending}
+                onClick={() => sync.mutate()}
+                title="Fetch the epic and its items again"
+              >
+                <RefreshCw size={12} aria-hidden className={cx(sync.isPending && "animate-spin")} />
+                {sync.isPending ? "Syncing…" : ws.syncedAt ? `Synced ${ago(Date.now() - ws.syncedAt)}` : "Sync"}
+              </button>
+            )}
             {ws.repo && <span>{projectName(ws.repo)}</span>}
             {ws.branch && <span className="inline-flex items-center gap-1"><GitBranch size={12} aria-hidden /> {ws.branch}</span>}
             <span>{ws.tasks.length ? `${ws.counts.done} of ${ws.tasks.length} done` : "No task list"}</span>
@@ -307,7 +365,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
           </div>
         </div>
       </div>
-      <ErrorNote error={rename.error ?? del.error ?? remove.error} />
+      <ErrorNote error={rename.error ?? del.error ?? remove.error ?? sync.error} />
       {adding && (
         <SessionPicker
           heading={`Add sessions to ${ws.title}`}
@@ -323,6 +381,17 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <Card title="Tasks">
           <div className="space-y-4" role="tree" aria-label="Tasks by session">
+            {items.length > 0 && (
+              <div role="group">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-zinc-200">From {trackerName(ws.sourceUrl ?? "")}</span>
+                  <span className="text-xs text-zinc-500">{items.filter((t) => t.status === "done").length} of {items.length} closed</span>
+                </div>
+                {items.map((t) => (
+                  <TaskRow key={t.key} t={t} selected={t.key === sel} onSelect={() => setSel(t.key === sel ? null : t.key)} />
+                ))}
+              </div>
+            )}
             {ws.sessions.length === 0 && (
               <div className="text-sm text-zinc-500">
                 No sessions yet.{" "}
@@ -426,7 +495,14 @@ function TaskDetail({ t, titleOf }: { t: WsTask; titleOf: (key: string) => strin
   const st = STATE[taskState(t)];
   return (
     <Card title="Task">
-      <div className="text-sm font-medium text-zinc-100">{t.title}</div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-sm font-medium text-zinc-100">{t.title}</div>
+        {t.url && (
+          <Button size="sm" variant="ghost" onClick={() => api.openTrackerLink(t.url!)}>
+            <ExternalLink size={13} /> Open
+          </Button>
+        )}
+      </div>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
         <dt className="text-zinc-500">Status</dt>
         <dd className={st.className}>{st.label}</dd>
@@ -437,7 +513,7 @@ function TaskDetail({ t, titleOf }: { t: WsTask; titleOf: (key: string) => strin
         </dd>
         {t.agent && (
           <>
-            <dt className="text-zinc-500">Worked on by</dt>
+            <dt className="text-zinc-500">{t.sessionId ? "Worked on by" : "Assigned to"}</dt>
             <dd className="text-zinc-300">{t.agent === "lead" ? "Lead" : t.agent}</dd>
           </>
         )}
@@ -556,6 +632,52 @@ function SessionPicker({
           <ErrorNote error={error} />
           <Button variant="primary" size="sm" type="submit" disabled={!ready} busy={busy}>
             {action}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** Import a workstream from a GitHub issue or Azure DevOps work item link. */
+function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: (key: string) => void }) {
+  const [url, setUrl] = useState("");
+  const imp = useWsChange((link: string) => api.importWorkstream(link));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !imp.isPending && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [imp.isPending, onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={() => !imp.isPending && onClose()} />
+      <form
+        className="relative w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (url.trim()) imp.mutate(url.trim(), { onSuccess: (key) => onDone(key as string) });
+        }}
+      >
+        <h2 id="import-title" className="text-base font-semibold text-zinc-50">Import an epic</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          A GitHub issue (its sub-issues or task list become tasks) or an Azure DevOps epic or feature (its child items). Sessions that mention it or its items join. Tilly uses your
+          own <code>gh</code> or <code>az</code> sign-in and stores no token.
+        </p>
+        <input
+          autoFocus
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://github.com/owner/repo/issues/12 or https://dev.azure.com/org/project/_workitems/edit/34"
+          aria-label="Issue or work item link"
+          className={cx(inputClass, "mt-4")}
+        />
+        <ErrorNote error={imp.error} />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={imp.isPending}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" size="sm" disabled={!url.trim()} busy={imp.isPending}>
+            Import
           </Button>
         </div>
       </form>

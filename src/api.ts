@@ -666,6 +666,8 @@ export interface WsTask {
   /** Keys of unfinished tasks it waits for. */
   blockedBy: string[];
   updatedAt: number | null;
+  /** A tracker item's page. */
+  url: string | null;
 }
 
 export interface Workstream {
@@ -675,6 +677,9 @@ export interface Workstream {
   starred: boolean;
   /** You made it, rather than Tilly grouping it. */
   custom: boolean;
+  /** The epic it was imported from, and when it was last fetched. */
+  sourceUrl: string | null;
+  syncedAt: number | null;
   repo: string | null;
   branch: string | null;
   lastActivity: number;
@@ -893,6 +898,9 @@ export const api = {
   addToWorkstream: (key: string, sessionIds: string[]) => call<void>("add_to_workstream", { key, sessionIds }),
   removeFromWorkstream: (key: string, sessionId: string) => call<void>("remove_from_workstream", { key, sessionId }),
   deleteWorkstream: (key: string) => call<void>("delete_workstream", { key }),
+  importWorkstream: (url: string) => call<string>("import_workstream", { url }),
+  syncWorkstream: (key: string) => call<void>("sync_workstream", { key }),
+  openTrackerLink: (url: string) => call<void>("open_tracker_link", { url }),
   installRelease: (version: string) => call<void>("install_release", { version }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
   importAlertAsset: (bytes: Uint8Array) => call<AlertAsset>("import_alert_asset", bytes),

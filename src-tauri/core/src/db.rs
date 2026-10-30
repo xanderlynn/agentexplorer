@@ -281,6 +281,22 @@ CREATE TABLE workstream_branches (
     PRIMARY KEY (repo, branch)
 );
 "#,
+    // Workstreams imported from an issue tracker's epic, and its items.
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN source_url TEXT;
+ALTER TABLE workstream_prefs ADD COLUMN synced_at INTEGER;
+CREATE TABLE workstream_items (
+    ws_key   TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    title    TEXT NOT NULL,
+    status   TEXT NOT NULL,
+    url      TEXT,
+    labels   TEXT NOT NULL DEFAULT '[]',
+    assignee TEXT,
+    PRIMARY KEY (ws_key, item_key)
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

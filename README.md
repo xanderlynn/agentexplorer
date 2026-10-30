@@ -38,9 +38,13 @@ Sessions stay in the live view for three hours after their last turn, and the si
 
 **Workstreams** shows larger efforts that span sessions: everything on one feature branch, or a session whose agent kept a task list. Each card shows progress (done, in progress, waiting on you), the agents on it and their latest update. Open one for its task tree, built from the agents' own task lists (Claude Code's todos and plans, Copilot's todos): each task is marked as agent work or yours (approvals, decisions, credentials, release steps, or anything the agent is waiting on you for), and you can change who it's for.
 
+Make workstreams your own: **star** one to keep it at the top and listed whatever its age, make a **new workstream** and add sessions to it (a session brings its feature branch, so later sessions on that branch join too), or rename one. **Import epic** builds one from a GitHub issue (its sub-issues, or the task list in its description) or an Azure DevOps epic or feature (its child items): the items become its tasks, an `agent` or `human` label or tag sets who does each, and recent sessions that mention the epic or its items join it. It refreshes when you open it, and Sync fetches it on demand. Tilly fetches through your own `gh` or `az` sign-in and stores no token.
+
 | Workstreams | One workstream |
 | --- | --- |
 | ![Workstreams: effort cards with progress, agent and human task counts, team and latest update](docs/screenshots/workstreams.png) | ![A workstream's task tree by session, with agent and You badges, the selected task and its updates](docs/screenshots/workstream-detail.png) |
+
+![A workstream imported from a GitHub epic: its sub-issues as tasks with agent and You badges, a linked session, and the Sync and Open links](docs/screenshots/workstream-import.png)
 
 **Teams** shows sessions where the lead agent handed work to sub-agents: who is on each team, what each was asked to do, whether it reported back, and what is scheduled to run later.
 

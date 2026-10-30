@@ -33,6 +33,14 @@ export function tree(ws: Workstream) {
     .filter((n) => n.tasks.length > 0 || ws.custom || ws.sessions.length === 1);
 }
 
+/** Items from the tracker epic it was imported from, in the epic's order. */
+export const trackerTasks = (ws: Workstream) => ws.tasks.filter((t) => !t.sessionId);
+
+/** "GitHub" or "Azure DevOps", from an imported workstream's link. */
+export function trackerName(url: string) {
+  return /^https:\/\/github\.com\//.test(url) ? "GitHub" : "Azure DevOps";
+}
+
 /** Two-letter initials for an agent's avatar. */
 export function initials(label: string) {
   const words = label.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean);
