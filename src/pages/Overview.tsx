@@ -134,7 +134,7 @@ export default function Overview({
                 <button className="w-full py-2 text-left hover:bg-zinc-800/30" onClick={() => onOpen(s.id)}>
                   <div className="truncate text-sm text-zinc-200">{s.title ?? "Untitled"}</div>
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
-                    <SourceBadge source={s.source} /> · {projectName(s.repoRoot ?? s.projectPath)} · {duration(s.activeMs)}
+                    <SourceBadge source={s.source} entrypoint={s.entrypoint} /> · {projectName(s.repoRoot ?? s.projectPath)} · {duration(s.activeMs)}
                   </div>
                 </button>
               </li>

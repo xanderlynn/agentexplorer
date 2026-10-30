@@ -130,7 +130,7 @@ export default function Sessions({
                       <span className="truncate" title={flagged.get(s.id)}>{s.title ?? "Untitled"}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
-                      <SourceBadge source={s.source} />
+                      <SourceBadge source={s.source} entrypoint={s.entrypoint} />
                       <span className="truncate">· {projectName(s.repoRoot ?? s.projectPath)}{s.gitBranch ? ` · ${s.gitBranch}` : ""}{s.category ? ` · ${s.category}` : ""}</span>
                       {s.subagents > 0 && (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-1 text-zinc-300" title="Sub-agents in this session">

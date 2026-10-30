@@ -14,7 +14,7 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   repo: null,
   branch: null,
   lastActivity: 0,
-  sessions: [{ id: "s", source: "claude_code", title: null, status: "working", endedAt: 0 }],
+  sessions: [{ id: "s", source: "claude_code", entrypoint: null, title: null, status: "working", endedAt: 0 }],
   agents: [],
   tasks: [],
   updates: [],
@@ -35,13 +35,14 @@ describe("workstreams", () => {
     expect(taskState(task({ blockedBy: ["s:2"], status: "in_progress" }))).toBe("blocked");
     expect(taskState(task({ status: "in_progress" }))).toBe("doing");
     expect(taskState(task({}))).toBe("todo");
+    expect(taskState(task({ status: "blocked" }))).toBe("blocked");
   });
 
   it("builds the tree by session and drops empty sessions", () => {
     const w = ws({
       sessions: [
-        { id: "a", source: "claude_code", title: "A", status: "done", endedAt: 1 },
-        { id: "b", source: "copilot_cli", title: "B", status: "working", endedAt: 2 },
+        { id: "a", source: "claude_code", entrypoint: null, title: "A", status: "done", endedAt: 1 },
+        { id: "b", source: "copilot_cli", entrypoint: null, title: "B", status: "working", endedAt: 2 },
       ],
       tasks: [task({ sessionId: "b", key: "b:1" })],
     });

@@ -33,6 +33,8 @@ export const OUTCOMES: Outcome[] = ["shipped", "partial", "abandoned", "redo"];
 export interface SessionRow {
   id: string;
   source: Source;
+  /** Which app ran it: "cli", "claude-desktop", "copilot-app", "vscode"… */
+  entrypoint: string | null;
   title: string | null;
   firstPrompt: string | null;
   projectPath: string | null;
@@ -300,6 +302,8 @@ export interface LiveAgent {
 export interface LiveSession {
   id: string;
   source: Source;
+  /** Which app runs it: "cli", "claude-desktop", "copilot-app", "vscode"… */
+  entrypoint: string | null;
   title: string | null;
   projectPath: string | null;
   gitBranch: string | null;
@@ -685,7 +689,7 @@ export interface Workstream {
   repo: string | null;
   branch: string | null;
   lastActivity: number;
-  sessions: { id: string; source: Source; title: string | null; status: LiveStatus; endedAt: number }[];
+  sessions: { id: string; source: Source; entrypoint: string | null; title: string | null; status: LiveStatus; endedAt: number }[];
   agents: { sessionId: string; id: string; name: string | null; role: string; active: boolean }[];
   tasks: WsTask[];
   updates: { at: number | null; sessionId: string; agent: string; taskKey: string | null; text: string }[];
@@ -851,6 +855,8 @@ export const api = {
   retireGoal: (id: number) => call<void>("retire_goal", { id }),
   preflight: (text: string, source: Source | null) => call<PreflightAdvice>("preflight", { text, source }),
   live: () => call<LiveSummary>("get_live"),
+  takeOpenRequest: () => call<string | null>("take_open_request"),
+  since: (since: number) => call<LiveSession[]>("get_since", { since }),
   teams: () => call<TeamSession[]>("list_teams"),
   toolkit: (days: number, source: Source | null) => call<Toolkit>("get_toolkit", { days, source }),
   rescan: (force: boolean) => call<IngestReport>("rescan", { force }),

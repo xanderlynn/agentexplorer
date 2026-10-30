@@ -65,6 +65,7 @@ pub struct WsTask {
 pub struct WsSession {
     pub id: String,
     pub source: String,
+    pub entrypoint: Option<String>,
     pub title: Option<String>,
     pub status: LiveStatus,
     pub ended_at: i64,
@@ -243,6 +244,7 @@ fn branch_key(repo: &str, branch: &str) -> String {
 struct Row {
     id: String,
     source: String,
+    entrypoint: Option<String>,
     title: Option<String>,
     repo: Option<String>,
     branch: Option<String>,
@@ -266,7 +268,7 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         "SELECT s.id, s.source, s.title, COALESCE(s.repo_root, s.project_path), s.git_branch,
                 s.ended_at, s.last_event, s.pending_tool, s.last_message, s.failed, s.team, s.tasks,
                 (SELECT goal FROM intents i WHERE i.session_id = s.id ORDER BY i.created_at DESC LIMIT 1),
-                substr(s.first_prompt, 1, 120)
+                substr(s.first_prompt, 1, 120), s.entrypoint
          FROM sessions s
          WHERE s.ended_at >= ?1
             OR s.id IN (SELECT session_id FROM workstream_members)
@@ -293,6 +295,7 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
             Ok(Row {
                 id: r.get(0)?,
                 source: r.get(1)?,
+                entrypoint: r.get(14)?,
                 title: r.get(2)?,
                 repo: r.get(3)?,
                 branch: r.get(4)?,
@@ -892,6 +895,7 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         ws.sessions.push(WsSession {
             id: r.id.clone(),
             source: r.source.clone(),
+            entrypoint: r.entrypoint.clone(),
             title: r.title.clone(),
             status: r.status,
             ended_at: r.ended,

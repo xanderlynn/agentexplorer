@@ -32,6 +32,41 @@ impl State {
     }
 }
 
+/// How long the Copilot app's session list is reused before it's read again.
+const APP_SESSIONS_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Ids of the sessions the Copilot desktop app started, from its database
+/// next to `session-state`. Empty when the app isn't installed.
+fn app_sessions(db: &Path) -> std::sync::Arc<std::collections::HashSet<String>> {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+    type Cache = Option<(PathBuf, Instant, Arc<HashSet<String>>)>;
+    static CACHE: Mutex<Cache> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, at, ids)) = cache.as_ref()
+        && p == db
+        && at.elapsed() < APP_SESSIONS_TTL
+    {
+        return ids.clone();
+    }
+    let read = || -> rusqlite::Result<HashSet<String>> {
+        let conn = rusqlite::Connection::open_with_flags(
+            db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let mut st = conn.prepare("SELECT id FROM sessions")?;
+        st.query_map([], |r| r.get(0))?.collect()
+    };
+    let ids = Arc::new(if db.is_file() {
+        read().unwrap_or_default()
+    } else {
+        HashSet::new()
+    });
+    *cache = Some((db.to_path_buf(), Instant::now(), ids.clone()));
+    ids
+}
+
 #[cfg(test)]
 pub fn parse(paths: &[PathBuf]) -> Result<Option<ParsedSession>> {
     update(paths, &mut State::default())
@@ -58,6 +93,12 @@ pub fn update(paths: &[PathBuf], st: &mut State) -> Result<Option<ParsedSession>
     // keep growing without counting anything twice.
     let mut s = st.s.clone();
     read_workspace(&dir.join("workspace.yaml"), &mut s);
+    // The Copilot desktop app writes here too; its own database lists its sessions.
+    if let Some(db) = dir.parent().and_then(Path::parent)
+        && app_sessions(&db.join("data.db")).contains(&s.external_id)
+    {
+        s.entrypoint = Some("copilot-app".into());
+    }
     if !st.shutdown_seen && st.fallback_output_tokens > 0 {
         let model = if st.current_model.is_empty() {
             "unknown".to_string()

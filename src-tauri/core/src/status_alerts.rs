@@ -18,6 +18,10 @@ pub const PROFILE_KEY: &str = "alerts.profile";
 const CONFIRM_AFTER: Duration = Duration::from_secs(4);
 /// A session missing from the live list this long is forgotten.
 const FORGET_AFTER: Duration = Duration::from_secs(5 * 60);
+/// Still waiting on you this long after an alert, it is announced again.
+const REMIND_AFTER: Duration = Duration::from_secs(15 * 60);
+/// Reminders per wait, so a forgotten session doesn't nag all day.
+const MAX_REMINDERS: u32 = 3;
 
 /// Most urgent first. Mirrored by `URGENCY` in src/status.ts.
 pub const URGENCY: &[&str] = &[
@@ -53,7 +57,8 @@ pub fn label(key: &str) -> &'static str {
     }
 }
 
-fn urgency(key: &str) -> usize {
+/// Where a status sits in `URGENCY`; most urgent is 0.
+pub fn urgency(key: &str) -> usize {
     URGENCY
         .iter()
         .position(|k| *k == key)
@@ -70,12 +75,49 @@ pub struct Alert {
     pub project_path: Option<String>,
     /// The sub-agent, for agent alerts.
     pub agent: Option<String>,
+    /// What the agent wants: the tool awaiting approval, or its question.
+    pub detail: Option<String>,
+    /// Announced again because it's still waiting.
+    pub reminder: bool,
+}
+
+/// What a waiting session wants, for its notification.
+fn detail(s: &LiveSession) -> Option<String> {
+    let tool = s.pending_tool.as_deref().filter(|t| !t.is_empty());
+    let said = || {
+        s.last_message.as_deref().map(|m| {
+            let m = m.trim();
+            // The end of the reply is where the question is.
+            let tail: String = m
+                .chars()
+                .rev()
+                .take(160)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if tail.len() < m.len() {
+                format!("…{}", tail.trim_start())
+            } else {
+                tail
+            }
+        })
+    };
+    match s.status {
+        LiveStatus::NeedsPermission | LiveStatus::MaybeBlocked => {
+            tool.map(|t| format!("Wants to use {t}"))
+        }
+        LiveStatus::Asking | LiveStatus::Failed => said(),
+        _ => None,
+    }
 }
 
 struct Seen {
     status: LiveStatus,
     /// A new status seen, and since when; announced once it has held.
     pending: Option<(LiveStatus, Instant)>,
+    /// When the current wait was last announced, and how many reminders so far.
+    alerted: Option<(Instant, u32)>,
     agents: HashMap<String, AgentLiveStatus>,
     last_seen: Instant,
 }
@@ -108,8 +150,11 @@ impl Tracker {
                 session_id: s.id.clone(),
                 title: s.title.clone(),
                 project_path: s.project_path.clone(),
+                detail: agent.is_none().then(|| detail(s)).flatten(),
                 agent,
+                reminder: false,
             };
+            let waiting = s.status.group() == crate::live::Group::Awaiting;
             let Some(prev) = map.get_mut(&s.id).filter(|_| !first) else {
                 // Unseen after the baseline: it comes from idle, so one that
                 // appears already waiting on you still alerts.
@@ -120,6 +165,7 @@ impl Tracker {
                     Seen {
                         status,
                         pending,
+                        alerted: None,
                         agents,
                         last_seen: now,
                     },
@@ -129,12 +175,24 @@ impl Tracker {
             prev.last_seen = now;
             if s.status == prev.status {
                 prev.pending = None;
+                // Still waiting on you: remind, a few times.
+                if let Some((at, n)) = prev.alerted.filter(|_| waiting)
+                    && n < MAX_REMINDERS
+                    && now.duration_since(at) >= REMIND_AFTER
+                {
+                    prev.alerted = Some((now, n + 1));
+                    out.push(Alert {
+                        reminder: true,
+                        ..alert(s.status.as_str(), None)
+                    });
+                }
             } else {
                 match &prev.pending {
                     Some((p, since)) if *p == s.status => {
                         if now.duration_since(*since) >= CONFIRM_AFTER {
                             prev.status = s.status;
                             prev.pending = None;
+                            prev.alerted = waiting.then_some((now, 0));
                             out.push(alert(s.status.as_str(), None));
                         }
                     }
@@ -256,7 +314,7 @@ impl Default for Profile {
             rules: BTreeMap::from([
                 ("asking".into(), rule(Some("chime"), true)),
                 ("needs_permission".into(), rule(Some("knock"), true)),
-                ("maybe_blocked".into(), rule(Some("ping"), false)),
+                ("maybe_blocked".into(), rule(Some("ping"), true)),
                 ("done".into(), rule(Some("rise"), false)),
                 ("failed".into(), rule(Some("fall"), true)),
                 ("agent_failed".into(), rule(None, false)),
@@ -348,6 +406,49 @@ mod tests {
     }
 
     #[test]
+    fn reminds_while_still_waiting_and_says_what_it_wants() {
+        let mut t = Tracker::default();
+        let t0 = Instant::now();
+        let at = |m: u64| t0 + Duration::from_secs(m * 60);
+        let ask = || LiveSession {
+            last_message: Some("Done with the plan. Should I also migrate the old tables?".into()),
+            ..s("a", "asking")
+        };
+        t.update_at([s("a", "working")].iter(), t0);
+        t.update_at([ask()].iter(), at(1));
+        let first = t.update_at([ask()].iter(), at(2));
+        assert_eq!(first.len(), 1);
+        assert!(!first[0].reminder);
+        assert!(
+            first[0]
+                .detail
+                .as_deref()
+                .unwrap()
+                .ends_with("migrate the old tables?")
+        );
+        assert!(t.update_at([ask()].iter(), at(10)).is_empty());
+        let mut reminders = 0;
+        for m in (17..120).step_by(1) {
+            reminders += t
+                .update_at([ask()].iter(), at(m))
+                .iter()
+                .filter(|a| a.reminder)
+                .count();
+        }
+        assert_eq!(reminders, MAX_REMINDERS as usize);
+        // Answered, then waiting again: a fresh alert.
+        t.update_at([s("a", "working")].iter(), at(200));
+        t.update_at([s("a", "working")].iter(), at(201));
+        let perm = LiveSession {
+            pending_tool: Some("Bash".into()),
+            ..s("a", "needs_permission")
+        };
+        t.update_at([perm.clone()].iter(), at(202));
+        let out = t.update_at([perm].iter(), at(203));
+        assert_eq!(out[0].detail.as_deref(), Some("Wants to use Bash"));
+    }
+
+    #[test]
     fn announces_held_changes_once_after_a_baseline() {
         let mut t = Tracker::default();
         let t0 = Instant::now();
@@ -411,6 +512,8 @@ mod tests {
                 title: None,
                 project_path: None,
                 agent: None,
+                detail: None,
+                reminder: false,
             },
             Alert {
                 key: "asking".into(),
@@ -418,6 +521,8 @@ mod tests {
                 title: None,
                 project_path: None,
                 agent: None,
+                detail: None,
+                reminder: false,
             },
         ];
         let mut sorted = alerts.clone();

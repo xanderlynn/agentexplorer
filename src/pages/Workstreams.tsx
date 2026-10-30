@@ -30,7 +30,7 @@ const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: str
   done: { icon: CircleCheck, className: "text-emerald-400", label: "Done" },
   doing: { icon: LoaderCircle, className: "text-sky-400", label: "In progress" },
   yours: { icon: CircleAlert, className: "text-amber-400", label: "Needs you" },
-  blocked: { icon: Lock, className: "text-zinc-500", label: "Waiting on another task" },
+  blocked: { icon: Lock, className: "text-zinc-500", label: "Blocked" },
   todo: { icon: Circle, className: "text-zinc-600", label: "Not started" },
 };
 
@@ -418,7 +418,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 <div className="mb-1 flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-zinc-200">{session.title ?? "Untitled session"}</span>
                   <StatusBadge status={session.status} size="xs" />
-                  <SourceBadge source={session.source} />
+                  <SourceBadge source={session.source} entrypoint={session.entrypoint} />
                   <button className="ml-auto shrink-0 text-xs text-zinc-500 hover:text-zinc-200" onClick={() => onOpen(session.id)}>
                     Open
                   </button>
@@ -634,7 +634,7 @@ function SessionPicker({
                       .join(" · ")}
                   </span>
                 </span>
-                <SourceBadge source={s.source} />
+                <SourceBadge source={s.source} entrypoint={s.entrypoint} />
               </label>
             </li>
           ))}

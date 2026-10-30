@@ -114,7 +114,7 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
         {show("awaiting") && <section aria-labelledby="awaiting">
           <h2 id="awaiting" className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-200">
             Awaiting you <span className="tabular-nums text-zinc-500">{awaiting.length}</span>
-            <span className="text-xs font-normal text-zinc-500">· longest wait first</span>
+            <span className="text-xs font-normal text-zinc-500">· most urgent first, then longest wait</span>
           </h2>
           {awaiting.length === 0 ? (
             <div className="rounded-xl border border-dashed border-zinc-800 px-4 py-3 text-sm text-zinc-500">Nothing is waiting on you.</div>
@@ -227,7 +227,7 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
             </span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
-            <SourceBadge source={s.source} />
+            <SourceBadge source={s.source} entrypoint={s.entrypoint} />
             <span>{projectName(s.projectPath)}</span>
             {s.gitBranch && <span>· {s.gitBranch}</span>}
             {s.agents.length > 0 && <TeamStack agents={s.agents} />}
