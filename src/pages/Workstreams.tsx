@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Send,
   Star,
   Trash2,
   User,
@@ -293,6 +294,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
 function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; onOpen: (id: string) => void }) {
   const [sel, setSel] = useState<string | null>(ws.tasks.find((t) => t.status === "in_progress")?.key ?? null);
   const [adding, setAdding] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const add = useWsChange((ids: string[]) => api.addToWorkstream(ws.key, ids));
@@ -372,6 +374,11 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
         <div className="flex shrink-0 flex-col items-end gap-2">
           <Avatars ws={ws} max={8} />
           <div className="flex items-center gap-2">
+            {ws.sourceUrl && (
+              <Button size="sm" onClick={() => setSharing(true)}>
+                <Send size={13} /> Share progress
+              </Button>
+            )}
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus size={13} /> Add sessions
             </Button>
@@ -392,6 +399,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
         </div>
       </div>
       <ErrorNote error={rename.error ?? del.error ?? remove.error ?? sync.error} />
+      {sharing && ws.sourceUrl && <ShareDialog ws={ws} onClose={() => setSharing(false)} />}
       {adding && (
         <SessionPicker
           heading={`Add sessions to ${ws.title}`}
@@ -522,6 +530,7 @@ function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: stri
     mutationFn: (kind: TaskKind | null) => api.setTaskKind(t.key, kind),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["workstreams"] }),
   });
+  const label = useMutation({ mutationFn: (kind: TaskKind) => api.labelItem(t.key, kind) });
   const st = STATE[taskState(t)];
   return (
     <Card title="Task">
@@ -593,8 +602,13 @@ function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: stri
             Reset
           </Button>
         )}
+        {t.url && t.reason === "Set by you" && (
+          <Button size="sm" variant="ghost" busy={label.isPending} onClick={() => label.mutate(t.kind)} title="Add the agent or human label in the tracker, so everyone sees it">
+            {label.isSuccess ? "Labelled" : `Label it "${t.kind}" in ${trackerName(t.url)}`}
+          </Button>
+        )}
       </div>
-      <ErrorNote error={set.error} />
+      <ErrorNote error={set.error ?? label.error} />
     </Card>
   );
 }
@@ -786,5 +800,64 @@ function Evidence({ s }: { s: Workstream["sessions"][number] | undefined }) {
         {parts.length ? `${parts.join(", ")} in its session` : "Only the agent's word: no commits or PR in its session"}
       </dd>
     </>
+  );
+}
+
+/**
+ * Shares progress on the epic: Tilly drafts a comment from the workstream,
+ * you read and edit it, and only "Post" sends it, as you.
+ */
+function ShareDialog({ ws, onClose }: { ws: Workstream; onClose: () => void }) {
+  const draft = useQuery({ queryKey: ["progressReport", ws.key], queryFn: () => api.progressReport(ws.key), staleTime: 0 });
+  const [text, setText] = useState<string | null>(null);
+  const post = useMutation({ mutationFn: (body: string) => api.postProgress(ws.key, body) });
+  const body = text ?? draft.data ?? "";
+  const where = trackerName(ws.sourceUrl ?? "");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={() => !post.isPending && onClose()} />
+      <div className="relative w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl">
+        <h2 id="share-title" className="text-base font-semibold text-zinc-50">Share progress on {where}</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          A comment on the epic, posted as you with your {where === "GitHub" ? "gh" : "az"} sign-in, so your team sees what you see. Edit it as you like; nothing is sent until you
+          press Post.
+        </p>
+        {post.isSuccess ? (
+          <div className="mt-4 space-y-3 text-sm text-zinc-300">
+            <p>Posted.</p>
+            {post.data && (
+              <Button size="sm" onClick={() => api.openTrackerLink(post.data)}>
+                <ExternalLink size={13} /> Open the comment
+              </Button>
+            )}
+            <div className="flex justify-end">
+              <Button size="sm" variant="primary" onClick={onClose}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <textarea
+              value={body}
+              onChange={(e) => setText(e.target.value)}
+              rows={14}
+              aria-label="Comment"
+              className={cx(inputClass, "mt-3 font-mono text-xs")}
+              placeholder={draft.isLoading ? "Drafting…" : ""}
+            />
+            <ErrorNote error={draft.error ?? post.error} />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={onClose} disabled={post.isPending}>
+                Cancel
+              </Button>
+              <Button size="sm" variant="primary" busy={post.isPending} disabled={!body.trim()} onClick={() => post.mutate(body)}>
+                <Send size={13} /> Post to {where}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

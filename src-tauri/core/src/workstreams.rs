@@ -956,6 +956,103 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
     Ok(())
 }
 
+/// A progress comment for an imported workstream's epic, in Markdown, for
+/// you to read (and edit) before Tilly posts it. No costs: those are yours.
+pub fn progress_report(conn: &Connection, key: &str) -> Result<String> {
+    let ws = workstreams(conn, 0)?
+        .into_iter()
+        .find(|w| w.key == key)
+        .ok_or(NotFound("Workstream"))?;
+    let c = &ws.counts;
+    let total = c.done + c.in_progress + c.pending;
+    let mut out = format!("### Progress\n\n**{} of {total} done**", c.done);
+    if c.in_progress > 0 {
+        out.push_str(&format!(", {} in progress", c.in_progress));
+    }
+    if c.decisions > 0 {
+        out.push_str(&format!(", {} waiting on a person", c.decisions));
+    }
+    out.push_str(".\n\n");
+    let items: Vec<&WsTask> = ws
+        .tasks
+        .iter()
+        .filter(|t| t.session_id.is_empty())
+        .collect();
+    for t in &items {
+        let indent = "  ".repeat(t.depth as usize);
+        let mark = if t.status == TaskStatus::Done {
+            "x"
+        } else {
+            " "
+        };
+        let id = t
+            .key
+            .rsplit(':')
+            .next()
+            .filter(|k| k.chars().all(|c| c.is_ascii_digit()));
+        let mut line = format!("{indent}- [{mark}] {}", t.title);
+        if let Some(n) = id {
+            line.push_str(&format!(" (#{n})"));
+        }
+        let state = match t.status {
+            TaskStatus::InProgress => Some("in progress".to_string()),
+            TaskStatus::Blocked => Some("blocked".into()),
+            TaskStatus::Done => None,
+            _ if t.kind == TaskKind::Human => Some(match &t.agent {
+                Some(who) => format!("waiting on {who}"),
+                None => "needs a person".into(),
+            }),
+            _ => None,
+        };
+        let who = if t.kind == TaskKind::Agent {
+            "agent"
+        } else {
+            "person"
+        };
+        line.push_str(&format!(" · {who}"));
+        if let Some(s) = state {
+            line.push_str(&format!(", {s}"));
+        }
+        if !t.sessions.is_empty() {
+            line.push_str(&format!(
+                " · {} agent session{}",
+                t.sessions.len(),
+                if t.sessions.len() == 1 { "" } else { "s" }
+            ));
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let ms: i64 = ws.sessions.iter().map(|s| s.active_ms).sum();
+    let commits: i64 = ws.sessions.iter().map(|s| s.commits).sum();
+    let prs: HashSet<&String> = ws.sessions.iter().flat_map(|s| &s.prs).collect();
+    if !ws.sessions.is_empty() {
+        out.push_str(&format!(
+            "\nAgents: {} session{}, {} of work, {commits} commit{}, {} pull request{}.\n",
+            ws.sessions.len(),
+            if ws.sessions.len() == 1 { "" } else { "s" },
+            crate::util::human_duration(ms),
+            if commits == 1 { "" } else { "s" },
+            prs.len(),
+            if prs.len() == 1 { "" } else { "s" },
+        ));
+    }
+    out.push_str("\n_Posted from Tilly._\n");
+    Ok(out)
+}
+
+/// The tracker link of an epic item, by its task key (`item:<ws>:<item>`).
+pub fn item_url(conn: &Connection, task_key: &str) -> Result<String> {
+    conn.query_row(
+        "SELECT url FROM workstream_items WHERE 'item:' || ws_key || ':' || item_key = ?1",
+        [task_key],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .optional()?
+    .flatten()
+    .ok_or_else(|| NotFound("Tracker item").into())
+}
+
 /// Fetches an imported workstream's epic and syncs it. A failure is kept on
 /// the workstream, so its card can say why it's out of date.
 pub fn sync_from_tracker(conn: &Connection, key: &str) -> Result<()> {
@@ -1572,6 +1669,47 @@ mod tests {
         assert_eq!(c("Refactor the secrets loader"), TaskKind::Agent);
         assert_eq!(c("Provide the staging password"), TaskKind::Human);
         assert_eq!(c("Disapprove nothing; approve the plan"), TaskKind::Human);
+    }
+
+    #[test]
+    fn writes_a_progress_report() {
+        use crate::trackers::Item;
+        let conn = crate::db::open_in_memory().unwrap();
+        let it = |k: &str, title: &str, status, labels: &[&str], who: Option<&str>| Item {
+            key: k.into(),
+            title: title.into(),
+            status,
+            labels: labels.iter().map(|l| l.to_string()).collect(),
+            assignee: who.map(String::from),
+            ..Default::default()
+        };
+        let epic = Epic {
+            title: "Checkout".into(),
+            url: "https://github.com/o/r/issues/1".into(),
+            items: vec![
+                it("2", "Swap the SDK", TaskStatus::Done, &["agent"], None),
+                it(
+                    "3",
+                    "Approve rollout",
+                    TaskStatus::Pending,
+                    &["human"],
+                    Some("sam"),
+                ),
+            ],
+            ..Default::default()
+        };
+        let key = import(&conn, &epic, &epic.url).unwrap();
+        let r = progress_report(&conn, &key).unwrap();
+        assert!(r.contains("**1 of 2 done**"), "{r}");
+        assert!(r.contains("- [x] Swap the SDK (#2) · agent\n"), "{r}");
+        assert!(
+            r.contains("- [ ] Approve rollout (#3) · person, waiting on sam\n"),
+            "{r}"
+        );
+        assert!(!r.contains('$'));
+        // Items without a link have nothing to label.
+        assert!(item_url(&conn, &format!("item:{key}:2")).is_err());
+        assert_eq!(crate::util::human_duration(380 * 60_000), "6h 20m");
     }
 
     #[test]

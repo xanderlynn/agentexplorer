@@ -45,6 +45,17 @@ impl std::fmt::Display for NotFound {
 
 impl std::error::Error for NotFound {}
 
+/// "6h 20m", "45m" or "30s".
+pub fn human_duration(ms: i64) -> String {
+    let m = ms / 60_000;
+    match (m / 60, m % 60) {
+        (0, 0) => format!("{}s", ms / 1000),
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }

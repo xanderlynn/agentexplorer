@@ -232,6 +232,153 @@ pub fn fetch(r: &Ref) -> Result<Epic> {
     }
 }
 
+/// Posts `body` (Markdown) as a comment on the epic or item at `r`, as you,
+/// and returns the comment's link. Only on your say-so.
+pub fn comment(r: &Ref, body: &str) -> Result<String> {
+    match r {
+        Ref::GitHub {
+            owner,
+            repo,
+            number,
+        } => {
+            let out = run(
+                &gh()?,
+                &[
+                    "api",
+                    "-X",
+                    "POST",
+                    &format!("repos/{owner}/{repo}/issues/{number}/comments"),
+                    "-f",
+                    &format!("body={body}"),
+                ],
+            )?;
+            Ok(out["html_url"].as_str().unwrap_or_default().to_string())
+        }
+        Ref::Ado { org, project, id } => {
+            let az = az()?;
+            let payload = serde_json::json!({ "text": markdown_to_html(body) }).to_string();
+            run(
+                &az,
+                &[
+                    "rest",
+                    "--method",
+                    "post",
+                    "--resource",
+                    ADO_RESOURCE,
+                    "--uri",
+                    &format!(
+                        "{org}/{project}/_apis/wit/workItems/{id}/comments?api-version=7.1-preview.4"
+                    ),
+                    "--headers",
+                    "Content-Type=application/json",
+                    "--body",
+                    &payload,
+                    "-o",
+                    "json",
+                ],
+            )?;
+            Ok(ado_edit(org, project, *id))
+        }
+    }
+}
+
+/// Labels (GitHub) or tags (Azure DevOps) the item at `r` as `agent` or
+/// `human` work, removing the other, so your choice reaches the tracker.
+pub fn label_kind(r: &Ref, human: bool) -> Result<()> {
+    let (add, drop) = if human {
+        ("human", "agent")
+    } else {
+        ("agent", "human")
+    };
+    match r {
+        Ref::GitHub {
+            owner,
+            repo,
+            number,
+        } => {
+            let gh = gh()?;
+            let base = format!("repos/{owner}/{repo}/issues/{number}/labels");
+            run(
+                &gh,
+                &["api", "-X", "POST", &base, "-f", &format!("labels[]={add}")],
+            )?;
+            // Not labelled that way is fine.
+            let _ = run(&gh, &["api", "-X", "DELETE", &format!("{base}/{drop}")]);
+            Ok(())
+        }
+        Ref::Ado { org, project, id } => {
+            let az = az()?;
+            let api = format!("{org}/{project}/_apis/wit/workitems/{id}?api-version=7.1");
+            let item = az_get(&az, &api)?;
+            let mut tags: Vec<String> = item["fields"]["System.Tags"]
+                .as_str()
+                .unwrap_or("")
+                .split(';')
+                .map(|t| t.trim().to_string())
+                .filter(|t| {
+                    !t.is_empty() && !t.eq_ignore_ascii_case(drop) && !t.eq_ignore_ascii_case(add)
+                })
+                .collect();
+            tags.push(add.into());
+            let patch = serde_json::json!([{ "op": "add", "path": "/fields/System.Tags", "value": tags.join("; ") }]).to_string();
+            run(
+                &az,
+                &[
+                    "rest",
+                    "--method",
+                    "patch",
+                    "--resource",
+                    ADO_RESOURCE,
+                    "--uri",
+                    &api,
+                    "--headers",
+                    "Content-Type=application/json-patch+json",
+                    "--body",
+                    &patch,
+                    "-o",
+                    "json",
+                ],
+            )?;
+            Ok(())
+        }
+    }
+}
+
+/// Just enough Markdown for an Azure DevOps comment, which takes HTML.
+fn markdown_to_html(md: &str) -> String {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let mut out = String::new();
+    let mut in_list = false;
+    for line in md.lines() {
+        let l = line.trim_end();
+        if let Some(item) = l.strip_prefix("- ") {
+            if !in_list {
+                out.push_str("<ul>");
+                in_list = true;
+            }
+            out.push_str(&format!("<li>{}</li>", esc(item)));
+            continue;
+        }
+        if in_list {
+            out.push_str("</ul>");
+            in_list = false;
+        }
+        if let Some(h) = l.strip_prefix("### ") {
+            out.push_str(&format!("<h3>{}</h3>", esc(h)));
+        } else if !l.is_empty() {
+            out.push_str(&format!("<p>{}</p>", esc(l)));
+        }
+    }
+    if in_list {
+        out.push_str("</ul>");
+    }
+    out
+}
+
 fn gh() -> Result<PathBuf> {
     crate::util::find_program("gh", &[r"C:\Program Files\GitHub CLI\gh.exe"]).ok_or_else(|| {
         anyhow!("Install the GitHub CLI (gh) and run `gh auth login` to import GitHub issues")
@@ -750,6 +897,14 @@ mod tests {
             e.needles
                 .iter()
                 .any(|n| n.text == "AB#12" && n.item.as_deref() == Some("12"))
+        );
+    }
+
+    #[test]
+    fn renders_comments_for_azure_devops() {
+        assert_eq!(
+            markdown_to_html("### Progress\n6 of 8 done <ok>\n- #28 done\n- #34 you\n\nThanks"),
+            "<h3>Progress</h3><p>6 of 8 done &lt;ok&gt;</p><ul><li>#28 done</li><li>#34 you</li></ul><p>Thanks</p>"
         );
     }
 

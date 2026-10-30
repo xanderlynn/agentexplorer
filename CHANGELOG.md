@@ -15,6 +15,7 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - **Updates and rollbacks** in Settings › Updates, and an **Update available** button in the sidebar. Pick any newer release, or the one before yours, and Tilly downloads it, checks its signature, installs it and restarts. Tilly checks GitHub for releases on launch and once a day; you can turn that off.
 - A log file for background errors and failed actions: Settings › Data › **Show log**. Include it when you report a problem.
 
+- **Share progress** on an imported epic: Tilly drafts a comment (what's done, in progress and waiting on a person, item by item, with agent time, commits and PRs, no costs); you edit it, and only Post sends it to GitHub or Azure DevOps, as you. Your agent or human choice for an item can be added as a label (GitHub) or tag (Azure DevOps), so your team sees it too.
 - **What it took**, on each workstream and each epic item: agent time, cost, sessions, commits, pull requests, and how many shipped.
 - **Suggested outcomes**: an unrated session with commits that stood, or a pull request, offers "Looks shipped: 2 commits, PR #11 · Confirm" on Today, so rating is one click. Nothing counts until you confirm. Claude Code's pull request links are now recorded per session.
 - A done task shows its **evidence**, the commits and PRs of its session, or says it's only the agent's word.

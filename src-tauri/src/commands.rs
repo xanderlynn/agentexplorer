@@ -553,6 +553,44 @@ pub async fn import_workstream(state: State<'_, AppState>, url: String) -> CmdRe
     .await
 }
 
+/// A progress comment for an imported epic, to preview and edit.
+#[tauri::command(async)]
+pub fn progress_report(state: State<AppState>, key: String) -> CmdResult<String> {
+    with_db(&state, |c| workstreams::progress_report(c, &key))
+}
+
+/// Posts `body` as a comment on the imported epic, as you, after you've
+/// read it. Returns the comment's link.
+#[tauri::command]
+pub async fn post_progress(
+    state: State<'_, AppState>,
+    key: String,
+    body: String,
+) -> CmdResult<String> {
+    blocking(&state, move |c, _| {
+        let url = workstreams::source_url(c, &key)?;
+        trackers::comment(&trackers::parse(&url)?, &body)
+    })
+    .await
+}
+
+/// Labels (or tags) an epic item as agent or human work in its tracker.
+#[tauri::command]
+pub async fn label_item(
+    state: State<'_, AppState>,
+    task_key: String,
+    kind: workstreams::TaskKind,
+) -> CmdResult<()> {
+    blocking(&state, move |c, _| {
+        let url = workstreams::item_url(c, &task_key)?;
+        trackers::label_kind(
+            &trackers::parse(&url)?,
+            kind == workstreams::TaskKind::Human,
+        )
+    })
+    .await
+}
+
 /// Fetches an imported workstream's epic again.
 #[tauri::command]
 pub async fn sync_workstream(state: State<'_, AppState>, key: String) -> CmdResult<()> {
