@@ -29,11 +29,11 @@ serde_json = "1"
 rusqlite = { version = "0.41", features = ["bundled"] }
 chrono = "0.4"
 anyhow = "1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "native-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "blocking", "native-tls", "system-proxy"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
-tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip", "system-proxy"] }
 semver = "1"
 
 [dev-dependencies]

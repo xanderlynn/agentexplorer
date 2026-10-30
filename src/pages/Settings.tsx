@@ -205,7 +205,7 @@ export default function Settings() {
             />
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            While Tilly runs, workstreams imported from GitHub or Azure DevOps are fetched again this often, and when you come back to the window. Fetching uses your own gh or az sign-in.
+            While Tilly runs, workstreams imported from GitHub or Azure DevOps are fetched again this often, and when you come back to the window. Fetching uses your own gh or az sign-in. The same pass checks, through gh, whether your sessions' pull requests merged, to suggest outcomes; Off stops both.
             Opening one, or Sync, always fetches it.
           </p>
         </Card>

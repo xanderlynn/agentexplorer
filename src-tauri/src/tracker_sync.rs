@@ -58,6 +58,12 @@ pub fn wake(app: &AppHandle) {
 
 fn round(app: &AppHandle, db_path: &Path) -> anyhow::Result<()> {
     let conn = db::open(db_path)?;
+    // Once: scrub secrets from text stored before redaction.
+    match tilly_core::redact::scrub_stored(&conn) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("redacted secrets in {n} stored texts"),
+        Err(e) => tracing::warn!("redact: {e:#}"),
+    }
     // Once a day: compact old session detail, compress and prune the archive.
     if tilly_core::retention::due(&conn) {
         let data_dir = app.state::<crate::AppState>().data_dir.clone();

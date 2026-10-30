@@ -372,6 +372,20 @@ impl ParsedSession {
         }
     }
 
+    /// Strips secrets from what's stored: prompts, the title and the last
+    /// reply.
+    pub fn redact_secrets(&mut self) {
+        for p in &mut self.prompts {
+            crate::redact::in_place(&mut p.text);
+        }
+        for s in [&mut self.title, &mut self.last_message]
+            .into_iter()
+            .flatten()
+        {
+            crate::redact::in_place(s);
+        }
+    }
+
     pub fn note_message(&mut self, text: &str) {
         let t = text.trim();
         if !t.is_empty() {
