@@ -170,4 +170,7 @@ export const urgency = (k: StatusKey) => URGENCY.indexOf(k);
 export const mostUrgent = <K extends StatusKey>(keys: K[]): K | undefined => [...keys].sort((a, b) => urgency(a) - urgency(b))[0];
 
 export const isAwaiting = (s: LiveStatus) => STATUS_GROUP[s] === "awaiting";
+
+/** Waiting on you now: awaiting and not parked (left for hours). */
+export const waitingNow = (s: { status: LiveStatus; parked: boolean }) => isAwaiting(s.status) && !s.parked;
 export const isActive = (s: LiveStatus) => STATUS_GROUP[s] === "active";

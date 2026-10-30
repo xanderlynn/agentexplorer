@@ -6,7 +6,7 @@ import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { FirstRun } from "../components/FirstRun";
 import { StatusBadge } from "../components/status";
-import { STATUS, isActive, isAwaiting, mostUrgent } from "../status";
+import { STATUS, isActive, isAwaiting, mostUrgent, waitingNow } from "../status";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
 import { dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
@@ -38,7 +38,7 @@ export default function Today({
   const unusual = useQuery({ queryKey: ["anomalies", 14], queryFn: () => api.anomalies(14) });
 
   const away = useAway();
-  const waiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
+  const waiting = live.data?.sessions.filter(waitingNow) ?? [];
   // Not finished yet: nothing to rate while it's working or waiting on you.
   const unfinished = new Set(live.data?.sessions.filter((s) => isAwaiting(s.status) || isActive(s.status)).map((s) => s.id));
   const rateable = toRate.data?.filter((s) => !unfinished.has(s.id));

@@ -336,6 +336,13 @@ ALTER TABLE sessions ADD COLUMN prs TEXT NOT NULL DEFAULT '[]';
     r#"
 ALTER TABLE workstream_prefs ADD COLUMN source_kind TEXT;
 "#,
+    // Sessions you dismissed from "waiting on you", until they move again.
+    r#"
+CREATE TABLE dismissed (
+    session_id TEXT PRIMARY KEY,
+    at         INTEGER NOT NULL
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

@@ -149,6 +149,8 @@ pub fn run() {
             commands::save_review,
             commands::get_live,
             commands::get_since,
+            commands::dismiss_session,
+            commands::get_attention,
             commands::take_open_request,
             commands::claude_hook_status,
             commands::set_claude_hook,

@@ -328,6 +328,8 @@ export interface LiveSession {
   agents: LiveAgent[];
   scheduled: number;
   nextRun: number | null;
+  /** Waiting on you for over 3 hours: listed apart, not counted as waiting now. */
+  parked: boolean;
 }
 
 export interface LiveBucket {
@@ -347,7 +349,11 @@ export interface LiveSummary {
   replyP75Ms: number | null;
   replyN: number;
   agentMsToday: number;
+  /** Agent time waiting on you today in waits up to 30 min; longer ones are awayMsToday. */
   waitMsToday: number;
+  awayMsToday: number;
+  /** Sessions waiting on you but parked. */
+  parked: number;
   turnsToday: number;
   agentsDoneToday: number;
   agentsFailedToday: number;
@@ -892,6 +898,8 @@ export const api = {
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
+  dismissSession: (id: string) => call<void>("dismiss_session", { id }),
+  attention: (days: number) => call<Attention>("get_attention", { days }),
   takeOpenRequest: () => call<string | null>("take_open_request"),
   since: (since: number) => call<LiveSession[]>("get_since", { since }),
   teams: () => call<TeamSession[]>("list_teams"),
@@ -959,3 +967,15 @@ export const api = {
   setApiKey: (key: string) => call<void>("set_api_key", { key }),
   clearApiKey: () => call<void>("clear_api_key"),
 };
+
+/** Where your attention goes; see attention.rs. */
+export interface Attention {
+  shortMs: number;
+  awayMs: number;
+  waits: number;
+  awaySpells: number;
+  medianReplyMs: number | null;
+  byHour: { hour: number; shortMs: number; awayMs: number; waits: number }[];
+  projects: { project: string; waitMs: number; waits: number }[];
+  worstHour: number | null;
+}

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChartColumn, Coins, Download, Gauge, Gift, ListChecks, Search, Settings as SettingsIcon, Sparkles, Sun, Trophy, X } from "lucide-react";
 import { api, useLive, useReleases, type LiveSession, type LiveStatus, type LiveSummary, type SessionFilter } from "./api";
-import { STATUS, isActive, isAwaiting, mostUrgent } from "./status";
+import { STATUS, isActive, isAwaiting, mostUrgent, waitingNow } from "./status";
 import { cx } from "./components/ui";
 import { Logo } from "./components/Logo";
 import { SessionDrawer } from "./components/SessionDrawer";
@@ -158,7 +158,7 @@ export default function App() {
   // Finished sessions move to completedToday; the review prompt watches both.
   const tracked = useMemo(() => live.data && [...live.data.sessions, ...live.data.completedToday], [live.data]);
 
-  const awaiting = live.data?.sessions.filter((s) => isAwaiting(s.status)) ?? [];
+  const awaiting = live.data?.sessions.filter(waitingNow) ?? [];
   // The badge takes the most urgent waiting status's colour.
   const urgent = STATUS[mostUrgent(awaiting.map((s) => s.status)) ?? "asking"];
   const go = (p: Page) => {

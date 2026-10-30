@@ -208,6 +208,21 @@ pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<S
     req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
+/// Takes a session off "waiting on you" until it does something new.
+#[tauri::command(async)]
+pub fn dismiss_session(state: State<AppState>, id: String) -> CmdResult<()> {
+    with_db(&state, |c| live::dismiss(c, &id))
+}
+
+/// Where your attention goes: short waits vs away spells, by hour and project.
+#[tauri::command(async)]
+pub fn get_attention(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<tilly_core::attention::Attention> {
+    with_db(&state, |c| tilly_core::attention::attention(c, days))
+}
+
 /// Sessions that finished, failed or started waiting on you since `since`.
 #[tauri::command(async)]
 pub fn get_since(state: State<AppState>, since: i64) -> CmdResult<Vec<live::LiveSession>> {

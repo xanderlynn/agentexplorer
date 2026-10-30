@@ -258,7 +258,7 @@ impl watcher::Sink for AppSink {
         let awaiting = summary
             .sessions
             .iter()
-            .filter(|s| s.status.group() == Group::Awaiting)
+            .filter(|s| s.status.group() == Group::Awaiting && !s.parked)
             .count();
         let text = match (awaiting, summary.working) {
             (0, 0) => "Nothing running".to_string(),
@@ -270,7 +270,7 @@ impl watcher::Sink for AppSink {
         let mut waiting: Vec<_> = summary
             .sessions
             .iter()
-            .filter(|s| s.status.group() == Group::Awaiting)
+            .filter(|s| s.status.group() == Group::Awaiting && !s.parked)
             .collect();
         waiting.sort_by_key(|s| {
             (

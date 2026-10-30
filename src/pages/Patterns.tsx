@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Benchmark, type Patterns as PatternsT } from "../api";
+import { AttentionCard } from "../components/Attention";
 import type { Drill } from "../App";
 import { Card, Empty, ErrorNote, Heuristic, Loading, Meter, OutcomeBadge, PageHeader, RANGE_OPTIONS, Rate, Segmented, SourceBadge } from "../components/ui";
 import { duration, fixed, pct } from "../format";
@@ -42,6 +43,7 @@ export default function Patterns({
   return (
     <>
       {header}
+      <AttentionCard days={days} />
       <Card title="Activity over the last year" action={<HeatLegend label="active minutes" />}>
         <Calendar days={p.calendar} onDay={(date) => drill({ label: `sessions on ${date}`, date })} />
       </Card>

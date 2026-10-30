@@ -20,6 +20,12 @@ const STALE_AFTER_MS: i64 = 30 * 60_000;
 /// A hook report this close before the session's last log line still
 /// counts: the line asking for the tool is written just before the prompt.
 const HOOK_SLACK_MS: i64 = 2_000;
+/// Waiting on you longer than this, a session is parked: still listed, so
+/// an overnight question isn't lost, but no longer counted as waiting now.
+pub const PARK_AFTER_MS: i64 = 3 * 3_600_000;
+/// A wait longer than this was an away spell (a meeting, the night), not a
+/// slow reply, and is counted apart.
+pub const AWAY_AFTER_MS: i64 = 30 * 60_000;
 /// A question or permission prompt stays waiting on you this long, so one
 /// left overnight is still there in the morning.
 pub const AWAIT_HOLD_MS: i64 = 24 * 3_600_000;
@@ -226,6 +232,8 @@ pub struct LiveSession {
     /// Scheduled jobs still to come, and the next one-off run.
     pub scheduled: usize,
     pub next_run: Option<i64>,
+    /// Waiting on you for over `PARK_AFTER_MS`: listed apart and not counted.
+    pub parked: bool,
 }
 
 /// One bucket of today's charts.
@@ -256,7 +264,12 @@ pub struct LiveSummary {
     pub reply_p75_ms: Option<i64>,
     pub reply_n: usize,
     pub agent_ms_today: i64,
+    /// Agent time spent waiting on you today, in waits of up to
+    /// `AWAY_AFTER_MS`; longer ones are `away_ms_today`.
     pub wait_ms_today: i64,
+    pub away_ms_today: i64,
+    /// Sessions waiting on you but parked.
+    pub parked: usize,
     pub turns_today: usize,
     pub agents_done_today: usize,
     pub agents_failed_today: usize,
@@ -386,9 +399,10 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
                 active_ms, last_message, outcome, timeline, last_context,
                 team, pending_tool, turn_started_at, failed, rating,
                 input_tokens + output_tokens + cache_read_tokens + cache_write_tokens, entrypoint,
-                h.at, h.detail
+                h.at, h.detail, x.at
          FROM sessions
          LEFT JOIN hook_events h ON h.external_id = sessions.external_id AND h.kind = 'permission'
+         LEFT JOIN dismissed x ON x.session_id = sessions.id
          WHERE ended_at >= ?1 ORDER BY ended_at DESC LIMIT 300",
     )?;
     let rows: Vec<Row> = stmt
@@ -433,10 +447,17 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
                 status = LiveStatus::NeedsPermission;
                 pending_tool = r.get::<_, Option<String>>(21)?.or(pending_tool);
             }
-            let status_since = match status {
+            let mut status_since = match status {
                 LiveStatus::Working | LiveStatus::LongTask => turn_started.unwrap_or(ended),
                 _ => prompted.unwrap_or(ended),
             };
+            // You dismissed it since it last moved: it's not waiting on you.
+            let dismissed: Option<i64> = r.get(22)?;
+            if status.group() == Group::Awaiting && dismissed.is_some_and(|d| d >= status_since) {
+                status = LiveStatus::Done;
+                status_since = dismissed.unwrap_or(status_since);
+            }
+            let parked = status.group() == Group::Awaiting && now - status_since > PARK_AFTER_MS;
             let agents = team
                 .agents
                 .iter()
@@ -472,11 +493,22 @@ fn rows(conn: &Connection, since: i64, now: i64) -> Result<Vec<Row>> {
                 agents,
                 scheduled,
                 next_run,
+                parked,
             };
             Ok((session, spans, team))
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
+}
+
+/// Takes a session off "waiting on you" until it does something new.
+pub fn dismiss(conn: &Connection, session_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO dismissed (session_id, at) VALUES (?1, ?2)
+         ON CONFLICT(session_id) DO UPDATE SET at = excluded.at",
+        rusqlite::params![session_id, now_ms()],
+    )?;
+    Ok(())
 }
 
 /// What changed while you were away: sessions active since `since` that
@@ -499,7 +531,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
     // Today's statistics, from every session active today.
     let clip = |a: i64, b: i64| (b.min(now) - a.max(midnight)).max(0);
     let mut replies: Vec<i64> = Vec::new();
-    let (mut agent_ms_today, mut wait_ms_today, mut turns_today) = (0, 0, 0);
+    let (mut agent_ms_today, mut wait_ms_today, mut away_ms_today, mut turns_today) = (0, 0, 0, 0);
     let n_buckets = ((now - midnight) / BUCKET_MS + 1).max(1) as usize;
     let mut buckets: Vec<Bucket> = (0..n_buckets)
         .map(|i| Bucket {
@@ -516,7 +548,11 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             let (i, j) = (bucket_of(a), bucket_of(b));
             if kind == 0 {
                 // A wait starts when a turn finished: one per answered turn.
-                wait_ms_today += clip(a, b);
+                if b - a > AWAY_AFTER_MS {
+                    away_ms_today += clip(a, b);
+                } else {
+                    wait_ms_today += clip(a, b);
+                }
                 replies.push(b - a);
                 wait[i..=j].iter_mut().for_each(|x| *x = true);
                 if a >= midnight {
@@ -537,9 +573,14 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             turns_today += 1;
             buckets[bucket_of(s.ended_at)].done += 1;
         }
-        // Waiting on you right now: that wait counts up to now.
-        if s.status.group() == Group::Awaiting {
-            wait_ms_today += clip(s.status_since, now);
+        // Waiting on you right now: that wait counts up to now, unless it
+        // was left so long it's parked.
+        if s.status.group() == Group::Awaiting && !s.parked {
+            if now - s.status_since > AWAY_AFTER_MS {
+                away_ms_today += clip(s.status_since, now);
+            } else {
+                wait_ms_today += clip(s.status_since, now);
+            }
         }
         // A session working or awaiting you right now counts up to now.
         let now_in = match s.status.group() {
@@ -576,14 +617,14 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         reply_histogram[i] += 1;
     }
 
-    let awaiting = |s: &LiveSession| s.status.group() == Group::Awaiting;
+    let awaiting = |s: &LiveSession| s.status.group() == Group::Awaiting && !s.parked;
     let (mut live, mut completed) = (Vec::new(), Vec::new());
     for (s, _, _) in all.drain(..) {
         let done = s.status.group() == Group::Completed;
         if done && s.ended_at >= midnight {
             completed.push(s);
         } else if now - s.ended_at < LIVE_WINDOW_MS
-            || awaiting(&s)
+            || s.status.group() == Group::Awaiting
             || (s.status.is_live() && s.status != LiveStatus::Done)
         {
             live.push(s);
@@ -596,6 +637,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
             .filter(|s| s.status.group() == Group::Active)
             .count(),
         awaiting: live.iter().filter(|s| awaiting(s)).count(),
+        parked: live.iter().filter(|s| s.parked).count(),
         agents_running: live
             .iter()
             .flat_map(|s| &s.agents)
@@ -606,6 +648,7 @@ pub fn summary(conn: &Connection) -> Result<LiveSummary> {
         reply_n: replies.len(),
         agent_ms_today,
         wait_ms_today,
+        away_ms_today,
         turns_today,
         agents_done_today,
         agents_failed_today,
@@ -763,6 +806,36 @@ mod tests {
         // Answered: the log moved past the prompt.
         session(now - 1_000);
         assert_ne!(status().status, LiveStatus::NeedsPermission);
+    }
+
+    #[test]
+    fn parks_old_waits_and_honours_dismissals() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let now = now_ms();
+        let asking = |id: &str, ended: i64| {
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (id, source, external_id, file_path, started_at, ended_at, active_ms,
+                   user_turns, last_event, last_message, ingested_at)
+                 VALUES (?1, 'claude_code', ?1, '/f', ?2, ?2, 0, 1, 'turn_ended', 'Should I open the PR?', ?2)",
+                rusqlite::params![id, ended],
+            )
+            .unwrap();
+        };
+        asking("old", now - 5 * 3_600_000);
+        asking("new", now - 60_000);
+        let s = summary(&conn).unwrap();
+        let get = |s: &LiveSummary, id: &str| s.sessions.iter().find(|x| x.id == id).cloned();
+        // Left overnight: still listed, but parked and not counted.
+        let old = get(&s, "old").unwrap();
+        assert_eq!((old.status, old.parked), (LiveStatus::Asking, true));
+        assert_eq!((s.awaiting, s.parked), (1, 1));
+        // Dismissed: no longer waiting on you, until it moves again.
+        dismiss(&conn, "new").unwrap();
+        let s = summary(&conn).unwrap();
+        assert_eq!(s.awaiting, 0);
+        assert!(get(&s, "new").is_none_or(|x| x.status.group() != Group::Awaiting));
+        asking("new", now + 1_000);
+        assert_eq!(summary(&conn).unwrap().awaiting, 1);
     }
 
     #[test]

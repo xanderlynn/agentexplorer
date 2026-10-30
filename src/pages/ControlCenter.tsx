@@ -1,15 +1,15 @@
 import { GoToAgent } from "../components/GoToAgent";
 import { memo, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowRight, ChevronDown, Radio, TriangleAlert, X } from "lucide-react";
 import { api, useLive, type LiveBucket, type LiveSession, type LiveSummary, type Source } from "../api";
 import { StatusAvatar, StatusBadge, TeamStack } from "../components/status";
 import { Swimlanes } from "../components/Swimlanes";
-import { Card, Empty, ErrorNote, Meter, PageHeader, Segmented, SourceBadge, Stat, cx } from "../components/ui";
+import { Button, Card, Empty, ErrorNote, Meter, PageHeader, Segmented, SourceBadge, Stat, cx } from "../components/ui";
 import { MODE_LABEL, OUTCOME_CLASS, OUTCOME_LABEL, SMART_ZONE_DEFAULT, SOURCE_LABEL, SOURCE_OPTIONS, compact, duration, projectName } from "../format";
 import { MIN_N } from "../stats";
-import { STATUS, isActive, isAwaiting, urgency } from "../status";
+import { STATUS, isActive, isAwaiting, urgency, waitingNow } from "../status";
 import { chart } from "../theme";
 
 type ToolFilter = Source | "all";
@@ -91,8 +91,10 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
   const show = (part: Exclude<Focus, null>) => focus == null || focus === part || focus === "agents";
   const sessions = d.sessions.filter(keep);
   const awaiting = sessions
-    .filter((s) => isAwaiting(s.status))
+    .filter(waitingNow)
     .sort((a, b) => urgency(a.status) - urgency(b.status) || a.statusSince - b.statusSince);
+  // Left for hours: kept, so an overnight question isn't lost, but apart.
+  const parked = sessions.filter((s) => isAwaiting(s.status) && s.parked).sort((a, b) => b.statusSince - a.statusSince);
   const working = sessions.filter((s) => isActive(s.status)).sort((a, b) => urgency(a.status) - urgency(b.status) || b.endedAt - a.endedAt);
   const scheduled = sessions.filter((s) => s.status === "scheduled");
   const idle = sessions.filter((s) => s.status === "stale" || s.status === "done" || s.status === "ended");
@@ -126,6 +128,7 @@ export default function ControlCenter({ onOpen }: { onOpen: (id: string) => void
               ))}
             </ul>
           )}
+          {parked.length > 0 && <Parked sessions={parked} onOpen={onOpen} />}
         </section>}
 
         <div className={cx("grid gap-4", focus === "working" || focus === "completed" ? "" : "lg:grid-cols-3")}>
@@ -177,7 +180,7 @@ function Kpis({ d, focus, setFocus }: { d: LiveSummary; focus: Focus; setFocus: 
   // Only the buckets up to now, last 3 hours, for sparklines.
   const recent = d.buckets.slice(-12);
   // The earliest a waiting session started waiting: the longest wait.
-  const oldest = d.sessions.filter((s) => isAwaiting(s.status)).reduce((m, s) => Math.min(m, s.statusSince), Infinity);
+  const oldest = d.sessions.filter(waitingNow).reduce((m, s) => Math.min(m, s.statusSince), Infinity);
   const share = d.agentMsToday + d.waitMsToday > 0 ? d.waitMsToday / (d.agentMsToday + d.waitMsToday) : null;
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -195,7 +198,15 @@ function Kpis({ d, focus, setFocus }: { d: LiveSummary; focus: Focus; setFocus: 
           </>
         }
       />
-      <Stat label="Waited on you" value={duration(d.waitMsToday)} hint={share != null ? `${Math.round(share * 100)}% of today's agent time` : "today"} />
+      <Stat
+        label="Waited on you"
+        value={duration(d.waitMsToday)}
+        hint={
+          [share != null ? `${Math.round(share * 100)}% of today's agent time` : "today", d.awayMsToday > 0 ? `plus ${duration(d.awayMsToday)} while you were away` : null]
+            .filter(Boolean)
+            .join(" · ")
+        }
+      />
       <Stat
         label="Your reply time"
         value={d.replyN >= MIN_N && d.replyMedianMs != null ? duration(d.replyMedianMs) : "—"}
@@ -240,7 +251,10 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
         </span>
       </button>
       {/* Beside the card, not in it: a button can't hold another. */}
-      <GoToAgent id={s.id} className="absolute bottom-3 right-3" />
+      <span className="absolute bottom-3 right-3 flex items-start gap-2">
+        <DismissButton id={s.id} />
+        <GoToAgent id={s.id} />
+      </span>
     </li>
   );
 });
@@ -418,5 +432,53 @@ function Skeleton() {
         ))}
       </div>
     </div>
+  );
+}
+
+/** Takes a session off "waiting on you" until the agent does something new. */
+function DismissButton({ id }: { id: string }) {
+  const qc = useQueryClient();
+  const dismiss = useMutation({ mutationFn: () => api.dismissSession(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["live"] }) });
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      busy={dismiss.isPending}
+      title="Not waiting on me: hide it until the agent does something new"
+      onClick={(e) => {
+        e.stopPropagation();
+        dismiss.mutate();
+      }}
+    >
+      Dismiss
+    </Button>
+  );
+}
+
+/**
+ * Sessions left waiting for hours: overnight questions, abandoned prompts.
+ * Kept so nothing is lost, but folded away and not counted as waiting.
+ */
+function Parked({ sessions, onOpen }: { sessions: LiveSession[]; onOpen: (id: string) => void }) {
+  return (
+    <details className="mt-3 rounded-xl border border-zinc-800/80 px-3 py-2">
+      <summary className="cursor-pointer text-sm text-zinc-400">
+        Parked <span className="tabular-nums text-zinc-500">{sessions.length}</span>
+        <span className="text-xs text-zinc-500"> · left waiting over 3 hours, not counted as waiting</span>
+      </summary>
+      <ul className="mt-2 divide-y divide-zinc-800/70">
+        {sessions.map((s) => (
+          <li key={s.id} className="flex items-center gap-3 py-1.5 text-sm">
+            <button className="min-w-0 flex-1 truncate text-left text-zinc-300 hover:text-zinc-100" onClick={() => onOpen(s.id)}>
+              {s.title ?? "Untitled session"}
+            </button>
+            <span className="shrink-0 text-xs text-zinc-500">
+              <Since from={s.statusSince} />
+            </span>
+            <DismissButton id={s.id} />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
