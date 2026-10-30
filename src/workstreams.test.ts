@@ -10,6 +10,7 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   custom: false,
   sourceUrl: null,
   syncedAt: null,
+  syncError: null,
   repo: null,
   branch: null,
   lastActivity: 0,

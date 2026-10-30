@@ -116,6 +116,8 @@ pub struct Workstream {
     /// The epic it was imported from, and when it was last fetched.
     pub source_url: Option<String>,
     pub synced_at: Option<i64>,
+    /// Why the last fetch failed, until one succeeds.
+    pub sync_error: Option<String>,
     pub repo: Option<String>,
     pub branch: Option<String>,
     pub last_activity: i64,
@@ -412,6 +414,7 @@ struct Prefs {
     created_at: i64,
     source_url: Option<String>,
     synced_at: Option<i64>,
+    sync_error: Option<String>,
 }
 
 impl Prefs {
@@ -423,12 +426,14 @@ impl Prefs {
         ws.custom = self.custom;
         ws.source_url = self.source_url;
         ws.synced_at = self.synced_at;
+        ws.sync_error = self.sync_error;
     }
 }
 
 fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
     let mut st = conn.prepare(
-        "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at FROM workstream_prefs",
+        "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at, sync_error
+         FROM workstream_prefs",
     )?;
     let out = st
         .query_map([], |r| {
@@ -441,6 +446,7 @@ fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
                     created_at: r.get(4)?,
                     source_url: r.get(5)?,
                     synced_at: r.get(6)?,
+                    sync_error: r.get(7)?,
                 },
             ))
         })?
@@ -456,6 +462,7 @@ fn empty(key: String, created_at: i64) -> Workstream {
         custom: false,
         source_url: None,
         synced_at: None,
+        sync_error: None,
         repo: None,
         branch: None,
         last_activity: created_at,
@@ -480,11 +487,19 @@ pub fn create(conn: &Connection, title: &str, sessions: &[String]) -> Result<Str
     let title = title.trim();
     anyhow::ensure!(!title.is_empty(), "A workstream needs a name");
     let now = now_ms();
-    let key = format!("custom:{now}");
-    conn.execute(
-        "INSERT INTO workstream_prefs (ws_key, title, starred, custom, created_at) VALUES (?1, ?2, 1, 1, ?3)",
-        params![key, title, now],
-    )?;
+    // Keyed by creation time, counting up past any made in the same moment.
+    let mut n = now;
+    let key = loop {
+        let key = format!("custom:{n}");
+        let added = conn.execute(
+            "INSERT OR IGNORE INTO workstream_prefs (ws_key, title, starred, custom, created_at) VALUES (?1, ?2, 1, 1, ?3)",
+            params![key, title, now],
+        )?;
+        if added == 1 {
+            break key;
+        }
+        n += 1;
+    };
     for id in sessions {
         add_session(conn, &key, id)?;
     }
@@ -731,7 +746,7 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
         }
     }
     tx.execute(
-        "UPDATE workstream_prefs SET synced_at = ?2 WHERE ws_key = ?1",
+        "UPDATE workstream_prefs SET synced_at = ?2, sync_tried_at = ?2, sync_error = NULL WHERE ws_key = ?1",
         params![key, now_ms()],
     )?;
     for id in mentions(&tx, epic)? {
@@ -739,6 +754,37 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Fetches an imported workstream's epic and syncs it. A failure is kept on
+/// the workstream, so its card can say why it's out of date.
+pub fn sync_from_tracker(conn: &Connection, key: &str) -> Result<()> {
+    let url = source_url(conn, key)?;
+    let res = crate::trackers::parse(&url)
+        .and_then(|r| crate::trackers::fetch(&r))
+        .and_then(|epic| sync(conn, key, &epic));
+    if let Err(e) = &res {
+        conn.execute(
+            "UPDATE workstream_prefs SET sync_error = ?2, sync_tried_at = ?3 WHERE ws_key = ?1",
+            params![key, e.to_string(), now_ms()],
+        )?;
+    }
+    res
+}
+
+/// Imported workstreams not fetched, or tried, in the last `every_ms`;
+/// the stalest first.
+pub fn due_for_sync(conn: &Connection, every_ms: i64) -> Result<Vec<String>> {
+    let mut st = conn.prepare(
+        "SELECT ws_key FROM workstream_prefs
+         WHERE source_url IS NOT NULL
+           AND MAX(COALESCE(synced_at, 0), COALESCE(sync_tried_at, 0)) < ?1
+         ORDER BY COALESCE(synced_at, 0)",
+    )?;
+    let keys = st
+        .query_map([now_ms() - every_ms], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(keys)
 }
 
 /// Sessions from the last 90 days, in no workstream of yours yet, whose
@@ -831,6 +877,7 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         custom: false,
         source_url: None,
         synced_at: None,
+        sync_error: None,
         repo: first.repo.clone(),
         branch,
         last_activity: rows.iter().map(|r| r.ended).max().unwrap_or(0),
@@ -1191,5 +1238,42 @@ mod tests {
         assert!(!mentions_number("fix #123", 12));
         assert!(branch_has_number("feat/12-checkout", 12));
         assert!(!branch_has_number("feat/120-checkout", 12));
+    }
+
+    #[test]
+    fn schedules_syncs_and_keeps_errors() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let epic = Epic {
+            title: "Checkout".into(),
+            url: "https://github.com/o/pay/issues/27".into(),
+            status: TaskStatus::Pending,
+            items: vec![],
+            needles: vec![],
+            numbers: vec![],
+            repo: None,
+        };
+        let key = import(&conn, &epic).unwrap();
+        let mine = create(&conn, "Mine", &[]).unwrap();
+        // Just synced: nothing due; due once older than the interval.
+        assert!(due_for_sync(&conn, 60_000).unwrap().is_empty());
+        assert_eq!(due_for_sync(&conn, -1).unwrap(), std::slice::from_ref(&key));
+
+        // A failed fetch is kept, and counts as a try so it isn't retried at once.
+        conn.execute(
+            "UPDATE workstream_prefs SET source_url = 'https://example.com/nope' WHERE ws_key = ?1",
+            [&key],
+        )
+        .unwrap();
+        assert!(sync_from_tracker(&conn, &key).is_err());
+        assert!(sync_from_tracker(&conn, &mine).is_err());
+        let ws = workstreams(&conn, 7).unwrap();
+        let w = ws.iter().find(|w| w.key == key).unwrap();
+        assert!(w.sync_error.as_deref().unwrap().contains("GitHub issue"));
+        assert!(due_for_sync(&conn, 60_000).unwrap().is_empty());
+
+        // A successful sync clears it.
+        sync(&conn, &key, &epic).unwrap();
+        let ws = workstreams(&conn, 7).unwrap();
+        assert!(ws.iter().all(|w| w.sync_error.is_none()));
     }
 }

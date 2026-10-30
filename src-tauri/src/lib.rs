@@ -3,6 +3,7 @@ mod commands;
 mod logging;
 mod retro;
 mod sound;
+mod tracker_sync;
 mod updates;
 
 // The engine lives in tilly-core; these keep `crate::analytics` and
@@ -63,6 +64,7 @@ pub fn run() {
             } else {
                 background::open_window(app.handle());
             }
+            tracker_sync::start(app.handle().clone(), db_path.clone());
             watcher::start(
                 background::AppSink::new(app.handle().clone(), data_dir.clone()),
                 db_path,
@@ -74,6 +76,12 @@ pub fn run() {
             if window.label() == background::MAIN && matches!(event, tauri::WindowEvent::Destroyed)
             {
                 background::window_closed(window.app_handle());
+            }
+            // Coming back to the window: fetch any imported epic that's out of date.
+            if window.label() == background::MAIN
+                && matches!(event, tauri::WindowEvent::Focused(true))
+            {
+                tracker_sync::wake(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![

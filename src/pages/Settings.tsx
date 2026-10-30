@@ -7,7 +7,7 @@ import { AppearanceSettings } from "../components/Appearance";
 import { StatusProfiles } from "../components/StatusProfiles";
 import { Updates, hasUpdate } from "../components/Updates";
 import { CURRENT_VERSION } from "../components/WhatsNew";
-import { Button, Card, ErrorNote, Field, Loading, PageHeader, SourceBadge, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Field, Loading, PageHeader, Segmented, SourceBadge, inputClass } from "../components/ui";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -166,6 +166,25 @@ export default function Settings() {
               <span className="block text-xs text-zinc-500">On launch and once a day. Only GitHub's public release list is fetched; nothing about you is sent.</span>
             </span>
           </label>
+        </Card>
+        <Card title="Workstreams">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm text-zinc-300">Sync imported epics</span>
+            <Segmented
+              options={[
+                { value: "0", label: "Off" },
+                { value: "5", label: "5 min" },
+                { value: "15", label: "15 min" },
+                { value: "60", label: "Hourly" },
+              ]}
+              value={v["workstreams.syncMinutes"] ?? "15"}
+              onChange={(value) => set.mutate({ key: "workstreams.syncMinutes", value })}
+            />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            While Tilly runs, workstreams imported from GitHub or Azure DevOps are fetched again this often, and when you come back to the window. Fetching uses your own gh or az sign-in.
+            Opening one, or Sync, always fetches it.
+          </p>
         </Card>
         {updatesOpen && <Updates releases={releases.data} loading={releases.isFetching} error={releases.error} onRefresh={() => releases.refetch()} onClose={() => setUpdatesOpen(false)} />}
 

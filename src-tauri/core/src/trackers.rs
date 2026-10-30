@@ -192,18 +192,37 @@ fn run(bin: &PathBuf, args: &[&str]) -> Result<Value> {
         .output()
         .with_context(|| format!("running {}", bin.display()))?;
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let first = err
-            .lines()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("failed");
-        bail!(
-            "{}: {}",
-            bin.file_stem().unwrap_or_default().to_string_lossy(),
-            first.trim()
-        );
+        let tool = bin.file_stem().unwrap_or_default().to_string_lossy();
+        bail!(failure(&tool, &String::from_utf8_lossy(&out.stderr)));
     }
     serde_json::from_slice(&out.stdout).context("reading the tracker's reply")
+}
+
+/// A failed `gh` or `az` call in plain words.
+fn failure(tool: &str, stderr: &str) -> String {
+    let first = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("failed");
+    let detail = first
+        .strip_prefix(&format!("{tool}: "))
+        .or_else(|| first.strip_prefix("ERROR: "))
+        .unwrap_or(first);
+    let lower = stderr.to_lowercase();
+    if lower.contains("http 404") || lower.contains("does not exist") {
+        "Not found: it may have been deleted or moved, or your sign-in can't see it".into()
+    } else if lower.contains("auth login")
+        || lower.contains("az login")
+        || lower.contains("http 401")
+    {
+        format!(
+            "Not signed in: run `{tool} {}`",
+            if tool == "az" { "login" } else { "auth login" }
+        )
+    } else {
+        format!("{tool}: {detail}")
+    }
 }
 
 fn labels(v: &Value) -> Vec<String> {
@@ -389,6 +408,29 @@ fn ado_epic(org: &str, project: &str, parent: &Value, children: &Value) -> Epic 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn explains_failures() {
+        assert_eq!(
+            failure("gh", "gh: Not Found (HTTP 404)\n"),
+            "Not found: it may have been deleted or moved, or your sign-in can't see it"
+        );
+        assert_eq!(
+            failure(
+                "gh",
+                "To get started with GitHub CLI, please run:  gh auth login\n"
+            ),
+            "Not signed in: run `gh auth login`"
+        );
+        assert_eq!(
+            failure("az", "ERROR: Please run 'az login' to setup account.\n"),
+            "Not signed in: run `az login`"
+        );
+        assert_eq!(
+            failure("gh", "gh: rate limit exceeded"),
+            "gh: rate limit exceeded"
+        );
+    }
 
     #[test]
     fn parses_links() {

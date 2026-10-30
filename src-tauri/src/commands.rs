@@ -543,12 +543,7 @@ pub async fn import_workstream(state: State<'_, AppState>, url: String) -> CmdRe
 /// Fetches an imported workstream's epic again.
 #[tauri::command]
 pub async fn sync_workstream(state: State<'_, AppState>, key: String) -> CmdResult<()> {
-    blocking(&state, move |c, _| {
-        let url = workstreams::source_url(c, &key)?;
-        let epic = trackers::fetch(&trackers::parse(&url)?)?;
-        workstreams::sync(c, &key, &epic)
-    })
-    .await
+    blocking(&state, move |c, _| workstreams::sync_from_tracker(c, &key)).await
 }
 
 /// Opens a tracker item in the browser. Only GitHub issue and Azure DevOps
@@ -603,6 +598,7 @@ const SETTING_KEYS: &[&str] = &[
     "context.smartZoneTokens",
     "alerts.profile",
     "updates.autoCheck",
+    crate::tracker_sync::SETTING,
 ];
 
 #[derive(Serialize)]
