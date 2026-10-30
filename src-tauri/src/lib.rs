@@ -63,6 +63,13 @@ pub fn run() {
             logging::init(&data_dir);
             let db_path = data_dir.join("ledger.sqlite3");
             let conn = db::open(&db_path)?;
+            // Log folders you added in Settings, before the first scan.
+            sources::set_extra_dirs(
+                db::get_setting(&conn, sources::EXTRA_DIRS_KEY)
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+            );
             app.manage(AppState {
                 db: Mutex::new(conn),
                 db_path: db_path.clone(),
@@ -143,6 +150,7 @@ pub fn run() {
             commands::claude_hook_status,
             commands::set_claude_hook,
             commands::go_to_agent,
+            commands::test_notification,
             commands::list_teams,
             commands::import_alert_asset,
             commands::read_alert_asset,

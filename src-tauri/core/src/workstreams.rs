@@ -77,6 +77,14 @@ pub struct WsSession {
     pub title: Option<String>,
     pub status: LiveStatus,
     pub ended_at: i64,
+    /// What it cost and delivered, for the workstream's and items' totals.
+    pub active_ms: i64,
+    pub cost_usd: Option<f64>,
+    pub cost_is_estimate: bool,
+    pub tokens: i64,
+    pub commits: i64,
+    pub prs: Vec<String>,
+    pub outcome: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -294,6 +302,7 @@ struct Row {
     id: String,
     source: String,
     entrypoint: Option<String>,
+    value: Value,
     title: Option<String>,
     repo: Option<String>,
     branch: Option<String>,
@@ -303,6 +312,17 @@ struct Row {
     tasks: TaskList,
     intent: Option<String>,
     prompt: Option<String>,
+}
+
+/// A session's time, cost and output.
+struct Value {
+    active_ms: i64,
+    cost_usd: Option<f64>,
+    cost_is_estimate: bool,
+    tokens: i64,
+    commits: i64,
+    prs: Vec<String>,
+    outcome: Option<String>,
 }
 
 /// Workstreams with activity in the last `days` days, most recent first.
@@ -317,7 +337,10 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         "SELECT s.id, s.source, s.title, COALESCE(s.repo_root, s.project_path), s.git_branch,
                 s.ended_at, s.last_event, s.pending_tool, s.last_message, s.failed, s.team, s.tasks,
                 (SELECT goal FROM intents i WHERE i.session_id = s.id ORDER BY i.created_at DESC LIMIT 1),
-                substr(s.first_prompt, 1, 120), s.entrypoint
+                substr(s.first_prompt, 1, 120), s.entrypoint,
+                s.active_ms, s.cost_usd, s.cost_is_estimate,
+                s.input_tokens + s.output_tokens + s.cache_read_tokens + s.cache_write_tokens,
+                (SELECT COUNT(*) FROM session_commits c WHERE c.session_id = s.id), s.prs, s.outcome
          FROM sessions s
          WHERE s.ended_at >= ?1
             OR s.id IN (SELECT session_id FROM workstream_members)
@@ -345,6 +368,15 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
                 id: r.get(0)?,
                 source: r.get(1)?,
                 entrypoint: r.get(14)?,
+                value: Value {
+                    active_ms: r.get(15)?,
+                    cost_usd: r.get(16)?,
+                    cost_is_estimate: r.get(17)?,
+                    tokens: r.get(18)?,
+                    commits: r.get(19)?,
+                    prs: serde_json::from_str(&r.get::<_, String>(20)?).unwrap_or_default(),
+                    outcome: r.get(21)?,
+                },
                 title: r.get(2)?,
                 repo: r.get(3)?,
                 branch: r.get(4)?,
@@ -1092,6 +1124,13 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
             title: r.title.clone(),
             status: r.status,
             ended_at: r.ended,
+            active_ms: r.value.active_ms,
+            cost_usd: r.value.cost_usd,
+            cost_is_estimate: r.value.cost_is_estimate,
+            tokens: r.value.tokens,
+            commits: r.value.commits,
+            prs: r.value.prs.clone(),
+            outcome: r.value.outcome.clone(),
         });
         ws.agents.push(WsAgent {
             session_id: r.id.clone(),

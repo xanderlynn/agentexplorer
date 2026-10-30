@@ -15,7 +15,20 @@ const VS: { value: VsManual; label: string }[] = [
  * One-tap review: pick the outcome, optionally say whether it beat doing it
  * by hand. Saves on the first tap so it never costs more than a click.
  */
-export function QuickReview({ id, onDone, compact = false }: { id: string; onDone?: () => void; compact?: boolean }) {
+export function QuickReview({
+  id,
+  onDone,
+  compact = false,
+  suggested,
+  evidence,
+}: {
+  id: string;
+  onDone?: () => void;
+  compact?: boolean;
+  /** What its commits or PRs point to, offered as one click to confirm. */
+  suggested?: Outcome | null;
+  evidence?: string | null;
+}) {
   const qc = useQueryClient();
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [vs, setVs] = useState<VsManual | null>(null);
@@ -35,6 +48,17 @@ export function QuickReview({ id, onDone, compact = false }: { id: string; onDon
 
   return (
     <div className={cx("space-y-2", compact && "space-y-1.5")}>
+      {suggested && !outcome && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-zinc-400">
+            Looks {OUTCOME_LABEL[suggested].toLowerCase()}
+            {evidence && <span className="text-zinc-500">: {evidence}</span>}
+          </span>
+          <button type="button" onClick={() => pick(suggested)} className={cx("rounded-md px-2 py-0.5 font-medium ring-1 ring-inset", OUTCOME_CLASS[suggested])}>
+            Confirm
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Outcome">
         {OUTCOMES.map((o) => (
           <button

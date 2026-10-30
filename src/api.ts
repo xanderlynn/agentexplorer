@@ -35,6 +35,11 @@ export interface SessionRow {
   source: Source;
   /** Which app ran it: "cli", "claude-desktop", "copilot-app", "vscode"… */
   entrypoint: string | null;
+  /** Pull requests it opened or worked on. */
+  prs: string[];
+  /** For an unrated session, the outcome its commits or PRs point to, and why; yours to confirm. */
+  suggestedOutcome: Outcome | null;
+  evidence: string | null;
   title: string | null;
   firstPrompt: string | null;
   projectPath: string | null;
@@ -700,7 +705,21 @@ export interface Workstream {
   repo: string | null;
   branch: string | null;
   lastActivity: number;
-  sessions: { id: string; source: Source; entrypoint: string | null; title: string | null; status: LiveStatus; endedAt: number }[];
+  sessions: {
+    id: string;
+    source: Source;
+    entrypoint: string | null;
+    title: string | null;
+    status: LiveStatus;
+    endedAt: number;
+    activeMs: number;
+    costUsd: number | null;
+    costIsEstimate: boolean;
+    tokens: number;
+    commits: number;
+    prs: string[];
+    outcome: Outcome | null;
+  }[];
   agents: { sessionId: string; id: string; name: string | null; role: string; active: boolean }[];
   tasks: WsTask[];
   updates: { at: number | null; sessionId: string; agent: string; taskKey: string | null; text: string }[];
@@ -867,6 +886,7 @@ export const api = {
   retireGoal: (id: number) => call<void>("retire_goal", { id }),
   preflight: (text: string, source: Source | null) => call<PreflightAdvice>("preflight", { text, source }),
   live: () => call<LiveSummary>("get_live"),
+  testNotification: () => call<void>("test_notification"),
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),

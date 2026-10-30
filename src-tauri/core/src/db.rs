@@ -328,6 +328,10 @@ CREATE TABLE hook_events (
     PRIMARY KEY (external_id, kind)
 );
 "#,
+    // Pull requests each session opened or worked on, as JSON.
+    r#"
+ALTER TABLE sessions ADD COLUMN prs TEXT NOT NULL DEFAULT '[]';
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -405,6 +409,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("sessions", "turn_started_at", "INTEGER"),
     ("sessions", "failed", "INTEGER NOT NULL DEFAULT 0"),
     ("sessions", "tasks", "TEXT NOT NULL DEFAULT '{}'"),
+    ("sessions", "prs", "TEXT NOT NULL DEFAULT '[]'"),
     ("intents", "done_when", "TEXT"),
     ("intents", "context", "TEXT"),
     ("retros", "reflection", "TEXT"),

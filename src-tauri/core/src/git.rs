@@ -25,6 +25,9 @@ type CommitLink = (
 
 /// Commits this long after a session's last event still count toward it.
 pub const COMMIT_WINDOW_MS: i64 = 30 * 60 * 1000;
+/// A commit an agent marked as its own (a Co-Authored-By trailer) can land
+/// this long after its session: committed or pushed at the end of the day.
+pub const AI_COMMIT_WINDOW_MS: i64 = 4 * 3_600_000;
 
 /// Runs git in a repository taken from a session log. A repository's own
 /// config can name programs for git to run, so fsmonitor and external diff
@@ -345,9 +348,16 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
     // Decide ownership first so rework can look across all commits.
     let owners: HashMap<String, String> = commits
         .iter()
-        .filter(|c| email.is_empty() || c.author_email == email)
+        // Yours, or any author's that an agent marked as its own.
+        .filter(|c| email.is_empty() || c.author_email == email || c.ai_trailer)
         .filter_map(|c| {
-            owning_session(&sessions, c.committed_at).map(|o| (c.sha.clone(), o.to_string()))
+            let window = if c.ai_trailer {
+                AI_COMMIT_WINDOW_MS
+            } else {
+                COMMIT_WINDOW_MS
+            };
+            owning_session(&sessions, c.committed_at, window)
+                .map(|o| (c.sha.clone(), o.to_string()))
         })
         .collect();
     let rework = find_rework(&commits, &|sha| owners.get(sha).map(String::as_str));
@@ -429,11 +439,11 @@ pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
 }
 
 /// `sessions` must be sorted by start time.
-fn owning_session(sessions: &[(String, i64, i64)], t: i64) -> Option<&str> {
+fn owning_session(sessions: &[(String, i64, i64)], t: i64, window: i64) -> Option<&str> {
     sessions
         .iter()
         .rev()
-        .find(|(_, start, end)| *start <= t && t <= end + COMMIT_WINDOW_MS)
+        .find(|(_, start, end)| *start <= t && t <= end + window)
         .map(|(id, _, _)| id.as_str())
 }
 
@@ -673,9 +683,20 @@ mod tests {
     #[test]
     fn commit_goes_to_latest_overlapping_session() {
         let s = vec![("a".to_string(), 0, 100), ("b".to_string(), 50, 60)];
-        assert_eq!(owning_session(&s, 55), Some("b"));
-        assert_eq!(owning_session(&s, 60 + COMMIT_WINDOW_MS), Some("b"));
-        assert_eq!(owning_session(&s, 100 + COMMIT_WINDOW_MS + 1), None);
-        assert_eq!(owning_session(&s, -1), None);
+        assert_eq!(owning_session(&s, 55, COMMIT_WINDOW_MS), Some("b"));
+        assert_eq!(
+            owning_session(&s, 60 + COMMIT_WINDOW_MS, COMMIT_WINDOW_MS),
+            Some("b")
+        );
+        assert_eq!(
+            owning_session(&s, 100 + COMMIT_WINDOW_MS + 1, COMMIT_WINDOW_MS),
+            None
+        );
+        assert_eq!(owning_session(&s, -1, COMMIT_WINDOW_MS), None);
+        // An agent's commit can land hours later.
+        assert_eq!(
+            owning_session(&s, 100 + 2 * 3_600_000, AI_COMMIT_WINDOW_MS),
+            Some("b")
+        );
     }
 }

@@ -612,6 +612,8 @@ const SETTING_KEYS: &[&str] = &[
     "alerts.profile",
     "updates.autoCheck",
     crate::tracker_sync::SETTING,
+    "billing.plan",
+    sources::EXTRA_DIRS_KEY,
 ];
 
 #[derive(Serialize)]
@@ -652,6 +654,19 @@ pub async fn go_to_agent(state: State<'_, AppState>, id: String) -> CmdResult<St
         crate::goto::go(&crate::goto::Target { source, entrypoint, cwd, external_id, resume })
     })
     .await
+}
+
+/// Shows a notification, so you can check they're allowed (macOS asks the
+/// first time).
+#[tauri::command]
+pub fn test_notification(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title("Tilly can reach you")
+        .body("This is how you'll hear that an agent is waiting on you.")
+        .show()
+        .map_err(|e| err(anyhow::anyhow!("{e}")))
 }
 
 /// Whether Tilly's permission-prompt hook is in Claude Code's settings.
@@ -709,6 +724,9 @@ pub fn get_settings(state: State<AppState>) -> CmdResult<Settings> {
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> CmdResult<()> {
     if !SETTING_KEYS.contains(&key.as_str()) {
         return Err(format!("Unknown setting {key}").into());
+    }
+    if key == sources::EXTRA_DIRS_KEY {
+        sources::set_extra_dirs(Some(&value));
     }
     with_db(&state, |c| db::set_setting(c, &key, &value))
 }

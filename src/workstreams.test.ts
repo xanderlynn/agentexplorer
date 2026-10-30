@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Workstream, WsTask } from "./api";
-import { cardState, initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
+import { cardState, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
 
 const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, url: null, mine: false, parent: null, depth: 0, sessions: [], ...over });
+const v0 = { activeMs: 0, costUsd: null, costIsEstimate: false, tokens: 0, commits: 0, prs: [] as string[], outcome: null };
 const ws = (over: Partial<Workstream>): Workstream => ({
   key: "k",
   title: "W",
@@ -16,7 +17,7 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   repo: null,
   branch: null,
   lastActivity: 0,
-  sessions: [{ id: "s", source: "claude_code", entrypoint: null, title: null, status: "working", endedAt: 0 }],
+  sessions: [{ id: "s", source: "claude_code", entrypoint: null, title: null, status: "working", endedAt: 0, ...v0 }],
   agents: [],
   tasks: [],
   updates: [],
@@ -54,8 +55,8 @@ describe("workstreams", () => {
   it("builds the tree by session and drops empty sessions", () => {
     const w = ws({
       sessions: [
-        { id: "a", source: "claude_code", entrypoint: null, title: "A", status: "done", endedAt: 1 },
-        { id: "b", source: "copilot_cli", entrypoint: null, title: "B", status: "working", endedAt: 2 },
+        { id: "a", source: "claude_code", entrypoint: null, title: "A", status: "done", endedAt: 1, ...v0 },
+        { id: "b", source: "copilot_cli", entrypoint: null, title: "B", status: "working", endedAt: 2, ...v0 },
       ],
       tasks: [task({ sessionId: "b", key: "b:1" })],
     });
@@ -80,5 +81,14 @@ describe("workstreams", () => {
     expect(tree(w)[0].tasks.map((t) => t.key)).toEqual(["s:1"]);
     expect(trackerName("https://github.com/o/r/issues/1")).toBe("GitHub");
     expect(trackerName("https://dev.azure.com/o/p/_workitems/edit/1")).toBe("Azure DevOps");
+  });
+
+  it("adds up what a workstream's sessions cost and delivered", () => {
+    const one = { ...v0, id: "a", source: "claude_code" as const, entrypoint: null, title: null, status: "done" as const, endedAt: 0 };
+    const v = value([
+      { ...one, activeMs: 60_000, costUsd: 2, commits: 3, prs: ["https://github.com/o/r/pull/1"], outcome: "shipped" as const },
+      { ...one, id: "b", activeMs: 30_000, costUsd: null, costIsEstimate: true, commits: 1, prs: ["https://github.com/o/r/pull/1"] },
+    ]);
+    expect(v).toMatchObject({ sessions: 2, activeMs: 90_000, costUsd: 2, costIsEstimate: true, commits: 4, prs: 1, rated: 1, shipped: 1 });
   });
 });

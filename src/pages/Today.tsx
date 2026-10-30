@@ -4,6 +4,7 @@ import { ArrowRight, ClipboardList, Flag, FlaskConical, Target } from "lucide-re
 import { api, useLive } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
+import { FirstRun } from "../components/FirstRun";
 import { StatusBadge } from "../components/status";
 import { STATUS, isActive, isAwaiting, mostUrgent } from "../status";
 import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
@@ -58,6 +59,7 @@ export default function Today({
         }
       />
 
+      <FirstRun />
       {away && <AwayDigest since={away} onOpen={onOpen} />}
 
       {waiting.length > 0 && (
@@ -89,7 +91,7 @@ export default function Today({
                     {s.commits > 0 && ` · ${s.commits} commits`}
                   </span>
                 </button>
-                <QuickReview id={s.id} compact />
+                <QuickReview id={s.id} compact suggested={s.suggestedOutcome} evidence={s.evidence} />
               </li>
             ))}
           </ul>

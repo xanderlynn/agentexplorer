@@ -11,6 +11,23 @@ export function progress(ws: Workstream) {
   return { done: c.done / total, doing: doing / total, waiting: waiting / total, total };
 }
 
+/** What the sessions behind a workstream, or one of its items, cost and delivered. */
+export function value(sessions: Workstream["sessions"]) {
+  const prs = new Set(sessions.flatMap((s) => s.prs));
+  const rated = sessions.filter((s) => s.outcome);
+  return {
+    sessions: sessions.length,
+    activeMs: sessions.reduce((a, s) => a + s.activeMs, 0),
+    costUsd: sessions.some((s) => s.costUsd != null) ? sessions.reduce((a, s) => a + (s.costUsd ?? 0), 0) : null,
+    costIsEstimate: sessions.some((s) => s.costIsEstimate),
+    tokens: sessions.reduce((a, s) => a + s.tokens, 0),
+    commits: sessions.reduce((a, s) => a + s.commits, 0),
+    prs: prs.size,
+    rated: rated.length,
+    shipped: rated.filter((s) => s.outcome === "shipped").length,
+  };
+}
+
 /** Days without activity before an unfinished workstream shows as idle. */
 export const IDLE_AFTER_DAYS = 7;
 

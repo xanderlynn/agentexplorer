@@ -23,8 +23,8 @@ import {
 import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
-import { ago, projectName, roleOf } from "../format";
-import { cardState, initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
+import { ago, compact, duration, money, projectName, roleOf } from "../format";
+import { cardState, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
 const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: string }> = {
   done: { icon: CircleCheck, className: "text-emerald-400", label: "Done" },
@@ -177,23 +177,31 @@ function ProgressBar({ ws }: { ws: Workstream }) {
 }
 
 function Avatars({ ws, max = 5 }: { ws: Workstream; max?: number }) {
-  const shown = ws.agents.slice(0, max);
+  // One avatar per kind of agent, with how many there were.
+  const kinds = new Map<string, { a: Workstream["agents"][number]; n: number; active: boolean }>();
+  for (const a of ws.agents) {
+    const k = a.role === "lead" ? "lead" : agentLabel(a);
+    const cur = kinds.get(k);
+    kinds.set(k, { a: cur?.a ?? a, n: (cur?.n ?? 0) + 1, active: (cur?.active ?? false) || a.active });
+  }
+  const all = [...kinds.values()];
+  const shown = all.slice(0, max);
   return (
     <div className="flex items-center pl-1.5">
-      {shown.map((a) => (
+      {shown.map(({ a, n, active }) => (
         <span
           key={`${a.sessionId}:${a.id}`}
-          title={`${agentLabel(a)}${a.active ? " · working" : ""}`}
+          title={`${a.role === "lead" ? (n > 1 ? `${n} leads` : "Lead") : agentLabel(a)}${n > 1 && a.role !== "lead" ? ` ×${n}` : ""}${active ? " · working" : ""}`}
           className={cx(
             "-ml-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full border-2 border-zinc-900 text-[10px] font-medium",
             a.role === "lead" ? "bg-emerald-500/20 text-emerald-200" : "bg-zinc-700 text-zinc-200",
-            a.active && "ring-1 ring-sky-400",
+            active && "ring-1 ring-sky-400",
           )}
         >
           {a.role === "lead" ? "L" : initials(agentLabel(a))}
         </span>
       ))}
-      {ws.agents.length > max && <span className="ml-1.5 text-xs text-zinc-500">+{ws.agents.length - max}</span>}
+      {all.length > max && <span className="ml-1.5 text-xs text-zinc-500">+{all.length - max}</span>}
     </div>
   );
 }
@@ -450,6 +458,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
 
         <div className="space-y-4">
           {task && <TaskDetail t={task} titleOf={titleOf} ws={ws} onOpen={onOpen} />}
+          <ValueCard title={task && !task.sessionId ? "This item" : "What it took"} sessions={task && !task.sessionId ? ws.sessions.filter((s) => task.sessions.includes(s.id)) : ws.sessions} />
           <Card title={task ? "Updates on this task" : "Updates"}>
             {updates.length === 0 ? (
               <p className="text-sm text-zinc-500">No updates yet.</p>
@@ -557,6 +566,7 @@ function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: stri
             </dd>
           </>
         )}
+        {t.status === "done" && t.sessionId && <Evidence s={ws.sessions.find((x) => x.id === t.sessionId)} />}
         {t.blockedBy.length > 0 && (
           <>
             <dt className="text-zinc-500">Waits for</dt>
@@ -722,5 +732,59 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: (key: 
         </div>
       </form>
     </div>
+  );
+}
+
+/** Time, cost and output behind a workstream or one of its items. */
+function ValueCard({ title, sessions }: { title: string; sessions: Workstream["sessions"] }) {
+  const v = value(sessions);
+  if (!v.sessions) return null;
+  return (
+    <Card title={title}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-xs text-zinc-500">Agent time</dt>
+          <dd className="text-zinc-200">{duration(v.activeMs)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Cost</dt>
+          <dd className="text-zinc-200" title={`${compact(v.tokens)} tokens`}>
+            {money(v.costUsd, v.costIsEstimate)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Sessions</dt>
+          <dd className="text-zinc-200">{v.sessions}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Commits</dt>
+          <dd className="text-zinc-200">{v.commits}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Pull requests</dt>
+          <dd className="text-zinc-200">{v.prs}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Shipped</dt>
+          <dd className="text-zinc-200">{v.rated ? `${v.shipped} of ${v.rated} rated` : "Not rated yet"}</dd>
+        </div>
+      </dl>
+    </Card>
+  );
+}
+
+/**
+ * What backs an agent's "done": the commits and pull requests of its session.
+ * Without any, it's only the agent's claim.
+ */
+function Evidence({ s }: { s: Workstream["sessions"][number] | undefined }) {
+  const parts = [s?.commits ? `${s.commits} commit${s.commits === 1 ? "" : "s"}` : null, s?.prs.length ? `${s.prs.length} PR${s.prs.length === 1 ? "" : "s"}` : null].filter(Boolean);
+  return (
+    <>
+      <dt className="text-zinc-500">Evidence</dt>
+      <dd className={parts.length ? "text-zinc-300" : "text-amber-300"}>
+        {parts.length ? `${parts.join(", ")} in its session` : "Only the agent's word: no commits or PR in its session"}
+      </dd>
+    </>
   );
 }
