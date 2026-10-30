@@ -1,7 +1,8 @@
-//! Epics and features from issue trackers, to build a workstream from: a
+//! Any issue or work item from a tracker, to build a workstream from: a
 //! GitHub issue with its sub-issues (nested, or else the task list in its
-//! description), or an Azure DevOps work item with its children, down to
-//! `MAX_DEPTH` levels. Fetched with your own `gh` or `az` sign-in, so Tilly
+//! description), or an Azure DevOps work item of any type (epic, feature,
+//! user story, task, bug…) with its children, down to `MAX_DEPTH` levels. One
+//! with nothing under it is tracked as a single task: itself. Fetched with your own `gh` or `az` sign-in, so Tilly
 //! never stores a token.
 
 use std::path::PathBuf;
@@ -69,9 +70,14 @@ pub struct Needle {
     pub item: Option<String>,
 }
 
+/// The issue or work item you imported, at whatever level, and what's
+/// under it. Called an epic here for short; it may be a story or a task.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Epic {
     pub title: String,
+    /// "Issue" on GitHub; the work item type on Azure DevOps ("Epic",
+    /// "Feature", "User Story", "Task", "Bug"…).
+    pub kind: String,
     pub url: String,
     pub status: TaskStatus,
     pub items: Vec<Item>,
@@ -176,6 +182,10 @@ pub fn fetch(r: &Ref) -> Result<Epic> {
                 // No sub-issues: use the task list in its description.
                 items = task_list(issue["body"].as_str().unwrap_or(""), owner, repo);
             }
+            // Nothing under it: it's a single task, tracked as itself.
+            if items.is_empty() {
+                items.push(github_item(&issue, me.as_deref()));
+            }
             Ok(github_epic(owner, repo, &issue, items))
         }
         Ref::Ado { org, project, id } => {
@@ -227,6 +237,9 @@ pub fn fetch(r: &Ref) -> Result<Epic> {
                 level = next;
             }
             items.truncate(MAX_ITEMS);
+            if items.is_empty() {
+                items.push(ado_item(org, project, &parent, me.as_deref()));
+            }
             Ok(ado_epic(org, project, &parent, items))
         }
     }
@@ -604,6 +617,12 @@ fn github_epic(owner: &str, repo: &str, issue: &Value, items: Vec<Item>) -> Epic
             .as_str()
             .unwrap_or("Untitled issue")
             .to_string(),
+        kind: if issue["pull_request"].is_object() {
+            "Pull request"
+        } else {
+            "Issue"
+        }
+        .into(),
         url,
         status: github_status(issue),
         items,
@@ -725,6 +744,10 @@ fn ado_epic(org: &str, project: &str, parent: &Value, items: Vec<Item>) -> Epic 
             .as_str()
             .unwrap_or("Untitled work item")
             .to_string(),
+        kind: parent["fields"]["System.WorkItemType"]
+            .as_str()
+            .unwrap_or("Work item")
+            .to_string(),
         url: ado_edit(org, project, id),
         status: ado_status(parent["fields"]["System.State"].as_str().unwrap_or("")),
         items,
@@ -828,6 +851,7 @@ mod tests {
         let issue = json!({"number": 27, "title": "Explorer", "state": "closed",
             "html_url": "https://github.com/o/new/issues/27"});
         let e = github_epic("o", "r", &issue, items);
+        assert_eq!(e.kind, "Issue");
         assert!(e.closed());
         assert_eq!(e.repo.as_deref(), Some("o/new"));
         assert_eq!(e.numbers, [(27, None)]);
@@ -891,6 +915,7 @@ mod tests {
         assert_eq!((b.assignee.as_deref(), b.mine), (Some("Sam"), true));
         let e = ado_epic(org, "My App", &parent, vec![a, b]);
         assert_eq!(e.title, "Checkout");
+        assert_eq!(e.kind, "Work item");
         assert_eq!(e.status, TaskStatus::InProgress);
         assert_eq!(e.url, "https://dev.azure.com/c/My%20App/_workitems/edit/10");
         assert!(
@@ -916,5 +941,15 @@ mod tests {
         println!("{e:#?}");
         assert!(e.items.len() >= 8);
         assert_eq!(e.repo.as_deref(), Some("xanderlynn/tilly"));
+    }
+
+    /// A task with nothing under it imports as a single task: itself.
+    #[test]
+    #[ignore]
+    fn fetches_a_real_single_task() {
+        let e = fetch(&parse("https://github.com/xanderlynn/tilly/issues/28").unwrap()).unwrap();
+        assert_eq!((e.kind.as_str(), e.items.len()), ("Issue", 1));
+        assert_eq!(e.items[0].key, "28");
+        assert_eq!(e.items[0].status, TaskStatus::Done);
     }
 }

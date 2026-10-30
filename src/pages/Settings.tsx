@@ -191,7 +191,7 @@ export default function Settings() {
         <ClaudeHookCard />
         <Card title="Workstreams">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-zinc-300">Sync imported epics</span>
+            <span className="text-sm text-zinc-300">Sync imported items</span>
             <Segmented
               options={[
                 { value: "0", label: "Off" },
