@@ -1,3 +1,4 @@
+import { GoToAgent } from "../components/GoToAgent";
 import { memo, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -211,7 +212,7 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
   const t = STATUS[s.status];
   const note = s.status === "maybe_blocked" && s.pendingTool ? `Waiting on ${s.pendingTool} — check the terminal for a permission prompt.` : s.lastMessage;
   return (
-    <li>
+    <li className="relative">
       <button
         data-card
         onClick={() => onOpen(s.id)}
@@ -238,6 +239,8 @@ const AwaitingRow = memo(function AwaitingRow({ s, onOpen }: { s: LiveSession; o
           Open <ArrowRight size={13} aria-hidden />
         </span>
       </button>
+      {/* Beside the card, not in it: a button can't hold another. */}
+      <GoToAgent id={s.id} className="absolute bottom-3 right-3" />
     </li>
   );
 });

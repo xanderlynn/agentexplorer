@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::State;
 
@@ -625,6 +625,52 @@ pub struct Settings {
     pub db_path: String,
     pub log_path: String,
     pub default_api_model: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeHook {
+    pub installed: bool,
+    /// Claude Code's settings file the hook goes in.
+    pub settings_path: String,
+}
+
+/// Brings forward the app or terminal a session runs in, and says what it did.
+#[tauri::command]
+pub async fn go_to_agent(state: State<'_, AppState>, id: String) -> CmdResult<String> {
+    blocking(&state, move |c, _| {
+        let (source, entrypoint, cwd, external_id): (String, Option<String>, Option<String>, String) = c
+            .query_row(
+                "SELECT source, entrypoint, COALESCE(project_path, repo_root), external_id FROM sessions WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?
+            .ok_or(tilly_core::util::NotFound("Session"))?;
+        let resume = sources::Source::from_id(&source)
+            .and_then(|s| s.resume_command(cwd.as_deref(), &external_id));
+        crate::goto::go(&crate::goto::Target { source, entrypoint, cwd, external_id, resume })
+    })
+    .await
+}
+
+/// Whether Tilly's permission-prompt hook is in Claude Code's settings.
+#[tauri::command(async)]
+pub fn claude_hook_status() -> CmdResult<ClaudeHook> {
+    let path = tilly_core::hooks::claude_settings();
+    Ok(ClaudeHook {
+        installed: tilly_core::hooks::installed(&path).map_err(err)?,
+        settings_path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Adds or removes Tilly's hook in Claude Code's settings, at your request.
+#[tauri::command(async)]
+pub fn set_claude_hook(state: State<AppState>, on: bool) -> CmdResult<ClaudeHook> {
+    let exe = std::env::current_exe().map_err(|e| err(e.into()))?;
+    let path = tilly_core::hooks::claude_settings();
+    tilly_core::hooks::set_installed(&path, on, &exe, &state.db_path).map_err(err)?;
+    claude_hook_status()
 }
 
 #[tauri::command(async)]

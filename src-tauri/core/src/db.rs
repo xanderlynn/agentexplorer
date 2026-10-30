@@ -318,6 +318,16 @@ CREATE TABLE workstream_item_sessions (
     PRIMARY KEY (ws_key, item_key, session_id)
 );
 "#,
+    // Permission prompts Claude Code's hook reported, newest per session.
+    r#"
+CREATE TABLE hook_events (
+    external_id TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    detail      TEXT,
+    at          INTEGER NOT NULL,
+    PRIMARY KEY (external_id, kind)
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

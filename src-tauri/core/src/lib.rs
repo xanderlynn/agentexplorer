@@ -16,6 +16,7 @@ pub mod db;
 pub mod enrich;
 pub mod experiments;
 pub mod git;
+pub mod hooks;
 pub mod ingest;
 pub mod journal;
 pub mod live;

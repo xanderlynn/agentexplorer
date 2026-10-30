@@ -15,6 +15,8 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - **Updates and rollbacks** in Settings › Updates, and an **Update available** button in the sidebar. Pick any newer release, or the one before yours, and Tilly downloads it, checks its signature, installs it and restarts. Tilly checks GitHub for releases on launch and once a day; you can turn that off.
 - A log file for background errors and failed actions: Settings › Data › **Show log**. Include it when you report a problem.
 
+- **Go to agent**, on each waiting session and in a session's details: brings forward where it runs — the Claude app, the Copilot app, VS Code on its folder, or a command-line agent's exact Terminal or iTerm tab (macOS). When it can't find it, it says how to resume.
+- **Exact Claude Code permission prompts** (Settings › Claude Code permission prompts): with your OK, Tilly adds a hook to Claude Code that tells it the moment a permission prompt appears, Bash included, in the terminal and in the Claude app. It passes only the session and the tool.
 - **While you were away** on Today: what finished, failed or started waiting on you since you last looked.
 - The tray menu lists the sessions waiting on you; pick one to open it.
 - Sessions are labelled by the app that ran them: the **Claude app** and the **Copilot app** apart from their command-line tools.

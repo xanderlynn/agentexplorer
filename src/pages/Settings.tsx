@@ -7,7 +7,7 @@ import { AppearanceSettings } from "../components/Appearance";
 import { StatusProfiles } from "../components/StatusProfiles";
 import { Updates, hasUpdate } from "../components/Updates";
 import { CURRENT_VERSION } from "../components/WhatsNew";
-import { Button, Card, ErrorNote, Field, Loading, PageHeader, Segmented, SourceBadge, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Field, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -167,6 +167,7 @@ export default function Settings() {
             </span>
           </label>
         </Card>
+        <ClaudeHookCard />
         <Card title="Workstreams">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-sm text-zinc-300">Sync imported epics</span>
@@ -262,6 +263,36 @@ function Licenses() {
         )}
         {error && <p className="mt-2 text-xs text-rose-400">Could not load notices: {error}</p>}
       </div>
+    </Card>
+  );
+}
+
+/**
+ * Claude Code doesn't log permission prompts; with this hook it tells Tilly
+ * when one appears, for Claude Code in a terminal and in the Claude app.
+ */
+function ClaudeHookCard() {
+  const qc = useQueryClient();
+  const hook = useQuery({ queryKey: ["claudeHook"], queryFn: api.claudeHook });
+  const set = useMutation({ mutationFn: (on: boolean) => api.setClaudeHook(on), onSuccess: (h) => qc.setQueryData(["claudeHook"], h) });
+  const on = hook.data?.installed ?? false;
+  return (
+    <Card title="Claude Code permission prompts">
+      <p className="text-sm text-zinc-400">
+        Claude Code doesn't record its permission prompts, so Tilly can only guess that one is waiting (Might need approval), and can't see Bash prompts at all. Add Tilly&apos;s
+        hook to Claude Code and each prompt shows as <span className="text-zinc-200">Needs permission</span> the moment it appears, in the terminal and in the Claude app.
+      </p>
+      <p className="mt-2 text-xs text-zinc-500">
+        Adds one Notification hook to {hook.data?.settingsPath ?? "Claude Code's settings"} (the file before is kept as settings.json.tilly-backup). The hook passes Tilly the
+        session and the tool it asks for, nothing else. Remove it here any time.
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <Button size="sm" variant={on ? "secondary" : "primary"} busy={set.isPending} onClick={() => set.mutate(!on)}>
+          {on ? "Remove the hook" : "Add the hook"}
+        </Button>
+        <span className={cx("text-xs", on ? "text-emerald-300" : "text-zinc-500")}>{hook.isLoading ? "Checking…" : on ? "Installed" : "Not installed"}</span>
+      </div>
+      <ErrorNote error={set.error ?? hook.error} />
     </Card>
   );
 }
