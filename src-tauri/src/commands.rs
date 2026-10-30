@@ -208,6 +208,21 @@ pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<S
     req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
+/// Archives a workstream out of the Active list, or brings it back.
+#[tauri::command(async)]
+pub fn archive_workstream(state: State<AppState>, key: String, archived: bool) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::set_archived(c, &key, archived))
+}
+
+/// What you finished in the last `days` days.
+#[tauri::command(async)]
+pub fn finished_workstreams(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<Vec<workstreams::Finished>> {
+    with_db(&state, |c| workstreams::finished(c, days))
+}
+
 /// Month-by-month progress and what pays off, over the last `days` days.
 #[tauri::command(async)]
 pub fn get_progress(

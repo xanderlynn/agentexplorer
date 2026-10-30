@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type PayoffGroup, type ProgressT } from "../api";
 import { Card, Empty, ErrorNote, Loading, PageHeader } from "../components/ui";
-import { duration, money, pct } from "../format";
+import { date, duration, money, pct } from "../format";
 import { chart } from "../theme";
 
 /** Rated sessions a group needs before its success rate is shown as more than noise. */
@@ -30,6 +30,7 @@ export default function Progress() {
         <MonthChart p={p} title="Typical reply" value={(m) => (m.replyMs != null ? m.replyMs / 60_000 : null)} fmt={(v) => duration(v * 60_000)} />
         <MonthChart p={p} title="Hours agents waited on you" value={(m) => m.waitedMs / 3_600_000} fmt={(v) => `${Math.round(v)}h`} />
       </div>
+      <Finished />
       <h2 className="mb-2 mt-6 text-sm font-medium text-zinc-200">What pays off</h2>
       <p className="mb-3 text-xs text-zinc-500">
         Success over rated sessions (shipped 1, partial ½). Groups with fewer than {SOLID} rated sessions are greyed: too few to trust.
@@ -84,6 +85,43 @@ function Payoff({ title, rows }: { title: string; rows: PayoffGroup[] }) {
           ))}
         </tbody>
       </table>
+    </Card>
+  );
+}
+
+/** Workstreams you finished over the year, by quarter: what you shipped. */
+function Finished() {
+  const q = useQuery({ queryKey: ["finished", 365], queryFn: () => api.finishedWorkstreams(365) });
+  const list = q.data ?? [];
+  if (!list.length) return null;
+  const quarter = (t: number) => {
+    const d = new Date(t);
+    return `${d.getFullYear()} Q${Math.floor(d.getMonth() / 3) + 1}`;
+  };
+  const byQuarter = new Map<string, typeof list>();
+  for (const f of list) byQuarter.set(quarter(f.finishedAt), [...(byQuarter.get(quarter(f.finishedAt)) ?? []), f]);
+  return (
+    <Card title="What you finished" className="mt-4">
+      <div className="space-y-4">
+        {[...byQuarter].map(([qtr, items]) => (
+          <details key={qtr} open={qtr === quarter(Date.now())}>
+            <summary className="cursor-pointer text-sm text-zinc-200">
+              {qtr} <span className="text-zinc-500">· {items.length} workstreams · {money(items.reduce((a, f) => a + f.costUsd, 0))}</span>
+            </summary>
+            <ul className="mt-1 divide-y divide-zinc-800/60">
+              {items.slice(0, 50).map((f) => (
+                <li key={f.key} className="flex items-center gap-3 py-1.5 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-zinc-300">{f.title}</span>
+                  <span className="shrink-0 text-xs text-zinc-500">
+                    {f.tasks} tasks · {f.sessions} sessions · {duration(Math.max(0, f.finishedAt - f.startedAt))} · {date(f.finishedAt)}
+                  </span>
+                </li>
+              ))}
+              {items.length > 50 && <li className="py-1.5 text-xs text-zinc-500">and {items.length - 50} more</li>}
+            </ul>
+          </details>
+        ))}
+      </div>
     </Card>
   );
 }

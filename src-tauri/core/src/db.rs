@@ -351,6 +351,10 @@ CREATE TABLE pr_states (
     checked_at INTEGER NOT NULL
 );
 "#,
+    // Workstreams you archived out of the Active list.
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

@@ -46,6 +46,7 @@ const ACTIVE_DAYS = 3;
  * not finished (done or closed ones are archived out of it, still under All).
  */
 function isActiveWs(w: Workstream) {
+  if (w.archived) return false;
   const state = cardState(w);
   if (state.label === "Done" || state.label === "Closed") return w.counts.needsYou > 0;
   return w.starred || w.counts.needsYou > 0 || Date.now() - w.lastActivity < ACTIVE_DAYS * 86_400_000;
@@ -322,6 +323,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
   const rename = useWsChange((title: string) => api.renameWorkstream(ws.key, title));
   const del = useWsChange(() => api.deleteWorkstream(ws.key));
   const sync = useWsChange(() => api.syncWorkstream(ws.key));
+  const archive = useWsChange((on: boolean) => api.archiveWorkstream(ws.key, on));
   const items = trackerTasks(ws);
   const syncNow = sync.mutate;
   // Imported ones refresh from the tracker when opened, if it's been a while.
@@ -380,6 +382,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
             {ws.trackerRepo ? <span>{ws.trackerRepo}</span> : ws.repo && <span>{projectName(ws.repo)}</span>}
             {!ws.sourceUrl && ws.branch && <span className="inline-flex items-center gap-1"><GitBranch size={12} aria-hidden /> {ws.branch}</span>}
             {ws.closed && <span className="text-zinc-400">Closed</span>}
+            {ws.startedAt > 0 && <span title="Since its first session">running {ago(Date.now() - ws.startedAt).replace(" ago", "")}</span>}
             <span>{ws.counts.done + ws.counts.inProgress + ws.counts.pending ? `${ws.counts.done} of ${ws.counts.done + ws.counts.inProgress + ws.counts.pending} done` : "No task list"}</span>
             {ws.counts.decisions > 0 && <span className="text-amber-300">{ws.counts.decisions} for you</span>}
             {ws.counts.waiting > 0 && <span className="text-amber-300">{ws.counts.waiting} agent{ws.counts.waiting === 1 ? "" : "s"} waiting</span>}
@@ -399,6 +402,9 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 <Send size={13} /> Share progress
               </Button>
             )}
+            <Button size="sm" variant="ghost" busy={archive.isPending} onClick={() => archive.mutate(!ws.archived)} title={ws.archived ? "Bring it back to Active" : "Hide it from Active; it stays under All"}>
+              {ws.archived ? "Unarchive" : "Archive"}
+            </Button>
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus size={13} /> Add sessions
             </Button>

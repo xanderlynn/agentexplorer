@@ -30,6 +30,8 @@ export function value(sessions: Workstream["sessions"]) {
 
 /** Days without activity before an unfinished workstream shows as idle. */
 export const IDLE_AFTER_DAYS = 7;
+/** Days without activity, unfinished, before it's called stalled. */
+export const STALLED_AFTER_DAYS = 14;
 
 /** What a card's badge says, most important first. */
 export function cardState(ws: Workstream, now = Date.now()): { tone: "amber" | "green" | "grey"; label: string; hint?: string } {
@@ -43,6 +45,7 @@ export function cardState(ws: Workstream, now = Date.now()): { tone: "amber" | "
   if (ws.syncError) return { tone: "amber", label: "Out of date" };
   if (total > 0 && c.done === total) return { tone: "green", label: "Done" };
   const idle = Math.floor((now - ws.lastActivity) / 86_400_000);
+  if (idle >= STALLED_AFTER_DAYS) return { tone: "amber", label: `Stalled ${idle}d`, hint: "No activity for two weeks and not finished: pick it up, or archive it" };
   if (idle >= IDLE_AFTER_DAYS) return { tone: "grey", label: `Idle ${idle}d` };
   return { tone: "green", label: "On track" };
 }

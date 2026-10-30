@@ -708,6 +708,10 @@ export interface Workstream {
   closed: boolean;
   /** What was imported: "Issue", or a work item type such as "User Story". */
   sourceKind: string | null;
+  /** You archived it out of the Active list. */
+  archived: boolean;
+  /** When its earliest session ended. */
+  startedAt: number;
   /** "owner/repo" of an imported GitHub epic. */
   trackerRepo: string | null;
   repo: string | null;
@@ -898,6 +902,9 @@ export const api = {
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
+  archiveWorkstream: (key: string, archived: boolean) => call<void>("archive_workstream", { key, archived }),
+  finishedWorkstreams: (days: number) =>
+    call<{ key: string; title: string; finishedAt: number; startedAt: number; sessions: number; tasks: number; costUsd: number }[]>("finished_workstreams", { days }),
   progress: (days: number) => call<ProgressT>("get_progress", { days }),
   bulkReview: (ids: string[], outcome: Outcome) => call<number>("bulk_review", { ids, outcome }),
   dismissSession: (id: string) => call<void>("dismiss_session", { id }),

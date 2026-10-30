@@ -15,6 +15,8 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   closed: false,
   trackerRepo: null,
   sourceKind: null,
+  archived: false,
+  startedAt: 0,
   repo: null,
   branch: null,
   lastActivity: 0,
@@ -40,6 +42,7 @@ describe("workstreams", () => {
     expect(cardState(ws({ counts: { ...base, decisions: 1, waiting: 2, needsYou: 3 } }), now).label).toBe("1 for you · 2 waiting");
     expect(cardState(ws({ closed: true, counts: { ...base, needsYou: 1, decisions: 1 } }), now).label).toBe("Closed");
     expect(cardState(ws({ counts: base, lastActivity: now - 12 * 86_400_000 }), now).label).toBe("Idle 12d");
+    expect(cardState(ws({ counts: base, lastActivity: now - 20 * 86_400_000 }), now).label).toBe("Stalled 20d");
     expect(cardState(ws({ counts: base, lastActivity: now }), now).label).toBe("On track");
     expect(cardState(ws({ counts: { ...base, pending: 0 }, lastActivity: 0 }), now).label).toBe("Done");
   });

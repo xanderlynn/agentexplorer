@@ -153,6 +153,8 @@ pub fn run() {
             commands::dismiss_session,
             commands::bulk_review,
             commands::get_progress,
+            commands::archive_workstream,
+            commands::finished_workstreams,
             commands::get_attention,
             commands::take_open_request,
             commands::claude_hook_status,
