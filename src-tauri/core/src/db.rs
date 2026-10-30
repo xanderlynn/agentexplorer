@@ -332,6 +332,10 @@ CREATE TABLE hook_events (
     r#"
 ALTER TABLE sessions ADD COLUMN prs TEXT NOT NULL DEFAULT '[]';
 "#,
+    // What was imported: an issue, or a work item's type (Epic, User Story, Task…).
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN source_kind TEXT;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

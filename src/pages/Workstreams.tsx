@@ -25,7 +25,7 @@ import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
 import { ago, compact, duration, money, projectName, roleOf } from "../format";
-import { cardState, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
+import { cardState, importedLabel, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
 const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: string }> = {
   done: { icon: CircleCheck, className: "text-emerald-400", label: "Done" },
@@ -35,7 +35,7 @@ const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: str
   todo: { icon: Circle, className: "text-zinc-600", label: "Not started" },
 };
 
-/** Imported workstreams fetch their epic again when opened after this long. */
+/** Imported workstreams fetch their issue or work item again when opened after this long. */
 const SYNC_AFTER_MS = 15 * 60_000;
 
 /** A change to your workstreams; the list reloads after it. */
@@ -103,7 +103,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
             />
             <Segmented options={[{ value: 7, label: "7d" }, { value: 30, label: "30d" }, { value: 0, label: "All" }]} value={days} onChange={setDays} />
             <Button size="sm" onClick={() => setImporting(true)}>
-              <Download size={14} /> Import epic
+              <Download size={14} /> Import from tracker
             </Button>
             <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
               <Plus size={14} /> New workstream
@@ -148,7 +148,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
         <Empty title={filter === "you" ? "Nothing is waiting on you" : filter === "starred" ? "Nothing starred yet" : "No workstreams yet"}>
           {filter === "starred"
             ? "Star a workstream to keep it here, whatever its age."
-            : "Work on a feature branch, or let an agent keep a task list (Claude Code's todos and plans, Copilot's todos), and its effort shows up here. Or make your own with New workstream, or import a GitHub or Azure DevOps epic."}
+            : "Work on a feature branch, or let an agent keep a task list (Claude Code's todos and plans, Copilot's todos), and its effort shows up here. Or make your own with New workstream, or import any GitHub issue or Azure DevOps work item."}
         </Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -241,7 +241,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-zinc-100">{ws.title}</div>
             <div className="truncate text-xs text-zinc-500">
-              {ws.sourceUrl ? `${trackerName(ws.sourceUrl)}${ws.trackerRepo ? ` · ${ws.trackerRepo}` : " epic"}` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
+              {ws.sourceUrl ? `${importedLabel(ws)}${ws.trackerRepo ? ` · ${ws.trackerRepo}` : ""}` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
               {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
             </div>
           </div>
@@ -343,7 +343,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
           <div className="flex flex-wrap items-center gap-x-3 text-xs text-zinc-500">
             {ws.sourceUrl && (
               <button className="inline-flex items-center gap-1 hover:text-zinc-200" onClick={() => api.openTrackerLink(ws.sourceUrl!)}>
-                <ExternalLink size={12} aria-hidden /> {trackerName(ws.sourceUrl)} epic
+                <ExternalLink size={12} aria-hidden /> {importedLabel(ws)}
               </button>
             )}
             {ws.sourceUrl && (
@@ -351,7 +351,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 className="inline-flex items-center gap-1 hover:text-zinc-200 disabled:opacity-60"
                 disabled={sync.isPending}
                 onClick={() => sync.mutate()}
-                title="Fetch the epic and its items again"
+                title="Fetch it and its items again"
               >
                 <RefreshCw size={12} aria-hidden className={cx(sync.isPending && "animate-spin")} />
                 {sync.isPending ? "Syncing…" : ws.syncedAt ? `Synced ${ago(Date.now() - ws.syncedAt)}` : "Sync"}
@@ -367,7 +367,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
           <div className="mt-2 max-w-md"><ProgressBar ws={ws} /></div>
           {ws.syncError && !sync.isPending && (
             <p className="mt-2 text-xs text-amber-300">
-              Couldn't sync{ws.syncedAt ? `; showing the epic as of ${ago(Date.now() - ws.syncedAt)}` : ""}: {ws.syncError}
+              Couldn't sync{ws.syncedAt ? `; showing it as of ${ago(Date.now() - ws.syncedAt)}` : ""}: {ws.syncError}
             </p>
           )}
         </div>
@@ -420,7 +420,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 <div className="mb-1 flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-zinc-200">From {trackerName(ws.sourceUrl ?? "")}</span>
                   <span className="text-xs text-zinc-500">{items.filter((t) => t.status === "done").length} of {items.length} closed</span>
-                  {ws.closed && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-400">Epic closed</span>}
+                  {ws.closed && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-400">Closed in {trackerName(ws.sourceUrl ?? "")}</span>}
                 </div>
                 {items.map((t) => (
                   <TaskRow key={t.key} t={t} selected={t.key === sel} onSelect={() => setSel(t.key === sel ? null : t.key)} />
@@ -722,10 +722,11 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: (key: 
           if (url.trim()) imp.mutate(url.trim(), { onSuccess: (key) => onDone(key as string) });
         }}
       >
-        <h2 id="import-title" className="text-base font-semibold text-zinc-50">Import an epic</h2>
+        <h2 id="import-title" className="text-base font-semibold text-zinc-50">Import from GitHub or Azure DevOps</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          A GitHub issue (its sub-issues or task list become tasks) or an Azure DevOps epic or feature (its child items). Sessions that mention it or its items join. Tilly uses your
-          own <code>gh</code> or <code>az</code> sign-in and stores no token.
+          Any level: an epic, feature, user story, task or bug, or any GitHub issue. Whatever is under it becomes its tasks (sub-issues, a task list, or child work items, three
+          levels deep); one with nothing under it is tracked as a single task. Sessions that mention it or its items join. Tilly uses your own <code>gh</code> or <code>az</code>{" "}
+          sign-in and stores no token.
         </p>
         <input
           autoFocus
@@ -804,7 +805,7 @@ function Evidence({ s }: { s: Workstream["sessions"][number] | undefined }) {
 }
 
 /**
- * Shares progress on the epic: Tilly drafts a comment from the workstream,
+ * Shares progress on the imported item: Tilly drafts a comment from the workstream,
  * you read and edit it, and only "Post" sends it, as you.
  */
 function ShareDialog({ ws, onClose }: { ws: Workstream; onClose: () => void }) {
@@ -819,7 +820,7 @@ function ShareDialog({ ws, onClose }: { ws: Workstream; onClose: () => void }) {
       <div className="relative w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl">
         <h2 id="share-title" className="text-base font-semibold text-zinc-50">Share progress on {where}</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          A comment on the epic, posted as you with your {where === "GitHub" ? "gh" : "az"} sign-in, so your team sees what you see. Edit it as you like; nothing is sent until you
+          A comment on the {importedLabel(ws)}, posted as you with your {where === "GitHub" ? "gh" : "az"} sign-in, so your team sees what you see. Edit it as you like; nothing is sent until you
           press Post.
         </p>
         {post.isSuccess ? (

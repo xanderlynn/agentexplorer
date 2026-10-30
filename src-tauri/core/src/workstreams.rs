@@ -139,8 +139,10 @@ pub struct Workstream {
     pub synced_at: Option<i64>,
     /// Why the last fetch failed, until one succeeds.
     pub sync_error: Option<String>,
-    /// The imported epic is closed in its tracker.
+    /// The imported issue or work item is closed in its tracker.
     pub closed: bool,
+    /// What was imported: "Issue", or a work item type such as "User Story".
+    pub source_kind: Option<String>,
     /// The tracker's repository ("owner/repo") for an imported epic.
     pub tracker_repo: Option<String>,
     pub repo: Option<String>,
@@ -525,6 +527,7 @@ struct Prefs {
     sync_error: Option<String>,
     closed: bool,
     tracker_repo: Option<String>,
+    source_kind: Option<String>,
 }
 
 impl Prefs {
@@ -538,6 +541,7 @@ impl Prefs {
         ws.synced_at = self.synced_at;
         ws.sync_error = self.sync_error;
         ws.closed = self.closed;
+        ws.source_kind = self.source_kind;
         if self.tracker_repo.is_some() {
             ws.tracker_repo = self.tracker_repo;
         }
@@ -547,7 +551,7 @@ impl Prefs {
 fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
     let mut st = conn.prepare(
         "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at, sync_error,
-                source_closed, source_repo
+                source_closed, source_repo, source_kind
          FROM workstream_prefs",
     )?;
     let out = st
@@ -564,6 +568,7 @@ fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
                     sync_error: r.get(7)?,
                     closed: r.get(8)?,
                     tracker_repo: r.get(9)?,
+                    source_kind: r.get(10)?,
                 },
             ))
         })?
@@ -581,6 +586,7 @@ fn empty(key: String, created_at: i64) -> Workstream {
         synced_at: None,
         sync_error: None,
         closed: false,
+        source_kind: None,
         tracker_repo: None,
         repo: None,
         branch: None,
@@ -921,7 +927,7 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
         "UPDATE workstream_prefs SET
            title = CASE WHEN title IS source_title OR source_title IS NULL THEN ?3 ELSE title END,
            source_title = ?3, source_closed = ?4, source_repo = ?5, source_url = ?6,
-           synced_at = ?2, sync_tried_at = ?2, sync_error = NULL
+           source_kind = ?7, synced_at = ?2, sync_tried_at = ?2, sync_error = NULL
          WHERE ws_key = ?1",
         params![
             key,
@@ -929,7 +935,8 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
             epic.title,
             epic.closed(),
             epic.repo,
-            epic.url
+            epic.url,
+            epic.kind
         ],
     )?;
     tx.execute(
@@ -1202,6 +1209,7 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         synced_at: None,
         sync_error: None,
         closed: false,
+        source_kind: None,
         tracker_repo: None,
         repo: first.repo.clone(),
         branch,
@@ -1532,6 +1540,7 @@ mod tests {
         };
         let mut epic = Epic {
             title: "Checkout".into(),
+            kind: "User Story".into(),
             url: "https://github.com/o/pay/issues/27".into(),
             status: TaskStatus::Pending,
             items: vec![
@@ -1558,6 +1567,7 @@ mod tests {
             ("Checkout", true, true)
         );
         assert_eq!(w.tracker_repo.as_deref(), Some("o/pay"));
+        assert_eq!(w.source_kind.as_deref(), Some("User Story"));
         // #28 in the prompt, 34 in the branch, o/pay#99 by name; not #2800 or o/pay#9.
         let mut ids: Vec<_> = w.sessions.iter().map(|s| s.id.as_str()).collect();
         ids.sort();

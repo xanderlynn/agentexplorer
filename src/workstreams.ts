@@ -69,7 +69,12 @@ export function tree(ws: Workstream) {
     .filter((n) => n.tasks.length > 0 || ws.custom || ws.sessions.length === 1);
 }
 
-/** Items from the tracker epic it was imported from, in the epic's order. */
+/** "GitHub issue" or "Azure DevOps user story": what a workstream was imported from. */
+export function importedLabel(ws: Pick<Workstream, "sourceUrl" | "sourceKind">) {
+  return ws.sourceUrl ? `${trackerName(ws.sourceUrl)} ${(ws.sourceKind ?? "item").toLowerCase()}` : "";
+}
+
+/** Items from the issue or work item it was imported from, in their order. */
 export const trackerTasks = (ws: Workstream) => ws.tasks.filter((t) => !t.sessionId);
 
 /** "GitHub" or "Azure DevOps", from an imported workstream's link. */

@@ -698,8 +698,10 @@ export interface Workstream {
   syncedAt: number | null;
   /** Why the last fetch from the tracker failed, until one succeeds. */
   syncError: string | null;
-  /** The imported epic is closed in its tracker. */
+  /** The imported issue or work item is closed in its tracker. */
   closed: boolean;
+  /** What was imported: "Issue", or a work item type such as "User Story". */
+  sourceKind: string | null;
   /** "owner/repo" of an imported GitHub epic. */
   trackerRepo: string | null;
   repo: string | null;

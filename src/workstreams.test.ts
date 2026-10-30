@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Workstream, WsTask } from "./api";
-import { cardState, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
+import { cardState, importedLabel, initials, progress, value, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
 
 const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, url: null, mine: false, parent: null, depth: 0, sessions: [], ...over });
 const v0 = { activeMs: 0, costUsd: null, costIsEstimate: false, tokens: 0, commits: 0, prs: [] as string[], outcome: null };
@@ -14,6 +14,7 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   syncError: null,
   closed: false,
   trackerRepo: null,
+  sourceKind: null,
   repo: null,
   branch: null,
   lastActivity: 0,
@@ -81,6 +82,8 @@ describe("workstreams", () => {
     expect(tree(w)[0].tasks.map((t) => t.key)).toEqual(["s:1"]);
     expect(trackerName("https://github.com/o/r/issues/1")).toBe("GitHub");
     expect(trackerName("https://dev.azure.com/o/p/_workitems/edit/1")).toBe("Azure DevOps");
+    expect(importedLabel({ sourceUrl: "https://dev.azure.com/o/p/_workitems/edit/1", sourceKind: "User Story" })).toBe("Azure DevOps user story");
+    expect(importedLabel({ sourceUrl: "https://github.com/o/r/issues/1", sourceKind: null })).toBe("GitHub item");
   });
 
   it("adds up what a workstream's sessions cost and delivered", () => {
