@@ -26,6 +26,7 @@ pub mod parsers;
 pub mod playbooks;
 pub mod pricing;
 pub mod progress;
+pub mod redact;
 pub mod retention;
 pub mod signals;
 pub mod sources;

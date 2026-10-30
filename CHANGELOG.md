@@ -41,8 +41,12 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - **Workstream lifecycle**: cards say **Stalled** after two weeks without activity; **Archive** a workstream to put it away; the list opens on **Active** (touched in three days, or needing you), with All, Starred and Needs you, and a search box.
 - **Storage and history** in Settings: keeps every session's summary forever, compacts its detail (prompts, timeline, team, last reply) after 180 days, compresses archived transcripts after a week and deletes them after 90 days. Each is adjustable, or forever. Runs once a day.
 
+- **Secrets are redacted** before they're stored or sent: API keys and tokens (GitHub, GitLab, Anthropic, OpenAI, Slack, npm, PyPI, Google, AWS), private keys, JWTs, bearer tokens and `password=`-style values in prompts, titles and replies. Text stored by earlier versions is scrubbed once on upgrade.
+- **For IT and security teams** in SECURITY.md: every network destination and how to turn it off, what Tilly runs and changes, where data lives, and how to verify a download.
+
 ### Changed
 
+- Network calls honour the system proxy (including Windows' proxy and PAC settings), for corporate networks.
 - **Sessions** shows 100 at a time with **Show more**, and has a Last 24 hours range, so an active day opens fast.
 - The workstreams list loads summaries and fetches a workstream's detail when you open it: about a quarter of the data at a year's volume.
 - Insights only claim a difference when it's statistically significant, and need 40 rated sessions; otherwise they say how many more would help.

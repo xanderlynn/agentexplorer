@@ -292,6 +292,8 @@ pub fn prepare(conn: &Connection, days: i64, reflection: Option<&str>) -> Result
         prompt.push('\n');
     }
 
+    // Notes and excerpts can hold a pasted key; it's sent to Claude.
+    let prompt = tilly_core::redact::redact(&prompt).into_owned();
     Ok(Prepared {
         range,
         stats_json,

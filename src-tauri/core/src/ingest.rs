@@ -212,6 +212,7 @@ impl Ingestor {
                     }
                     opt.map(|mut s| {
                         s.close_open_turn();
+                        s.redact_secrets();
                         let repo = s
                             .project_path
                             .as_deref()
@@ -274,7 +275,7 @@ impl Ingestor {
 /// Bump when the parsers start recording new per-session signals. It is part
 /// of every unit's fingerprint, so a bump re-parses every transcript; rows
 /// with a lower version stay out of signal-based statistics until they are.
-pub const SIGNALS_VERSION: i64 = 15;
+pub const SIGNALS_VERSION: i64 = 16;
 
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())
