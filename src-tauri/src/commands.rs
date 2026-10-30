@@ -208,6 +208,12 @@ pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<S
     req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
+/// Confirms one outcome for many sessions, such as all those that look shipped.
+#[tauri::command(async)]
+pub fn bulk_review(state: State<AppState>, ids: Vec<String>, outcome: String) -> CmdResult<usize> {
+    with_db(&state, |c| store::bulk_review(c, &ids, &outcome))
+}
+
 /// Takes a session off "waiting on you" until it does something new.
 #[tauri::command(async)]
 pub fn dismiss_session(state: State<AppState>, id: String) -> CmdResult<()> {

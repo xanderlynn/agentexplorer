@@ -898,6 +898,7 @@ export const api = {
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
+  bulkReview: (ids: string[], outcome: Outcome) => call<number>("bulk_review", { ids, outcome }),
   dismissSession: (id: string) => call<void>("dismiss_session", { id }),
   attention: (days: number) => call<Attention>("get_attention", { days }),
   takeOpenRequest: () => call<string | null>("take_open_request"),

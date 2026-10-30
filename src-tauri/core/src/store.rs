@@ -137,7 +137,8 @@ SELECT s.id, s.source, s.title, substr(s.first_prompt, 1, 300), s.project_path, 
        s.edits_without_read, s.re_edits, s.compactions, s.subagents, s.corrections,
        s.signals_version >= 1, s.ask_score, s.vs_manual, COALESCE(c.rw, 0) > 0, s.agent_ms,
        s.planned OR EXISTS(SELECT 1 FROM intents i WHERE i.session_id = s.id),
-       s.peak_context, s.mode_ms, s.entrypoint, s.prs
+       s.peak_context, s.mode_ms, s.entrypoint, s.prs,
+       (SELECT json_group_object(p.url, p.state) FROM json_each(s.prs) j JOIN pr_states p ON p.url = j.value)
 FROM sessions s
 LEFT JOIN (SELECT session_id, COUNT(*) AS n, SUM(insertions) AS ins, SUM(deletions) AS del,
                   SUM(ai_trailer) AS ai, SUM(reworked) AS rw
@@ -153,7 +154,12 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     let planned: bool = r.get(46)?;
     let prs: Vec<String> = serde_json::from_str(&r.get::<_, String>(50)?).unwrap_or_default();
     let outcome: Option<String> = r.get(20)?;
-    let (suggested_outcome, evidence) = suggest(outcome.as_deref(), r.get(22)?, r.get(44)?, &prs);
+    let states: BTreeMap<String, String> = r
+        .get::<_, Option<String>>(51)?
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
+    let (suggested_outcome, evidence) =
+        suggest(outcome.as_deref(), r.get(22)?, r.get(44)?, &prs, &states);
     Ok(SessionRow {
         prs,
         suggested_outcome,
@@ -222,32 +228,86 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
     })
 }
 
-/// What an unrated session's git work says about it: commits that stood, or
-/// a pull request, look shipped. Reworked commits suggest nothing.
+/// What an unrated session's git work says about it, for you to confirm: a
+/// merged pull request, or commits that stood, look shipped; a pull request
+/// closed without merging looks abandoned. An open one, or reworked commits,
+/// suggest nothing yet.
 fn suggest(
     outcome: Option<&str>,
     commits: i64,
     reworked: bool,
     prs: &[String],
+    states: &BTreeMap<String, String>,
 ) -> (Option<String>, Option<String>) {
-    if outcome.is_some() || reworked || (commits == 0 && prs.is_empty()) {
+    if outcome.is_some() || reworked {
         return (None, None);
     }
-    let mut why = vec![];
+    let num = |pr: &str| {
+        pr.rsplit_once("/pull/")
+            .map(|(_, n)| format!("PR #{n}"))
+            .unwrap_or_else(|| "a PR".into())
+    };
+    let state = |pr: &String| states.get(pr).map(String::as_str);
+    let merged: Vec<String> = prs
+        .iter()
+        .filter(|p| state(p) == Some("MERGED"))
+        .map(|p| format!("{} merged", num(p)))
+        .collect();
+    let mut why = merged.clone();
     if commits > 0 {
         why.push(format!(
             "{commits} commit{}",
             if commits == 1 { "" } else { "s" }
         ));
     }
-    for pr in prs.iter().take(2) {
-        why.push(
-            pr.rsplit_once("/pull/")
-                .map(|(_, n)| format!("PR #{n}"))
-                .unwrap_or_else(|| "a PR".into()),
+    if !why.is_empty() {
+        return (Some("shipped".into()), Some(why.join(", ")));
+    }
+    if !prs.is_empty() && prs.iter().all(|p| state(p) == Some("CLOSED")) {
+        return (
+            Some("abandoned".into()),
+            Some(format!("{} closed without merging", num(&prs[0]))),
         );
     }
-    (Some("shipped".into()), Some(why.join(", ")))
+    (None, None)
+}
+
+/// Pull requests from the last `days` days not yet checked, or still open
+/// and last checked over an hour ago: what to ask gh about next.
+pub fn prs_to_check(conn: &Connection, days: i64, limit: usize) -> Result<Vec<String>> {
+    let now = now_ms();
+    let mut st = conn.prepare(
+        "SELECT DISTINCT j.value FROM sessions s, json_each(s.prs) j
+         LEFT JOIN pr_states p ON p.url = j.value
+         WHERE s.ended_at >= ?1
+           AND (p.url IS NULL OR (p.state = 'OPEN' AND p.checked_at < ?2))
+         LIMIT ?3",
+    )?;
+    let urls = st
+        .query_map(
+            params![now - days * DAY_MS, now - 3_600_000, limit as i64],
+            |r| r.get(0),
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(urls)
+}
+
+/// Records a pull request's state: OPEN, MERGED or CLOSED.
+pub fn record_pr_state(conn: &Connection, url: &str, state: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO pr_states (url, state, checked_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(url) DO UPDATE SET state = excluded.state, checked_at = excluded.checked_at",
+        params![url, state, now_ms()],
+    )?;
+    Ok(())
+}
+
+/// Confirms an outcome for many sessions at once.
+pub fn bulk_review(conn: &Connection, ids: &[String], outcome: &str) -> Result<usize> {
+    for id in ids {
+        crate::analytics::quick_review(conn, id, outcome, None)?;
+    }
+    Ok(ids.len())
 }
 
 pub fn load_sessions(conn: &Connection, range: Range) -> Result<Vec<SessionRow>> {
@@ -397,4 +457,58 @@ pub fn recent_projects(conn: &Connection, limit: usize) -> Result<Vec<String>> {
         .query_map([limit as i64], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod suggest_tests {
+    use super::*;
+
+    #[test]
+    fn suggests_from_merged_prs_and_commits_only() {
+        let pr = |n: u32| format!("https://github.com/o/r/pull/{n}");
+        let states: BTreeMap<String, String> = [
+            (pr(1), "MERGED".to_string()),
+            (pr(2), "CLOSED".into()),
+            (pr(3), "OPEN".into()),
+        ]
+        .into();
+        let s = |c: i64, rw: bool, prs: &[String]| suggest(None, c, rw, prs, &states);
+        assert_eq!(
+            s(0, false, &[pr(1)]),
+            (Some("shipped".into()), Some("PR #1 merged".into()))
+        );
+        assert_eq!(
+            s(2, false, &[]),
+            (Some("shipped".into()), Some("2 commits".into()))
+        );
+        assert_eq!(s(0, false, &[pr(2)]).0.as_deref(), Some("abandoned"));
+        // Open, or not checked yet: nothing to suggest.
+        assert_eq!(s(0, false, &[pr(3)]), (None, None));
+        assert_eq!(s(0, false, &[pr(9)]), (None, None));
+        assert_eq!(s(3, true, &[pr(1)]), (None, None));
+        assert_eq!(
+            suggest(Some("partial"), 3, false, &[pr(1)], &states),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn queues_prs_to_check_once() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let now = now_ms();
+        conn.execute(
+            "INSERT INTO sessions (id, source, external_id, file_path, started_at, ended_at, active_ms, user_turns, prs, ingested_at)
+             VALUES ('a', 'claude_code', 'a', '/f', ?1, ?1, 0, 1, '[\"https://github.com/o/r/pull/1\",\"https://github.com/o/r/pull/2\"]', ?1)",
+            [now],
+        )
+        .unwrap();
+        assert_eq!(prs_to_check(&conn, 30, 10).unwrap().len(), 2);
+        record_pr_state(&conn, "https://github.com/o/r/pull/1", "MERGED").unwrap();
+        record_pr_state(&conn, "https://github.com/o/r/pull/2", "OPEN").unwrap();
+        // Merged is final; open is checked again after an hour.
+        assert!(prs_to_check(&conn, 30, 10).unwrap().is_empty());
+        let row = session(&conn, "a").unwrap().unwrap();
+        assert_eq!(row.suggested_outcome.as_deref(), Some("shipped"));
+        assert_eq!(row.evidence.as_deref(), Some("PR #1 merged"));
+    }
 }

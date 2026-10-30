@@ -12,6 +12,18 @@ pub const HOUR_MS: f64 = 3_600_000.0;
 /// greyed out or not at all.
 pub const MIN_SAMPLE: usize = 5;
 
+/// Whether two success rates really differ, not just by chance: a
+/// two-proportion z-test at 95%. Small samples need big gaps.
+pub fn significant(a: f64, na: usize, b: f64, nb: usize) -> bool {
+    if na == 0 || nb == 0 {
+        return false;
+    }
+    let (na, nb) = (na as f64, nb as f64);
+    let p = (a * na + b * nb) / (na + nb);
+    let se = (p * (1.0 - p) * (1.0 / na + 1.0 / nb)).sqrt();
+    se > 0.0 && ((a - b).abs() / se) >= 1.96
+}
+
 pub fn mean(xs: impl Iterator<Item = f64>) -> Option<f64> {
     let v: Vec<f64> = xs.collect();
     (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
@@ -73,5 +85,18 @@ mod tests {
         assert_eq!(mean(std::iter::empty()), None);
         assert_eq!(ratio(3, 0), None);
         assert_eq!(ratio(1, 4), Some(0.25));
+    }
+}
+
+#[cfg(test)]
+mod significance_tests {
+    use super::significant;
+
+    #[test]
+    fn small_samples_need_big_gaps() {
+        // "Afternoons 84% vs late nights 57%" from 7 rated sessions: chance.
+        assert!(!significant(0.84, 7, 0.57, 200));
+        assert!(significant(0.84, 120, 0.57, 200));
+        assert!(!significant(0.5, 0, 0.9, 10));
     }
 }

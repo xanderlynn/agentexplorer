@@ -343,6 +343,14 @@ CREATE TABLE dismissed (
     at         INTEGER NOT NULL
 );
 "#,
+    // Whether each pull request a session opened was merged, from gh.
+    r#"
+CREATE TABLE pr_states (
+    url        TEXT PRIMARY KEY,
+    state      TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

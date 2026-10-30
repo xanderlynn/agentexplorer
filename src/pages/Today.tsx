@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ClipboardList, Flag, FlaskConical, Target } from "lucide-react";
-import { api, useLive } from "../api";
+import { api, useLive, type Outcome } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { FirstRun } from "../components/FirstRun";
 import { StatusBadge } from "../components/status";
 import { STATUS, isActive, isAwaiting, mostUrgent, waitingNow } from "../status";
-import { Button, Card, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
-import { dateTime, duration, projectName } from "../format";
+import { Button, Card, ErrorNote, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
+import { OUTCOME_LABEL, dateTime, duration, projectName } from "../format";
 import { fmtMetric } from "../metrics";
 import { InsightItem } from "../components/InsightItem";
 
@@ -60,6 +60,7 @@ export default function Today({
       />
 
       <FirstRun />
+      <SuggestedOutcomes onOpen={onOpen} />
       {away && <AwayDigest since={away} onOpen={onOpen} />}
 
       {waiting.length > 0 && (
@@ -268,6 +269,55 @@ function AwayDigest({ since, onOpen }: { since: number; onOpen: (id: string) => 
           </li>
         ))}
       </ul>
+    </Card>
+  );
+}
+
+/**
+ * Sessions whose git work says how they ended (a merged PR, commits that
+ * stood, a PR closed unmerged), confirmed in one click instead of rated one
+ * by one.
+ */
+function SuggestedOutcomes({ onOpen }: { onOpen: (id: string) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["sessions", { days: 30, outcome: "unrated" }], queryFn: () => api.sessions({ days: 30, outcome: "unrated" }) });
+  const confirm = useMutation({
+    mutationFn: (v: { ids: string[]; outcome: Outcome }) => api.bulkReview(v.ids, v.outcome),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+  const groups = (["shipped", "abandoned"] as Outcome[])
+    .map((o) => ({ outcome: o, rows: (q.data ?? []).filter((s) => s.suggestedOutcome === o) }))
+    .filter((g) => g.rows.length > 0);
+  if (!groups.length) return null;
+  return (
+    <Card title="Outcomes to confirm" className="mb-4">
+      <p className="text-sm text-zinc-400">From your pull requests and commits. Confirm them all, or open one to say otherwise.</p>
+      <div className="mt-3 space-y-4">
+        {groups.map((g) => (
+          <div key={g.outcome}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-zinc-200">
+                {g.rows.length} look {OUTCOME_LABEL[g.outcome].toLowerCase()}
+              </span>
+              <Button size="sm" variant="primary" busy={confirm.isPending && confirm.variables?.outcome === g.outcome} onClick={() => confirm.mutate({ ids: g.rows.map((s) => s.id), outcome: g.outcome })}>
+                Confirm all {g.rows.length}
+              </Button>
+            </div>
+            <ul className="mt-1 divide-y divide-zinc-800/60">
+              {g.rows.slice(0, 5).map((s) => (
+                <li key={s.id}>
+                  <button className="flex w-full items-center gap-3 py-1.5 text-left text-sm hover:text-zinc-100" onClick={() => onOpen(s.id)}>
+                    <span className="min-w-0 flex-1 truncate text-zinc-300">{s.title ?? s.firstPrompt ?? "Untitled session"}</span>
+                    <span className="shrink-0 text-xs text-zinc-500">{s.evidence}</span>
+                  </button>
+                </li>
+              ))}
+              {g.rows.length > 5 && <li className="py-1.5 text-xs text-zinc-500">and {g.rows.length - 5} more</li>}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <ErrorNote error={confirm.error} />
     </Card>
   );
 }

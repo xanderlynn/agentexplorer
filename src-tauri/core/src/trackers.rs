@@ -392,6 +392,24 @@ fn markdown_to_html(md: &str) -> String {
     out
 }
 
+/// A GitHub pull request's state, OPEN, MERGED or CLOSED, read with gh.
+pub fn pr_state(url: &str) -> Result<String> {
+    anyhow::ensure!(
+        url.starts_with("https://github.com/") && url.contains("/pull/"),
+        "Not a GitHub pull request link"
+    );
+    let v = run(&gh()?, &["pr", "view", url, "--json", "state"])?;
+    v["state"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| anyhow!("gh gave no state"))
+}
+
+/// Whether gh is installed, so pull request checks can run at all.
+pub fn has_gh() -> bool {
+    gh().is_ok()
+}
+
 fn gh() -> Result<PathBuf> {
     crate::util::find_program("gh", &[r"C:\Program Files\GitHub CLI\gh.exe"]).ok_or_else(|| {
         anyhow!("Install the GitHub CLI (gh) and run `gh auth login` to import GitHub issues")
@@ -951,5 +969,14 @@ mod tests {
         assert_eq!((e.kind.as_str(), e.items.len()), ("Issue", 1));
         assert_eq!(e.items[0].key, "28");
         assert_eq!(e.items[0].status, TaskStatus::Done);
+    }
+
+    #[test]
+    #[ignore]
+    fn reads_a_real_pr_state() {
+        assert_eq!(
+            pr_state("https://github.com/xanderlynn/tilly/pull/43").unwrap(),
+            "MERGED"
+        );
     }
 }

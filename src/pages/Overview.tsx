@@ -77,7 +77,7 @@ export default function Overview({
           spark={tr.successRate}
           usual={usualPct(tr.successRate)}
           onClick={() => drill({ label: "unrated sessions", outcome: "unrated" })}
-          hint={t.rated < t.sessions ? `${t.sessions - t.rated} unrated: click to rate` : undefined}
+          hint={`Shipped counts 1, partial ½, abandoned and redo 0${t.rated < t.sessions ? ` · ${t.sessions - t.rated} unrated` : ""}`}
         />
         <Stat
           label="Shipped"

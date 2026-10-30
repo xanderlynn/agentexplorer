@@ -3,6 +3,7 @@
 //! Settings (15 minutes unless changed; 0 turns it off), one at a time, and
 //! on launch and when the window is focused. A failed fetch is kept on the
 //! workstream for its card to show, and tried again a full interval later.
+//! Each round also asks gh whether recent sessions' pull requests merged.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -18,6 +19,10 @@ const DEFAULT_MINUTES: i64 = 15;
 const TICK: Duration = Duration::from_secs(60);
 /// The first look after launch, leaving the start-up scan the disk.
 const FIRST: Duration = Duration::from_secs(20);
+/// Pull requests from sessions this recent are checked for merging.
+const PR_DAYS: i64 = 30;
+/// Pull requests checked per round, so gh isn't flooded.
+const PRS_PER_ROUND: usize = 20;
 
 /// Wakes the sync loop early.
 struct Wake(Sender<()>);
@@ -58,6 +63,14 @@ fn round(app: &AppHandle, db_path: &Path) -> anyhow::Result<()> {
         .unwrap_or(DEFAULT_MINUTES);
     if minutes <= 0 {
         return Ok(());
+    }
+    // Pull requests sessions opened: merged or not decides the suggested outcome.
+    if tilly_core::trackers::has_gh() {
+        for url in tilly_core::store::prs_to_check(&conn, PR_DAYS, PRS_PER_ROUND)? {
+            // Unreadable (deleted, no access): note it, so it isn't asked again soon.
+            let state = tilly_core::trackers::pr_state(&url).unwrap_or_else(|_| "OPEN".into());
+            tilly_core::store::record_pr_state(&conn, &url, &state)?;
+        }
     }
     let due = workstreams::due_for_sync(&conn, minutes * 60_000)?;
     for key in &due {
