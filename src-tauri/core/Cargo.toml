@@ -1,6 +1,6 @@
 [package]
 name = "tilly-core"
-version = "0.1.2"
+version = "0.2.0"
 description = "Tilly's engine: parses AI-agent logs, tracks live status, and computes the read models, with no UI dependency"
 authors = ["xanderlynn"]
 license = "MIT"

@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "tilly"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4680,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "tilly-core"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
