@@ -898,6 +898,7 @@ export const api = {
   goToAgent: (id: string) => call<string>("go_to_agent", { id }),
   claudeHook: () => call<{ installed: boolean; settingsPath: string }>("claude_hook_status"),
   setClaudeHook: (on: boolean) => call<{ installed: boolean; settingsPath: string }>("set_claude_hook", { on }),
+  progress: (days: number) => call<ProgressT>("get_progress", { days }),
   bulkReview: (ids: string[], outcome: Outcome) => call<number>("bulk_review", { ids, outcome }),
   dismissSession: (id: string) => call<void>("dismiss_session", { id }),
   attention: (days: number) => call<Attention>("get_attention", { days }),
@@ -981,4 +982,23 @@ export interface Attention {
   byHour: { hour: number; shortMs: number; awayMs: number; waits: number }[];
   projects: { project: string; waitMs: number; waits: number }[];
   worstHour: number | null;
+}
+
+/** A group of sessions in "what pays off"; see progress.rs. */
+export interface PayoffGroup {
+  label: string;
+  sessions: number;
+  rated: number;
+  success: number | null;
+  avgCostUsd: number | null;
+  costPerShipped: number | null;
+}
+
+/** Month-by-month progress and what pays off; see progress.rs. */
+export interface ProgressT {
+  months: { month: string; sessions: number; rated: number; success: number | null; costUsd: number; costPerShipped: number | null; replyMs: number | null; waitedMs: number; activeMs: number }[];
+  headline: string | null;
+  byTeam: PayoffGroup[];
+  byApp: PayoffGroup[];
+  byKind: PayoffGroup[];
 }

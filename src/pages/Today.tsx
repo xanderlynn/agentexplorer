@@ -5,6 +5,7 @@ import { api, useLive, type Outcome } from "../api";
 import type { Drill, Page } from "../App";
 import { QuickReview } from "../components/QuickReview";
 import { FirstRun } from "../components/FirstRun";
+import { WeekDigest } from "../components/WeekDigest";
 import { StatusBadge } from "../components/status";
 import { STATUS, isActive, isAwaiting, mostUrgent, waitingNow } from "../status";
 import { Button, Card, ErrorNote, Loading, PageHeader, SourceBadge, cx } from "../components/ui";
@@ -61,6 +62,7 @@ export default function Today({
 
       <FirstRun />
       <SuggestedOutcomes onOpen={onOpen} />
+      {[1, 5].includes(now.getDay()) && <WeekDigest />}
       {away && <AwayDigest since={away} onOpen={onOpen} />}
 
       {waiting.length > 0 && (

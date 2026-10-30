@@ -142,7 +142,7 @@ export function delta(current: number | null | undefined, previous: number | nul
   return (current - previous) / Math.abs(previous);
 }
 
-export const TASK_TYPES = ["feature", "bugfix", "refactor", "tests", "docs", "research", "infra", "review", "other"];
+export const TASK_TYPES = ["feature", "bugfix", "troubleshooting", "refactor", "tests", "docs", "research", "infra", "review", "other"];
 
 /** What each kind of agent is for, so a roster reads like a team. */
 const ROLES: Record<string, [string, string]> = {

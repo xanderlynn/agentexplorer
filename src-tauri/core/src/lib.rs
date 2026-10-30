@@ -25,6 +25,7 @@ pub mod model;
 pub mod parsers;
 pub mod playbooks;
 pub mod pricing;
+pub mod progress;
 pub mod signals;
 pub mod sources;
 pub mod stats;

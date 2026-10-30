@@ -28,13 +28,14 @@ import Patterns from "./pages/Patterns";
 import Usage from "./pages/Usage";
 import Playbooks from "./pages/Playbooks";
 import Scorecard from "./pages/Scorecard";
+import Progress from "./pages/Progress";
 import Retro from "./pages/Retro";
 import Settings from "./pages/Settings";
 
 /** A drill-through into Sessions: filters plus a label for the chip. */
 export type Drill = Omit<SessionFilter, "days"> & { label: string };
 
-export type Page = "today" | "experiments" | "execution" | "overview" | "control" | "teams" | "workstreams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
+export type Page = "today" | "experiments" | "execution" | "overview" | "progress" | "control" | "teams" | "workstreams" | "toolkit" | "sessions" | "patterns" | "usage" | "journal" | "playbooks" | "scorecard" | "retro" | "settings";
 
 /**
  * Six areas, each with one or more tabs. Pages keep their ids so links and
@@ -45,7 +46,7 @@ const GROUPS: { id: string; label: string; icon: typeof Gauge; tabs: { page: Pag
   { id: "agents", label: "Agents", icon: Bot, tabs: [{ page: "control", label: "Control center" }, { page: "workstreams", label: "Workstreams" }, { page: "teams", label: "Teams" }] },
   { id: "today", label: "Today", icon: Sun, tabs: [{ page: "today", label: "Today" }] },
   { id: "sessions", label: "Sessions", icon: ListChecks, tabs: [{ page: "sessions", label: "Sessions" }] },
-  { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "scorecard", label: "Delivery & reality" }] },
+  { id: "outcomes", label: "Outcomes", icon: Trophy, tabs: [{ page: "overview", label: "Summary" }, { page: "progress", label: "Progress" }, { page: "scorecard", label: "Delivery & reality" }] },
   {
     id: "habits",
     label: "Habits",
@@ -271,6 +272,7 @@ export default function App() {
           {page === "journal" && <Journal days={days} setDays={setDays} onOpen={setOpenSession} />}
           {page === "playbooks" && <Playbooks />}
           {page === "scorecard" && <Scorecard days={days} setDays={setDays} drill={openSessions} />}
+          {page === "progress" && <Progress />}
           {page === "retro" && <Retro go={go} />}
           {page === "settings" && <Settings />}
         </div>

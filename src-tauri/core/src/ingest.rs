@@ -273,7 +273,7 @@ impl Ingestor {
 /// Bump when the parsers start recording new per-session signals. It is part
 /// of every unit's fingerprint, so a bump re-parses every transcript; rows
 /// with a lower version stay out of signal-based statistics until they are.
-pub const SIGNALS_VERSION: i64 = 13;
+pub const SIGNALS_VERSION: i64 = 14;
 
 pub fn source_setting(source: Source) -> String {
     format!("source.{}.enabled", source.as_str())

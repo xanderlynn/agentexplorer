@@ -87,7 +87,7 @@ export default function Overview({
           usual={usualNum(tr.shipped, (x) => String(Math.round(x)))}
           onClick={() => drill({ label: "shipped sessions", outcome: "shipped" })}
         />
-        <Stat label="Commits" value={t.commits} change={delta(t.commits, p?.commits)} spark={tr.commits} hint={`${t.aiCommits} with AI trailers`} />
+        <Stat label="Commits" quiet="None linked. Commits made in a session's git repository, or marked Co-Authored-By an agent, count here." value={t.commits} change={delta(t.commits, p?.commits)} spark={tr.commits} hint={`${t.aiCommits} with AI trailers`} />
         <Stat
           label="Agents waited on you"
           value={hours(t.waitHours)}
@@ -99,6 +99,7 @@ export default function Overview({
         <Stat label="Sessions" value={t.sessions} change={delta(t.sessions, p?.sessions)} spark={tr.sessions} hint={`${hours(t.activeHours)} active`} />
         <Stat
           label="Interruptions / session"
+          quiet="You haven't interrupted an agent in this range."
           value={(t.interruptions / Math.max(1, t.sessions)).toFixed(1)}
           spark={tr.interruptionsPerSession}
           goodWhenUp={false}

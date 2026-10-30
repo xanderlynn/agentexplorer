@@ -208,6 +208,15 @@ pub fn take_open_request(req: State<crate::background::OpenRequest>) -> Option<S
     req.0.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
+/// Month-by-month progress and what pays off, over the last `days` days.
+#[tauri::command(async)]
+pub fn get_progress(
+    state: State<AppState>,
+    days: i64,
+) -> CmdResult<tilly_core::progress::Progress> {
+    with_db(&state, |c| tilly_core::progress::progress(c, days))
+}
+
 /// Confirms one outcome for many sessions, such as all those that look shipped.
 #[tauri::command(async)]
 pub fn bulk_review(state: State<AppState>, ids: Vec<String>, outcome: String) -> CmdResult<usize> {

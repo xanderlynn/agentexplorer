@@ -27,7 +27,7 @@ export default function Scorecard({ days, setDays, drill }: { days: number; setD
       {header}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Sessions → commits" value={pct(s.commitRate)} hint={`${s.sessionsWithCommits} of ${s.sessionsInRepos} sessions in git repos`} />
-        <Stat label="Commits linked" value={s.commits} hint={`${s.aiCommits} carry an AI co-author trailer`} />
+        <Stat label="Commits linked" quiet="None linked. This tab needs sessions run in a git repository." value={s.commits} hint={`${s.aiCommits} carry an AI co-author trailer`} />
         <Stat label="Lines changed" value={`+${compact(s.insertions)} −${compact(s.deletions)}`} />
         <Stat label="Shipped sessions" value={s.shipped} />
         <Stat label="Cost per commit" value={money(s.costPerCommit, true)} hint="Claude recorded + Copilot API-equivalent" />

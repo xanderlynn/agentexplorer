@@ -46,6 +46,7 @@ export function Stat({
   usual,
   n,
   onClick,
+  quiet,
 }: {
   label: string;
   value: ReactNode;
@@ -61,7 +62,18 @@ export function Stat({
   /** Sample size behind the value. */
   n?: ReactNode;
   onClick?: () => void;
+  /** Said instead, small, when the value and every week of it are zero: a tile that never moves is noise. */
+  quiet?: string;
 }) {
+  const dead = quiet != null && (value === 0 || value === "0" || value === "0.0") && (spark ?? []).every((x) => !x);
+  if (dead) {
+    return (
+      <div className="rounded-xl border border-dashed border-zinc-800/80 px-4 py-3 text-left">
+        <span className="text-xs font-medium uppercase tracking-wide text-zinc-600">{label}</span>
+        <p className="mt-1 text-xs text-zinc-500">{quiet}</p>
+      </div>
+    );
+  }
   const showChange = change != null && Number.isFinite(change) && Math.abs(change) >= 0.005;
   const good = showChange && change! > 0 === goodWhenUp;
   const Tag = onClick ? "button" : "div";
