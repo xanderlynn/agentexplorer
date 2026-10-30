@@ -222,12 +222,16 @@ mod tests {
         let list = v["hooks"]["Notification"].as_array().unwrap();
         assert_eq!(list.len(), 2, "theirs kept, ours once");
         assert_eq!(v["statusLine"]["type"], "command");
-        assert!(
-            list[1]["hooks"][0]["command"]
-                .as_str()
-                .unwrap()
-                .contains(r"'/data/it'\''s here/ledger.sqlite3'")
-        );
+        let cmd = list[1]["hooks"][0]["command"].as_str().unwrap();
+        // Quoted for the platform's shell, so the path with a quote survives.
+        if cfg!(windows) {
+            assert!(cmd.contains("\"/data/it's here/ledger.sqlite3\""), "{cmd}");
+        } else {
+            assert!(
+                cmd.contains(r"'/data/it'\''s here/ledger.sqlite3'"),
+                "{cmd}"
+            );
+        }
         assert!(path.with_extension("json.tilly-backup").exists());
         set_installed(&path, false, exe, db).unwrap();
         assert!(!installed(&path).unwrap());
