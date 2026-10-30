@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Workstream, WsTask } from "./api";
-import { initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
+import { cardState, initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree } from "./workstreams";
 
-const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, url: null, ...over });
+const task = (over: Partial<WsTask>): WsTask => ({ key: "s:1", sessionId: "s", title: "T", status: "pending", kind: "agent", reason: null, agent: null, blockedBy: [], updatedAt: null, url: null, mine: false, parent: null, depth: 0, sessions: [], ...over });
 const ws = (over: Partial<Workstream>): Workstream => ({
   key: "k",
   title: "W",
@@ -11,6 +11,8 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   sourceUrl: null,
   syncedAt: null,
   syncError: null,
+  closed: false,
+  trackerRepo: null,
   repo: null,
   branch: null,
   lastActivity: 0,
@@ -18,15 +20,26 @@ const ws = (over: Partial<Workstream>): Workstream => ({
   agents: [],
   tasks: [],
   updates: [],
-  counts: { done: 0, inProgress: 0, needsYou: 0, pending: 0, agent: 0, human: 0 },
+  counts: { done: 0, inProgress: 0, needsYou: 0, decisions: 0, waiting: 0, pending: 0, agent: 0, human: 0 },
   ...over,
 });
 
 describe("workstreams", () => {
   it("splits progress into done, in progress and waiting on you", () => {
-    const p = progress(ws({ tasks: [task({ status: "done" }), task({ status: "in_progress" }), task({ kind: "human" }), task({})] }));
+    const counts = { done: 1, inProgress: 1, pending: 2, decisions: 1, waiting: 0, needsYou: 1, agent: 3, human: 1 };
+    const p = progress(ws({ counts }));
     expect(p).toEqual({ done: 0.25, doing: 0.25, waiting: 0.25, total: 4 });
     expect(progress(ws({})).total).toBe(0);
+  });
+
+  it("says what a card needs: yours, waiting, closed, idle or on track", () => {
+    const now = 100 * 86_400_000;
+    const base = { done: 1, inProgress: 0, pending: 1, decisions: 0, waiting: 0, needsYou: 0, agent: 2, human: 0 };
+    expect(cardState(ws({ counts: { ...base, decisions: 1, waiting: 2, needsYou: 3 } }), now).label).toBe("1 for you · 2 waiting");
+    expect(cardState(ws({ closed: true, counts: { ...base, needsYou: 1, decisions: 1 } }), now).label).toBe("Closed");
+    expect(cardState(ws({ counts: base, lastActivity: now - 12 * 86_400_000 }), now).label).toBe("Idle 12d");
+    expect(cardState(ws({ counts: base, lastActivity: now }), now).label).toBe("On track");
+    expect(cardState(ws({ counts: { ...base, pending: 0 }, lastActivity: 0 }), now).label).toBe("Done");
   });
 
   it("gives each task one state, yours before blocked", () => {

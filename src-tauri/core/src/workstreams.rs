@@ -11,7 +11,8 @@
 //! put in a workstream brings its feature branch along, so later sessions on
 //! that branch join it too.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -58,6 +59,13 @@ pub struct WsTask {
     pub updated_at: Option<i64>,
     /// The tracker item's page.
     pub url: Option<String>,
+    /// A tracker item assigned to you.
+    pub mine: bool,
+    /// The tracker item it sits under, and how deep; none and 0 at the top.
+    pub parent: Option<String>,
+    pub depth: u8,
+    /// Sessions that worked on this tracker item.
+    pub sessions: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,8 +106,12 @@ pub struct WsUpdate {
 pub struct WsCounts {
     pub done: usize,
     pub in_progress: usize,
-    /// Human tasks not yet done, plus sessions waiting on you.
+    /// `decisions` plus `waiting`.
     pub needs_you: usize,
+    /// Human tasks not done that are yours: assigned to you, or to nobody.
+    pub decisions: usize,
+    /// Recent sessions waiting on you.
+    pub waiting: usize,
     pub pending: usize,
     pub agent: usize,
     pub human: usize,
@@ -119,6 +131,10 @@ pub struct Workstream {
     pub synced_at: Option<i64>,
     /// Why the last fetch failed, until one succeeds.
     pub sync_error: Option<String>,
+    /// The imported epic is closed in its tracker.
+    pub closed: bool,
+    /// The tracker's repository ("owner/repo") for an imported epic.
+    pub tracker_repo: Option<String>,
     pub repo: Option<String>,
     pub branch: Option<String>,
     pub last_activity: i64,
@@ -130,7 +146,7 @@ pub struct Workstream {
 }
 
 /// Words in a task that make it work for a person, and why. Checked in order;
-/// matched as lowercase substrings.
+/// matched as whole lowercase words or phrases.
 const HUMAN_RULES: &[(&[&str], &str)] = &[
     (
         &["approve", "approval", "sign off", "sign-off", "signoff"],
@@ -148,17 +164,6 @@ const HUMAN_RULES: &[(&[&str], &str)] = &[
             "pick between",
         ],
         "Needs your decision",
-    ),
-    (
-        &[
-            "credential",
-            "secret",
-            "api key",
-            "password",
-            "keychain",
-            "token for",
-        ],
-        "Needs credentials",
     ),
     (
         &[
@@ -202,11 +207,55 @@ pub fn classify(
     }
     let t = title.to_lowercase();
     for (words, why) in HUMAN_RULES {
-        if words.iter().any(|w| t.contains(w)) {
+        if words.iter().any(|w| has_phrase(&t, w)) {
             return (TaskKind::Human, Some((*why).into()));
         }
     }
+    if needs_credentials(&t) {
+        return (TaskKind::Human, Some("Needs credentials".into()));
+    }
     (TaskKind::Agent, None)
+}
+
+/// `phrase` in `text` as whole words: "secret" in "add the secret", not in
+/// "secrets loader".
+fn has_phrase(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + phrase.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// Asking a person for a secret: a verb such as "create" or "provide" with a
+/// credential within a few words ("Create staging API keys"), not code that
+/// handles them ("Fix password reset").
+fn needs_credentials(t: &str) -> bool {
+    const VERBS: &[&str] = &[
+        "provide", "add", "create", "set", "enter", "rotate", "generate", "share", "get",
+    ];
+    const THINGS: &[&str] = &[
+        "credential",
+        "credentials",
+        "secret",
+        "secrets",
+        "api key",
+        "api keys",
+        "password",
+        "token",
+        "tokens",
+        "keychain",
+    ];
+    let words: Vec<&str> = t
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    words.iter().enumerate().any(|(i, w)| {
+        VERBS.contains(w) && {
+            let near = words[i + 1..words.len().min(i + 5)].join(" ");
+            THINGS.iter().any(|x| has_phrase(&near, x))
+        }
+    })
 }
 
 /// Stores (or with `None`, clears) the agent/human choice for a task.
@@ -372,30 +421,54 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
         out.push(ws);
     }
     let mut items = load_items(conn)?;
+    let links = load_links(conn)?;
     for ws in &mut out {
+        let active: HashSet<&str> = ws
+            .sessions
+            .iter()
+            .filter(|s| s.status.group() == Group::Active)
+            .map(|s| s.id.as_str())
+            .collect();
+        let mut item_tasks = vec![];
         for it in items.remove(&ws.key).unwrap_or_default() {
             let key = format!("item:{}:{}", ws.key, it.key);
             let (kind, reason) = item_kind(&it, stored.get(&key).copied());
-            push_task(
-                ws,
-                WsTask {
-                    key,
-                    session_id: String::new(),
-                    title: it.title,
-                    status: it.status,
-                    kind,
-                    reason,
-                    agent: it.assignee,
-                    blocked_by: vec![],
-                    updated_at: None,
-                    url: it.url,
-                },
-            );
+            let sessions = links
+                .get(&(ws.key.clone(), it.key.clone()))
+                .cloned()
+                .unwrap_or_default();
+            // An agent is on it right now.
+            let status = if it.status == TaskStatus::Pending
+                && sessions.iter().any(|s| active.contains(s.as_str()))
+            {
+                TaskStatus::InProgress
+            } else {
+                it.status
+            };
+            item_tasks.push(WsTask {
+                key,
+                session_id: String::new(),
+                title: it.title,
+                status,
+                kind,
+                reason,
+                agent: it.assignee,
+                blocked_by: vec![],
+                updated_at: None,
+                url: it.url,
+                mine: it.mine,
+                parent: it.parent.map(|p| format!("item:{}:{p}", ws.key)),
+                depth: it.depth,
+                sessions,
+            });
         }
+        ws.tasks.splice(0..0, item_tasks);
+        recount(ws, now);
     }
     out.sort_by_key(|w| {
         (
             std::cmp::Reverse(w.starred),
+            w.closed,
             std::cmp::Reverse(w.last_activity),
         )
     });
@@ -418,6 +491,8 @@ struct Prefs {
     source_url: Option<String>,
     synced_at: Option<i64>,
     sync_error: Option<String>,
+    closed: bool,
+    tracker_repo: Option<String>,
 }
 
 impl Prefs {
@@ -430,12 +505,17 @@ impl Prefs {
         ws.source_url = self.source_url;
         ws.synced_at = self.synced_at;
         ws.sync_error = self.sync_error;
+        ws.closed = self.closed;
+        if self.tracker_repo.is_some() {
+            ws.tracker_repo = self.tracker_repo;
+        }
     }
 }
 
 fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
     let mut st = conn.prepare(
-        "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at, sync_error
+        "SELECT ws_key, title, starred, custom, created_at, source_url, synced_at, sync_error,
+                source_closed, source_repo
          FROM workstream_prefs",
     )?;
     let out = st
@@ -450,6 +530,8 @@ fn load_prefs(conn: &Connection) -> Result<HashMap<String, Prefs>> {
                     source_url: r.get(5)?,
                     synced_at: r.get(6)?,
                     sync_error: r.get(7)?,
+                    closed: r.get(8)?,
+                    tracker_repo: r.get(9)?,
                 },
             ))
         })?
@@ -466,6 +548,8 @@ fn empty(key: String, created_at: i64) -> Workstream {
         source_url: None,
         synced_at: None,
         sync_error: None,
+        closed: false,
+        tracker_repo: None,
         repo: None,
         branch: None,
         last_activity: created_at,
@@ -580,10 +664,11 @@ pub fn add_session(conn: &Connection, key: &str, session_id: &str) -> Result<()>
          ON CONFLICT(session_id) DO UPDATE SET ws_key = excluded.ws_key",
         params![session_id, key],
     )?;
+    // A branch another workstream already holds stays with it; only this
+    // session moves.
     if let Some((repo, b)) = feature(repo.as_deref(), branch.as_deref()) {
         conn.execute(
-            "INSERT INTO workstream_branches (repo, branch, ws_key) VALUES (?1, ?2, ?3)
-             ON CONFLICT(repo, branch) DO UPDATE SET ws_key = excluded.ws_key",
+            "INSERT OR IGNORE INTO workstream_branches (repo, branch, ws_key) VALUES (?1, ?2, ?3)",
             params![repo, b, key],
         )?;
     }
@@ -621,26 +706,69 @@ pub fn delete(conn: &Connection, key: &str) -> Result<()> {
     conn.execute("DELETE FROM workstream_members WHERE ws_key = ?1", [key])?;
     conn.execute("DELETE FROM workstream_branches WHERE ws_key = ?1", [key])?;
     conn.execute("DELETE FROM workstream_items WHERE ws_key = ?1", [key])?;
+    conn.execute(
+        "DELETE FROM workstream_item_sessions WHERE ws_key = ?1",
+        [key],
+    )?;
     Ok(())
 }
 
-/// Adds a task and counts it.
-fn push_task(ws: &mut Workstream, t: WsTask) {
-    match t.status {
-        TaskStatus::Done => ws.counts.done += 1,
-        TaskStatus::InProgress => ws.counts.in_progress += 1,
-        _ => ws.counts.pending += 1,
-    }
-    match t.kind {
-        TaskKind::Agent => ws.counts.agent += 1,
-        TaskKind::Human => {
-            ws.counts.human += 1;
-            if t.status != TaskStatus::Done {
-                ws.counts.needs_you += 1;
+/// Counts a workstream's tasks. With an epic from a tracker, progress is
+/// the epic's leaf items alone (not the parents that group them, nor agents'
+/// own todos), so 8 issues read as 8. Only human work that's yours, assigned
+/// to you or to nobody, needs you.
+fn recount(ws: &mut Workstream, now: i64) {
+    let has_items = ws.tasks.iter().any(|t| t.session_id.is_empty());
+    let parents: HashSet<&str> = ws
+        .tasks
+        .iter()
+        .filter_map(|t| t.parent.as_deref())
+        .collect();
+    let mut c = WsCounts {
+        waiting: ws
+            .sessions
+            .iter()
+            .filter(|s| {
+                s.status.group() == Group::Awaiting && now - s.ended_at < live::LIVE_WINDOW_MS
+            })
+            .count(),
+        ..Default::default()
+    };
+    for t in ws
+        .tasks
+        .iter()
+        .filter(|t| (!has_items || t.session_id.is_empty()) && !parents.contains(t.key.as_str()))
+    {
+        match t.status {
+            TaskStatus::Done => c.done += 1,
+            TaskStatus::InProgress => c.in_progress += 1,
+            _ => c.pending += 1,
+        }
+        match t.kind {
+            TaskKind::Agent => c.agent += 1,
+            TaskKind::Human => {
+                c.human += 1;
+                let yours = !t.session_id.is_empty() || t.mine || t.agent.is_none();
+                if t.status != TaskStatus::Done && yours {
+                    c.decisions += 1;
+                }
             }
         }
     }
-    ws.tasks.push(t);
+    c.needs_you = c.decisions + c.waiting;
+    ws.counts = c;
+}
+
+/// Sessions linked to each tracker item, by (workstream, item).
+fn load_links(conn: &Connection) -> Result<HashMap<(String, String), Vec<String>>> {
+    let mut st =
+        conn.prepare("SELECT ws_key, item_key, session_id FROM workstream_item_sessions")?;
+    let mut out: HashMap<(String, String), Vec<String>> = HashMap::new();
+    for row in st.query_map([], |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))? {
+        let (k, s) = row?;
+        out.entry(k).or_default().push(s);
+    }
+    Ok(out)
 }
 
 /// Who does a tracker item: your choice, then an "agent" or "human" label,
@@ -663,8 +791,8 @@ fn item_kind(it: &crate::trackers::Item, stored: Option<TaskKind>) -> (TaskKind,
 
 fn load_items(conn: &Connection) -> Result<HashMap<String, Vec<crate::trackers::Item>>> {
     let mut st = conn.prepare(
-        "SELECT ws_key, item_key, title, status, url, labels, assignee FROM workstream_items
-         WHERE status != 'cancelled' ORDER BY ws_key, position",
+        "SELECT ws_key, item_key, title, status, url, labels, assignee, mine, parent, depth
+         FROM workstream_items WHERE status != 'cancelled' ORDER BY ws_key, position",
     )?;
     let mut out: HashMap<String, Vec<crate::trackers::Item>> = HashMap::new();
     let rows = st.query_map([], |r| {
@@ -678,6 +806,9 @@ fn load_items(conn: &Connection) -> Result<HashMap<String, Vec<crate::trackers::
                 url: r.get(4)?,
                 labels: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
                 assignee: r.get(6)?,
+                mine: r.get(7)?,
+                parent: r.get(8)?,
+                depth: r.get(9)?,
             },
         ))
     })?;
@@ -690,11 +821,12 @@ fn load_items(conn: &Connection) -> Result<HashMap<String, Vec<crate::trackers::
 
 /// Makes a starred workstream from an epic: its items become tasks, and
 /// recent sessions that mention it or its items join. Returns its key.
-pub fn import(conn: &Connection, epic: &Epic) -> Result<String> {
+pub fn import(conn: &Connection, epic: &Epic, link: &str) -> Result<String> {
+    // Already imported, by the link given or where the issue lives now.
     let existing: Option<String> = conn
         .query_row(
-            "SELECT ws_key FROM workstream_prefs WHERE source_url = ?1",
-            [&epic.url],
+            "SELECT ws_key FROM workstream_prefs WHERE source_url IN (?1, ?2)",
+            params![epic.url, link.trim()],
             |r| r.get(0),
         )
         .optional()?;
@@ -732,8 +864,9 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
     tx.execute("DELETE FROM workstream_items WHERE ws_key = ?1", [key])?;
     {
         let mut ins = tx.prepare(
-            "INSERT OR IGNORE INTO workstream_items (ws_key, item_key, position, title, status, url, labels, assignee)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR IGNORE INTO workstream_items
+               (ws_key, item_key, position, title, status, url, labels, assignee, mine, parent, depth)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
         for (i, it) in epic.items.iter().enumerate() {
             ins.execute(params![
@@ -744,16 +877,48 @@ pub fn sync(conn: &Connection, key: &str, epic: &Epic) -> Result<()> {
                 it.status.as_str(),
                 it.url,
                 serde_json::to_string(&it.labels)?,
-                it.assignee
+                it.assignee,
+                it.mine,
+                it.parent,
+                it.depth
             ])?;
         }
     }
+    // Follow the epic: its title (unless you renamed it), state, where it lives.
     tx.execute(
-        "UPDATE workstream_prefs SET synced_at = ?2, sync_tried_at = ?2, sync_error = NULL WHERE ws_key = ?1",
-        params![key, now_ms()],
+        "UPDATE workstream_prefs SET
+           title = CASE WHEN title IS source_title OR source_title IS NULL THEN ?3 ELSE title END,
+           source_title = ?3, source_closed = ?4, source_repo = ?5, source_url = ?6,
+           synced_at = ?2, sync_tried_at = ?2, sync_error = NULL
+         WHERE ws_key = ?1",
+        params![
+            key,
+            now_ms(),
+            epic.title,
+            epic.closed(),
+            epic.repo,
+            epic.url
+        ],
     )?;
-    for id in mentions(&tx, epic)? {
-        add_session(&tx, key, &id)?;
+    tx.execute(
+        "DELETE FROM workstream_item_sessions WHERE ws_key = ?1",
+        [key],
+    )?;
+    let members: HashSet<String> = tx
+        .prepare("SELECT session_id FROM workstream_members")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, item) in mentions(&tx, epic)? {
+        if let Some(item) = item {
+            tx.execute(
+                "INSERT OR IGNORE INTO workstream_item_sessions (ws_key, item_key, session_id) VALUES (?1, ?2, ?3)",
+                params![key, item, id],
+            )?;
+        }
+        // A session already in a workstream stays there.
+        if !members.contains(&id) {
+            add_session(&tx, key, &id)?;
+        }
     }
     tx.commit()?;
     Ok(())
@@ -790,17 +955,20 @@ pub fn due_for_sync(conn: &Connection, every_ms: i64) -> Result<Vec<String>> {
     Ok(keys)
 }
 
-/// Sessions from the last 90 days, in no workstream of yours yet, whose
-/// prompt, title or branch mention the epic or its items.
-fn mentions(conn: &Connection, epic: &Epic) -> Result<Vec<String>> {
+/// Sessions from the last 90 days that mention the epic or its items, in
+/// their title, opening prompt, latest reply or branch, and the item each
+/// names (none for the epic itself). "#12" counts only in a clone of the
+/// epic's repository, known by its git remote.
+fn mentions(conn: &Connection, epic: &Epic) -> Result<Vec<(String, Option<String>)>> {
     let since = now_ms() - 90 * crate::stats::DAY_MS;
     let mut st = conn.prepare(
         "SELECT id, COALESCE(repo_root, project_path), git_branch,
-                lower(COALESCE(title, '') || ' ' || substr(COALESCE(first_prompt, ''), 1, 4000))
-         FROM sessions WHERE ended_at >= ?1 AND id NOT IN (SELECT session_id FROM workstream_members)",
+                lower(COALESCE(title, '') || ' ' || substr(COALESCE(first_prompt, ''), 1, 8000)
+                      || ' ' || COALESCE(last_message, ''))
+         FROM sessions WHERE ended_at >= ?1",
     )?;
-    let needles: Vec<String> = epic.needles.iter().map(|n| n.to_lowercase()).collect();
     let repo = epic.repo.as_deref().map(str::to_lowercase);
+    let mut remotes: HashMap<String, Option<String>> = HashMap::new();
     let rows = st.query_map([since], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -813,25 +981,48 @@ fn mentions(conn: &Connection, epic: &Epic) -> Result<Vec<String>> {
     for row in rows {
         let (id, root, branch, text) = row?;
         let branch = branch.unwrap_or_default().to_lowercase();
-        let hit = needles
+        let mut hits: Vec<Option<String>> = epic
+            .needles
             .iter()
-            .any(|n| text.contains(n.as_str()) || branch.contains(n.as_str()))
-            || (repo.is_some()
-                && root.as_deref().and_then(|p| {
-                    p.replace('\\', "/")
-                        .rsplit('/')
-                        .next()
-                        .map(str::to_lowercase)
-                }) == repo
-                && epic
-                    .numbers
+            .filter(|n| {
+                let t = n.text.to_lowercase();
+                has_ref(&text, &t) || has_ref(&branch, &t)
+            })
+            .map(|n| n.item.clone())
+            .collect();
+        let same_repo = repo.is_some()
+            && root.as_deref().is_some_and(|p| {
+                remotes
+                    .entry(p.to_string())
+                    .or_insert_with(|| crate::git::remote_slug(Path::new(p)))
+                    .as_deref()
+                    .map(str::to_lowercase)
+                    == repo
+            });
+        if same_repo {
+            hits.extend(
+                epic.numbers
                     .iter()
-                    .any(|n| mentions_number(&text, *n) || branch_has_number(&branch, *n)));
-        if hit {
-            out.push(id);
+                    .filter(|(n, _)| mentions_number(&text, *n) || branch_has_number(&branch, *n))
+                    .map(|(_, item)| item.clone()),
+            );
         }
+        hits.sort();
+        hits.dedup();
+        out.extend(hits.into_iter().map(|item| (id.clone(), item)));
     }
     Ok(out)
+}
+
+/// `needle` (a link or "owner/repo#12") in `text`, not as the start of a
+/// longer one: "o/r#2" isn't in "o/r#27".
+fn has_ref(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(i, _)| {
+        !text[i + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(char::is_alphanumeric)
+    })
 }
 
 /// "#12" not followed by another digit.
@@ -881,6 +1072,8 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
         source_url: None,
         synced_at: None,
         sync_error: None,
+        closed: false,
+        tracker_repo: None,
         repo: first.repo.clone(),
         branch,
         last_activity: rows.iter().map(|r| r.ended).max().unwrap_or(0),
@@ -900,10 +1093,6 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
             status: r.status,
             ended_at: r.ended,
         });
-        // Only recent sessions wait on you; an old failure is history.
-        if r.status.group() == Group::Awaiting && now - r.ended < live::LIVE_WINDOW_MS {
-            ws.counts.needs_you += 1;
-        }
         ws.agents.push(WsAgent {
             session_id: r.id.clone(),
             id: "lead".into(),
@@ -947,21 +1136,25 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
                 })
                 .map(|b| key_of(b))
                 .collect();
-            push_task(
-                &mut ws,
-                WsTask {
-                    key,
-                    session_id: r.id.clone(),
-                    title: t.title.clone(),
-                    status: t.status,
-                    kind,
-                    reason,
-                    agent: t.agent.clone(),
-                    blocked_by: open,
-                    updated_at: t.updated_at,
-                    url: None,
-                },
-            );
+            // The same todo carried into a later session: the latest one stands.
+            let same = |x: &WsTask| x.title.trim().eq_ignore_ascii_case(t.title.trim());
+            ws.tasks.retain(|x| !same(x));
+            ws.tasks.push(WsTask {
+                key,
+                session_id: r.id.clone(),
+                title: t.title.clone(),
+                status: t.status,
+                kind,
+                reason,
+                agent: t.agent.clone(),
+                blocked_by: open,
+                updated_at: t.updated_at,
+                url: None,
+                mine: false,
+                parent: None,
+                depth: 0,
+                sessions: vec![],
+            });
         }
         for u in &r.tasks.updates {
             ws.updates.push(WsUpdate {
@@ -975,6 +1168,7 @@ fn build(key: String, rows: Vec<Row>, stored: &BTreeMap<String, TaskKind>, now: 
     }
     ws.updates.sort_by_key(|u| std::cmp::Reverse(u.at));
     ws.updates.truncate(MAX_UPDATES);
+    recount(&mut ws, now);
     ws
 }
 
@@ -1151,31 +1345,54 @@ mod tests {
 
     #[test]
     fn imports_epics() {
-        use crate::trackers::Item;
+        use crate::trackers::{Item, Needle};
         let conn = crate::db::open_in_memory().unwrap();
         let now = now_ms();
+        // A clone whose folder name isn't the repository's: its remote says.
+        let clone = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(clone.path().join(".git")).unwrap();
+        std::fs::write(
+            clone.path().join(".git/config"),
+            "[remote \"origin\"]\n\turl = git@github.com:o/pay.git\n",
+        )
+        .unwrap();
+        let root = clone.path().to_string_lossy().into_owned();
         insert(&conn, "a", Some("main"), "{}", now - 3000);
         insert(&conn, "b", Some("feat/34-review"), "{}", now - 2000);
         insert(&conn, "c", None, "{}", now - 1000);
         insert(&conn, "d", None, "{}", now - 500);
+        insert(&conn, "e", None, "{}", now - 400);
         for (id, prompt) in [
             ("a", "Fix #28 please"),
             ("c", "see o/pay#99 and https://github.com/o/pay/issues/280"),
-            ("d", "unrelated #2800"),
+            ("d", "unrelated #2800, and o/pay#9"),
+            ("e", "Pick up o/pay#34"),
         ] {
             conn.execute(
-                "UPDATE sessions SET first_prompt = ?2 WHERE id = ?1",
-                params![id, prompt],
+                "UPDATE sessions SET first_prompt = ?2, repo_root = ?3 WHERE id = ?1",
+                params![id, prompt, root],
             )
             .unwrap();
         }
+        conn.execute("UPDATE sessions SET repo_root = ?1 WHERE id = 'b'", [&root])
+            .unwrap();
+        // e is already in a workstream of yours: it's linked, not moved.
+        let other = create(&conn, "Other", &["e".into()]).unwrap();
         let item = |key: &str, title: &str, status, label: &str| Item {
             key: key.into(),
             title: title.into(),
             status,
             url: Some(format!("https://github.com/o/pay/issues/{key}")),
             labels: vec![label.into()],
-            assignee: None,
+            ..Default::default()
+        };
+        let needles = |keys: &[&str]| {
+            keys.iter()
+                .map(|k| Needle {
+                    text: format!("o/pay#{k}"),
+                    item: Some(k.to_string()),
+                })
+                .collect::<Vec<_>>()
         };
         let mut epic = Epic {
             title: "Checkout".into(),
@@ -1184,49 +1401,81 @@ mod tests {
             items: vec![
                 item("28", "Swap the SDK", TaskStatus::Done, "agent"),
                 item("34", "Review the design", TaskStatus::Pending, "human"),
+                Item {
+                    assignee: Some("sam".into()),
+                    ..item("35", "Approve the rollout", TaskStatus::Pending, "")
+                },
                 item("99", "Write docs", TaskStatus::Pending, ""),
             ],
-            needles: vec!["o/pay#99".into()],
-            numbers: vec![27, 28, 34, 99],
-            repo: Some("pay".into()),
+            needles: needles(&["34", "99"]),
+            numbers: [27, 28, 34, 35, 99]
+                .iter()
+                .map(|n| (*n, (*n != 27).then(|| n.to_string())))
+                .collect(),
+            repo: Some("o/pay".into()),
         };
-        let key = import(&conn, &epic).unwrap();
+        let key = import(&conn, &epic, "o/pay#27").unwrap();
         let ws = workstreams(&conn, 7).unwrap();
-        let w = &ws[0];
+        let w = ws.iter().find(|w| w.key == key).unwrap();
         assert_eq!(
             (w.title.as_str(), w.starred, w.custom),
             ("Checkout", true, true)
         );
-        assert_eq!(w.source_url.as_deref(), Some(epic.url.as_str()));
-        // #28 in the prompt, 34 in the branch, o/pay#99 by name; not #2800.
+        assert_eq!(w.tracker_repo.as_deref(), Some("o/pay"));
+        // #28 in the prompt, 34 in the branch, o/pay#99 by name; not #2800 or o/pay#9.
         let mut ids: Vec<_> = w.sessions.iter().map(|s| s.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, ["a", "b", "c"]);
-        assert_eq!(
+        let task = |k: &str| {
             w.tasks
                 .iter()
-                .map(|t| (t.title.as_str(), t.kind, t.reason.as_deref()))
-                .collect::<Vec<_>>(),
-            [
-                ("Swap the SDK", TaskKind::Agent, Some("Labelled agent")),
-                ("Review the design", TaskKind::Human, Some("Labelled human")),
-                ("Write docs", TaskKind::Agent, None)
-            ]
+                .find(|t| t.key == format!("item:{key}:{k}"))
+                .unwrap()
+        };
+        assert_eq!(task("28").sessions, ["a"]);
+        let mut on34 = task("34").sessions.clone();
+        on34.sort();
+        assert_eq!(on34, ["b", "e"]);
+        assert_eq!(task("34").reason.as_deref(), Some("Labelled human"));
+        assert_eq!(task("35").kind, TaskKind::Human);
+        // Progress is the 4 items, not agents' todos; Sam's approval isn't yours.
+        assert_eq!((w.counts.done, w.counts.pending), (1, 3));
+        assert_eq!((w.counts.decisions, w.counts.needs_you), (1, 1));
+        assert!(
+            workstreams(&conn, 7)
+                .unwrap()
+                .iter()
+                .any(|w| w.key == other && w.sessions.len() == 1)
         );
-        assert_eq!((w.counts.done, w.counts.needs_you), (1, 1));
 
-        // Your choice wins over the label, and survives a sync.
+        // Your choice and your name survive a sync; the epic's state follows.
         set_kind(&conn, &format!("item:{key}:34"), Some(TaskKind::Agent)).unwrap();
+        rename(&conn, &key, "Checkout v2").unwrap();
         epic.items.pop();
         epic.items[1].status = TaskStatus::Done;
-        assert_eq!(import(&conn, &epic).unwrap(), key);
-        let w = &workstreams(&conn, 7).unwrap()[0];
-        assert_eq!(w.tasks.len(), 2);
+        epic.status = TaskStatus::Done;
+        epic.title = "Checkout (renamed upstream)".into();
+        // The issue moved: the old link still finds it.
+        epic.url = "https://github.com/o/shop/issues/27".into();
         assert_eq!(
-            (w.tasks[1].kind, w.tasks[1].status),
-            (TaskKind::Agent, TaskStatus::Done)
+            import(&conn, &epic, "https://github.com/o/pay/issues/27").unwrap(),
+            key
         );
+        let w = workstreams(&conn, 7)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.key == key)
+            .unwrap();
+        assert_eq!((w.title.as_str(), w.closed), ("Checkout v2", true));
+        assert_eq!(
+            w.tasks.iter().filter(|t| t.session_id.is_empty()).count(),
+            3
+        );
+        let t34 = w.tasks.iter().find(|t| t.key.ends_with(":34")).unwrap();
+        assert_eq!((t34.kind, t34.status), (TaskKind::Agent, TaskStatus::Done));
         assert_eq!(source_url(&conn, &key).unwrap(), epic.url);
+        // Not renamed: the title follows the tracker.
+        rename(&conn, &key, "").unwrap();
         delete(&conn, &key).unwrap();
         assert!(
             workstreams(&conn, 7)
@@ -1234,6 +1483,56 @@ mod tests {
                 .iter()
                 .all(|w| w.tasks.is_empty())
         );
+    }
+
+    #[test]
+    fn nested_items_count_leaves() {
+        use crate::trackers::Item;
+        let conn = crate::db::open_in_memory().unwrap();
+        let it = |key: &str, parent: Option<&str>, status| Item {
+            key: key.into(),
+            title: format!("Item {key}"),
+            status,
+            parent: parent.map(String::from),
+            depth: parent.is_some() as u8,
+            ..Default::default()
+        };
+        let epic = Epic {
+            title: "Big".into(),
+            url: "https://github.com/o/r/issues/1".into(),
+            items: vec![
+                it("2", None, TaskStatus::Pending),
+                it("3", Some("2"), TaskStatus::Done),
+                it("4", Some("2"), TaskStatus::Pending),
+                it("5", None, TaskStatus::Done),
+            ],
+            ..Default::default()
+        };
+        let key = import(&conn, &epic, &epic.url).unwrap();
+        let w = workstreams(&conn, 7)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.key == key)
+            .unwrap();
+        // Feature 2 groups 3 and 4: the leaves are 3, 4 and 5.
+        assert_eq!((w.counts.done, w.counts.pending), (2, 1));
+        let t4 = w.tasks.iter().find(|t| t.key.ends_with(":4")).unwrap();
+        assert_eq!(
+            (t4.parent.clone(), t4.depth),
+            (Some(format!("item:{key}:2")), 1)
+        );
+    }
+
+    #[test]
+    fn matches_references_and_wording_exactly() {
+        assert!(has_ref("see o/r#2.", "o/r#2"));
+        assert!(!has_ref("see o/r#27", "o/r#2"));
+        assert!(!has_ref("ab#123", "ab#1"));
+        let c = |t: &str| classify(t, TaskStatus::Pending, LiveStatus::Working, None).0;
+        assert_eq!(c("Fix password reset"), TaskKind::Agent);
+        assert_eq!(c("Refactor the secrets loader"), TaskKind::Agent);
+        assert_eq!(c("Provide the staging password"), TaskKind::Human);
+        assert_eq!(c("Disapprove nothing; approve the plan"), TaskKind::Human);
     }
 
     #[test]
@@ -1251,12 +1550,9 @@ mod tests {
             title: "Checkout".into(),
             url: "https://github.com/o/pay/issues/27".into(),
             status: TaskStatus::Pending,
-            items: vec![],
-            needles: vec![],
-            numbers: vec![],
-            repo: None,
+            ..Default::default()
         };
-        let key = import(&conn, &epic).unwrap();
+        let key = import(&conn, &epic, &epic.url).unwrap();
         let mine = create(&conn, "Mine", &[]).unwrap();
         // Just synced: nothing due; due once older than the interval.
         assert!(due_for_sync(&conn, 60_000).unwrap().is_empty());

@@ -672,6 +672,13 @@ export interface WsTask {
   updatedAt: number | null;
   /** A tracker item's page. */
   url: string | null;
+  /** A tracker item assigned to you. */
+  mine: boolean;
+  /** The tracker item it sits under, and how deep (0 at the top). */
+  parent: string | null;
+  depth: number;
+  /** Sessions that worked on this tracker item. */
+  sessions: string[];
 }
 
 export interface Workstream {
@@ -686,6 +693,10 @@ export interface Workstream {
   syncedAt: number | null;
   /** Why the last fetch from the tracker failed, until one succeeds. */
   syncError: string | null;
+  /** The imported epic is closed in its tracker. */
+  closed: boolean;
+  /** "owner/repo" of an imported GitHub epic. */
+  trackerRepo: string | null;
   repo: string | null;
   branch: string | null;
   lastActivity: number;
@@ -693,7 +704,8 @@ export interface Workstream {
   agents: { sessionId: string; id: string; name: string | null; role: string; active: boolean }[];
   tasks: WsTask[];
   updates: { at: number | null; sessionId: string; agent: string; taskKey: string | null; text: string }[];
-  counts: { done: number; inProgress: number; needsYou: number; pending: number; agent: number; human: number };
+  /** Progress counts: an imported epic's leaf items, else agents' tasks. */
+  counts: { done: number; inProgress: number; needsYou: number; decisions: number; waiting: number; pending: number; agent: number; human: number };
 }
 
 /** A release you can move to; see updates.rs `list`. */

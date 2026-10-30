@@ -302,6 +302,22 @@ CREATE TABLE workstream_items (
 ALTER TABLE workstream_prefs ADD COLUMN sync_error TEXT;
 ALTER TABLE workstream_prefs ADD COLUMN sync_tried_at INTEGER;
 "#,
+    // Nested epic items, which are yours, the epic's own title, state and
+    // repository, and which sessions worked on which item.
+    r#"
+ALTER TABLE workstream_items ADD COLUMN parent TEXT;
+ALTER TABLE workstream_items ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_items ADD COLUMN mine INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_prefs ADD COLUMN source_title TEXT;
+ALTER TABLE workstream_prefs ADD COLUMN source_closed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE workstream_prefs ADD COLUMN source_repo TEXT;
+CREATE TABLE workstream_item_sessions (
+    ws_key     TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    PRIMARY KEY (ws_key, item_key, session_id)
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

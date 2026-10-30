@@ -19,11 +19,18 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - The tray menu lists the sessions waiting on you; pick one to open it.
 - Sessions are labelled by the app that ran them: the **Claude app** and the **Copilot app** apart from their command-line tools.
 - Agents' tasks can be **Blocked**, as Copilot reports them.
+- Imported epics bring their whole tree: sub-issues of sub-issues on GitHub, and an Azure DevOps epic's features and their stories, three levels down, with progress counted on the leaves. Large epics are fetched in full, page by page.
+- Each epic item shows the sessions that worked on it, who it's assigned to (and whether that's you), and turns In progress while an agent on it is working.
+- Workstream cards say **Closed** for a closed epic, **Idle** after a week without activity, and when an imported epic last synced.
 
 ### Changed
 
 - Waiting on you is harder to miss: a question asked overnight, or a permission prompt left through a meeting, stays in the Control center for a day instead of turning Done or Idle. Notifications say what the agent wants, remind you every 15 minutes (up to three times) while it waits, and open the session when clicked. "Might need approval" now notifies by default.
 - "Waited on you" today counts the waits still open, not only the ones you've answered.
+- Workstream counts are honest: an imported epic's progress is its own items, not those plus every agent todo; "need you" is split into tasks that are yours (assigned to you or nobody) and agents waiting on you; a todo carried into a later session counts once.
+- Linking sessions to an epic is exact: "o/r#2" no longer matches "o/r#27", "#28" counts only in a clone of the epic's repository (by its git remote, not the folder name), and replies are searched as well as prompts. A session already in another workstream is linked to the item without being moved, and adding a session no longer takes a branch another workstream holds.
+- Syncing an epic follows it: its new title (unless you renamed it), closed state, and new location if the issue moved. A failed sub-issue fetch is reported instead of silently emptying the epic, and a `gh` or `az` call that hangs gives up after a minute.
+- Tasks that need credentials are recognised by what they ask ("Provide the staging password"), not by a word in them ("Fix password reset").
 - Today no longer asks you to rate sessions that are still working or waiting on you.
 - What's new no longer opens by itself after an update; a dot in the sidebar marks unread notes.
 - A new logo: a girl with a bob haircut replaces the lowercase "t", in the app icon, the window and the macOS menu bar.

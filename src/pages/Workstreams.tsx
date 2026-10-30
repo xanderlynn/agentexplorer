@@ -24,7 +24,7 @@ import { api, type TaskKind, type Workstream, type WsTask } from "../api";
 import { StatusBadge } from "../components/status";
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Segmented, SourceBadge, cx, inputClass } from "../components/ui";
 import { ago, projectName, roleOf } from "../format";
-import { initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
+import { cardState, initials, progress, sortForYou, taskState, trackerName, trackerTasks, tree, type TaskState } from "../workstreams";
 
 const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: string }> = {
   done: { icon: CircleCheck, className: "text-emerald-400", label: "Done" },
@@ -217,7 +217,8 @@ function StarButton({ ws, className }: { ws: Workstream; className?: string }) {
 function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
   const latest = ws.updates[0];
   const subs = ws.agents.filter((a) => a.role !== "lead").length;
-  const allDone = ws.tasks.length > 0 && ws.counts.done === ws.tasks.length;
+  const state = cardState(ws);
+  const total = ws.counts.done + ws.counts.inProgress + ws.counts.pending;
   return (
     <div className="relative min-w-0">
       <button
@@ -231,17 +232,19 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-zinc-100">{ws.title}</div>
             <div className="truncate text-xs text-zinc-500">
-              {ws.sourceUrl ? `${trackerName(ws.sourceUrl)} epic` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
+              {ws.sourceUrl ? `${trackerName(ws.sourceUrl)}${ws.trackerRepo ? ` · ${ws.trackerRepo}` : " epic"}` : ws.repo ? projectName(ws.repo) : ws.custom ? "Your workstream" : "No repository"}
               {!ws.sourceUrl && ws.branch && ` · ${ws.branch}`} · {ws.sessions.length} {ws.sessions.length === 1 ? "session" : "sessions"}
             </div>
           </div>
-          {ws.counts.needsYou > 0 ? (
-            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">{ws.counts.needsYou} need you</span>
-          ) : ws.syncError ? (
-            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">Out of date</span>
-          ) : (
-            <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">{allDone ? "Done" : "On track"}</span>
-          )}
+          <span
+            title={state.hint}
+            className={cx(
+              "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
+              state.tone === "amber" ? "bg-amber-500/15 text-amber-300" : state.tone === "green" ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-800 text-zinc-400",
+            )}
+          >
+            {state.label}
+          </span>
         </div>
         <ProgressBar ws={ws} />
         {ws.syncError && (
@@ -250,7 +253,8 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
           </div>
         )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
-          <span>{ws.tasks.length ? `${ws.counts.done} of ${ws.tasks.length} done` : "No task list"}</span>
+          <span>{total ? `${ws.counts.done} of ${total} done` : "No task list"}</span>
+          {ws.sourceUrl && ws.syncedAt && <span>synced {ago(Date.now() - ws.syncedAt)}</span>}
           <span className="inline-flex items-center gap-1"><Bot size={12} aria-hidden /> {ws.counts.agent} agent</span>
           <span className="inline-flex items-center gap-1"><User size={12} aria-hidden /> {ws.counts.human} human</span>
         </div>
@@ -343,10 +347,12 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 {sync.isPending ? "Syncing…" : ws.syncedAt ? `Synced ${ago(Date.now() - ws.syncedAt)}` : "Sync"}
               </button>
             )}
-            {ws.repo && <span>{projectName(ws.repo)}</span>}
-            {ws.branch && <span className="inline-flex items-center gap-1"><GitBranch size={12} aria-hidden /> {ws.branch}</span>}
-            <span>{ws.tasks.length ? `${ws.counts.done} of ${ws.tasks.length} done` : "No task list"}</span>
-            {ws.counts.needsYou > 0 && <span className="text-amber-300">{ws.counts.needsYou} need you</span>}
+            {ws.trackerRepo ? <span>{ws.trackerRepo}</span> : ws.repo && <span>{projectName(ws.repo)}</span>}
+            {!ws.sourceUrl && ws.branch && <span className="inline-flex items-center gap-1"><GitBranch size={12} aria-hidden /> {ws.branch}</span>}
+            {ws.closed && <span className="text-zinc-400">Closed</span>}
+            <span>{ws.counts.done + ws.counts.inProgress + ws.counts.pending ? `${ws.counts.done} of ${ws.counts.done + ws.counts.inProgress + ws.counts.pending} done` : "No task list"}</span>
+            {ws.counts.decisions > 0 && <span className="text-amber-300">{ws.counts.decisions} for you</span>}
+            {ws.counts.waiting > 0 && <span className="text-amber-300">{ws.counts.waiting} agent{ws.counts.waiting === 1 ? "" : "s"} waiting</span>}
           </div>
           <div className="mt-2 max-w-md"><ProgressBar ws={ws} /></div>
           {ws.syncError && !sync.isPending && (
@@ -398,6 +404,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
                 <div className="mb-1 flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-zinc-200">From {trackerName(ws.sourceUrl ?? "")}</span>
                   <span className="text-xs text-zinc-500">{items.filter((t) => t.status === "done").length} of {items.length} closed</span>
+                  {ws.closed && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-400">Epic closed</span>}
                 </div>
                 {items.map((t) => (
                   <TaskRow key={t.key} t={t} selected={t.key === sel} onSelect={() => setSel(t.key === sel ? null : t.key)} />
@@ -442,7 +449,7 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
         </Card>
 
         <div className="space-y-4">
-          {task && <TaskDetail t={task} titleOf={titleOf} />}
+          {task && <TaskDetail t={task} titleOf={titleOf} ws={ws} onOpen={onOpen} />}
           <Card title={task ? "Updates on this task" : "Updates"}>
             {updates.length === 0 ? (
               <p className="text-sm text-zinc-500">No updates yet.</p>
@@ -473,6 +480,8 @@ function TaskRow({ t, selected, onSelect }: { t: WsTask; selected: boolean; onSe
       role="treeitem"
       aria-selected={selected}
       onClick={onSelect}
+      // Nested tracker items step in under their parent.
+      style={t.depth ? { paddingLeft: `${1.5 + t.depth * 1.25}rem` } : undefined}
       className={cx(
         "flex w-full items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm transition-colors hover:bg-zinc-800/60",
         selected && "bg-zinc-800",
@@ -498,7 +507,7 @@ function KindBadge({ kind, reason }: { kind: TaskKind; reason: string | null }) 
   );
 }
 
-function TaskDetail({ t, titleOf }: { t: WsTask; titleOf: (key: string) => string }) {
+function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: string) => string; ws: Workstream; onOpen: (id: string) => void }) {
   const qc = useQueryClient();
   const set = useMutation({
     mutationFn: (kind: TaskKind | null) => api.setTaskKind(t.key, kind),
@@ -526,7 +535,26 @@ function TaskDetail({ t, titleOf }: { t: WsTask; titleOf: (key: string) => strin
         {t.agent && (
           <>
             <dt className="text-zinc-500">{t.sessionId ? "Worked on by" : "Assigned to"}</dt>
-            <dd className="text-zinc-300">{t.agent === "lead" ? "Lead" : t.agent}</dd>
+            <dd className="text-zinc-300">
+              {t.agent === "lead" ? "Lead" : t.agent}
+              {t.mine && <span className="text-zinc-500"> (you)</span>}
+            </dd>
+          </>
+        )}
+        {t.sessions.length > 0 && (
+          <>
+            <dt className="text-zinc-500">Sessions</dt>
+            <dd className="space-y-1">
+              {t.sessions.map((id) => {
+                const s = ws.sessions.find((x) => x.id === id);
+                return (
+                  <button key={id} className="flex w-full min-w-0 items-center gap-2 text-left text-zinc-300 hover:text-zinc-100" onClick={() => onOpen(id)}>
+                    {s && <StatusBadge status={s.status} size="xs" />}
+                    <span className="truncate">{s?.title ?? "A session in another workstream"}</span>
+                  </button>
+                );
+              })}
+            </dd>
           </>
         )}
         {t.blockedBy.length > 0 && (

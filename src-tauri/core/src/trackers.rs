@@ -1,10 +1,12 @@
 //! Epics and features from issue trackers, to build a workstream from: a
-//! GitHub issue with its sub-issues (or its task list), or an Azure DevOps
-//! work item with its children. Fetched with your own `gh` or `az` sign-in,
-//! so Tilly never stores a token.
+//! GitHub issue with its sub-issues (nested, or else the task list in its
+//! description), or an Azure DevOps work item with its children, down to
+//! `MAX_DEPTH` levels. Fetched with your own `gh` or `az` sign-in, so Tilly
+//! never stores a token.
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
@@ -14,8 +16,14 @@ use crate::util::quiet_command;
 
 /// The Azure DevOps resource id, for `az rest` to get a token for.
 const ADO_RESOURCE: &str = "499b84ac-1321-427f-aa17-267ca6975798";
-/// Child items fetched per epic.
-const MAX_ITEMS: usize = 200;
+/// Items fetched per epic, across all levels.
+const MAX_ITEMS: usize = 1000;
+/// Levels below the epic: epic → feature → story → task.
+const MAX_DEPTH: u8 = 3;
+/// Work items per Azure DevOps batch request.
+const ADO_BATCH: usize = 200;
+/// A `gh` or `az` call taking longer than this is given up on.
+const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ref {
@@ -33,7 +41,7 @@ pub enum Ref {
 }
 
 /// One item under the epic.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Item {
     /// Stable within the epic: the issue number or work item id, or the
     /// task list line.
@@ -43,22 +51,43 @@ pub struct Item {
     pub url: Option<String>,
     /// Labels or tags, lowercased; "agent" and "human" set who does it.
     pub labels: Vec<String>,
+    /// Who it's assigned to, joined for display.
     pub assignee: Option<String>,
+    /// Assigned to you (the `gh` or `az` signed-in user).
+    pub mine: bool,
+    /// The item it sits under; none for the epic's direct children.
+    pub parent: Option<String>,
+    /// 0 for the epic's direct children.
+    pub depth: u8,
 }
 
+/// Text in a session that ties it to the epic or one of its items.
 #[derive(Debug, Clone, PartialEq)]
+pub struct Needle {
+    pub text: String,
+    /// The item it names; none for the epic itself.
+    pub item: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Epic {
     pub title: String,
     pub url: String,
     pub status: TaskStatus,
     pub items: Vec<Item>,
-    /// Text that marks a session as working on it, such as its URL or
-    /// "owner/repo#12", for it and each item.
-    pub needles: Vec<String>,
-    /// The issue numbers, matched as "#12" in sessions in the same repository.
-    pub numbers: Vec<u64>,
-    /// The repository's name, for those matches.
+    /// Links and references such as "owner/repo#12" or "AB#12".
+    pub needles: Vec<Needle>,
+    /// Issue numbers matched as "#12" in sessions in the same repository,
+    /// and the item each names.
+    pub numbers: Vec<(u64, Option<String>)>,
+    /// "owner/repo", for those matches and to show where it lives.
     pub repo: Option<String>,
+}
+
+impl Epic {
+    pub fn closed(&self) -> bool {
+        matches!(self.status, TaskStatus::Done | TaskStatus::Cancelled)
+    }
 }
 
 /// Reads a GitHub issue URL ("https://github.com/o/r/issues/12" or
@@ -124,7 +153,7 @@ fn decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Fetches the epic and its items.
+/// Fetches the epic and everything under it.
 pub fn fetch(r: &Ref) -> Result<Epic> {
     match r {
         Ref::GitHub {
@@ -132,27 +161,73 @@ pub fn fetch(r: &Ref) -> Result<Epic> {
             repo,
             number,
         } => {
-            let base = format!("repos/{owner}/{repo}/issues/{number}");
-            let issue = run(&gh()?, &["api", &base])?;
-            let subs = run(&gh()?, &["api", &format!("{base}/sub_issues?per_page=100")])
-                .unwrap_or(Value::Array(vec![]));
-            Ok(github_epic(owner, repo, &issue, &subs))
+            let gh = gh()?;
+            let issue = run(
+                &gh,
+                &["api", &format!("repos/{owner}/{repo}/issues/{number}")],
+            )?;
+            let me = run(&gh, &["api", "user"])
+                .ok()
+                .and_then(|u| u["login"].as_str().map(str::to_lowercase));
+            let mut items = vec![];
+            if issue["sub_issues_summary"]["total"].as_u64().unwrap_or(0) > 0 {
+                github_children(&gh, &issue, None, 0, me.as_deref(), &mut items)?;
+            } else {
+                // No sub-issues: use the task list in its description.
+                items = task_list(issue["body"].as_str().unwrap_or(""), owner, repo);
+            }
+            Ok(github_epic(owner, repo, &issue, items))
         }
         Ref::Ado { org, project, id } => {
+            let az = az()?;
             let api = format!("{org}/{project}/_apis/wit/workitems");
-            let parent = az_get(&format!("{api}/{id}?$expand=relations&api-version=7.1"))?;
-            let ids = ado_children(&parent);
-            let children = if ids.is_empty() {
-                Value::Null
-            } else {
-                let list: Vec<String> = ids.iter().take(MAX_ITEMS).map(u64::to_string).collect();
-                // The batch endpoint takes up to 200 ids.
-                az_get(&format!(
-                    "{api}?ids={}&fields=System.Title,System.State,System.Tags,System.AssignedTo&api-version=7.1",
-                    list.join(",")
-                ))?
-            };
-            Ok(ado_epic(org, project, &parent, &children))
+            let parent = az_get(
+                &az,
+                &format!("{api}/{id}?$expand=relations&api-version=7.1"),
+            )?;
+            let me = run(&az, &["account", "show"])
+                .ok()
+                .and_then(|a| a["user"]["name"].as_str().map(str::to_lowercase));
+            let mut items = vec![];
+            let mut level: Vec<(u64, Option<String>)> = ado_children(&parent)
+                .into_iter()
+                .map(|c| (c, None))
+                .collect();
+            for depth in 0..MAX_DEPTH {
+                if level.is_empty() || items.len() >= MAX_ITEMS {
+                    break;
+                }
+                let mut next = vec![];
+                for chunk in level.chunks(ADO_BATCH) {
+                    let ids: Vec<String> = chunk.iter().map(|(i, _)| i.to_string()).collect();
+                    let batch = az_get(
+                        &az,
+                        &format!(
+                            "{api}?ids={}&$expand=relations&api-version=7.1",
+                            ids.join(",")
+                        ),
+                    )?;
+                    for w in batch["value"].as_array().into_iter().flatten() {
+                        let n = w["id"].as_u64().unwrap_or(0);
+                        let parent_key = chunk
+                            .iter()
+                            .find(|(i, _)| *i == n)
+                            .and_then(|(_, p)| p.clone());
+                        let mut it = ado_item(org, project, w, me.as_deref());
+                        it.parent = parent_key;
+                        it.depth = depth;
+                        next.extend(
+                            ado_children(w)
+                                .into_iter()
+                                .map(|c| (c, Some(it.key.clone()))),
+                        );
+                        items.push(it);
+                    }
+                }
+                level = next;
+            }
+            items.truncate(MAX_ITEMS);
+            Ok(ado_epic(org, project, &parent, items))
         }
     }
 }
@@ -163,16 +238,19 @@ fn gh() -> Result<PathBuf> {
     })
 }
 
-fn az_get(uri: &str) -> Result<Value> {
-    let az = crate::util::find_program(
+fn az() -> Result<PathBuf> {
+    crate::util::find_program(
         "az",
         &[r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"],
     )
     .ok_or_else(|| {
         anyhow!("Install the Azure CLI (az) and run `az login` to import Azure DevOps work items")
-    })?;
+    })
+}
+
+fn az_get(az: &PathBuf, uri: &str) -> Result<Value> {
     run(
-        &az,
+        az,
         &[
             "rest",
             "--resource",
@@ -186,13 +264,20 @@ fn az_get(uri: &str) -> Result<Value> {
 }
 
 fn run(bin: &PathBuf, args: &[&str]) -> Result<Value> {
-    let out = quiet_command(bin)
-        .args(args)
+    let mut cmd = quiet_command(bin);
+    cmd.args(args)
         .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("running {}", bin.display()))?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let tool = bin
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let out = crate::util::output_with_timeout(&mut cmd, CALL_TIMEOUT)
+        .with_context(|| format!("running {}", bin.display()))?
+        .ok_or_else(|| anyhow!("{tool} didn't answer within {}s", CALL_TIMEOUT.as_secs()))?;
     if !out.status.success() {
-        let tool = bin.file_stem().unwrap_or_default().to_string_lossy();
         bail!(failure(&tool, &String::from_utf8_lossy(&out.stderr)));
     }
     serde_json::from_slice(&out.stdout).context("reading the tracker's reply")
@@ -249,56 +334,135 @@ fn github_status(v: &Value) -> TaskStatus {
         .any(|l| l == "in progress" || l == "in-progress" || l == "doing")
     {
         TaskStatus::InProgress
+    } else if labels(v).iter().any(|l| l == "blocked") {
+        TaskStatus::Blocked
     } else {
         TaskStatus::Pending
     }
 }
 
-fn github_epic(owner: &str, repo: &str, issue: &Value, subs: &Value) -> Epic {
-    let number = issue["number"].as_u64().unwrap_or(0);
-    let mut items: Vec<Item> = subs
+/// "https://github.com/o/r/issues/12" → ("o/r", 12).
+fn github_ref(url: &str) -> Option<(String, u64)> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let mut p = rest.split('/');
+    let (owner, repo, kind, n) = (p.next()?, p.next()?, p.next()?, p.next()?);
+    (kind == "issues").then(|| Some((format!("{owner}/{repo}"), n.parse().ok()?)))?
+}
+
+fn github_item(s: &Value, me: Option<&str>) -> Item {
+    let assignees: Vec<String> = s["assignees"]
         .as_array()
         .into_iter()
         .flatten()
-        .take(MAX_ITEMS)
-        .map(|s| Item {
-            key: s["number"].as_u64().unwrap_or(0).to_string(),
-            title: s["title"].as_str().unwrap_or("").to_string(),
-            status: github_status(s),
-            url: s["html_url"].as_str().map(String::from),
-            labels: labels(s),
-            assignee: s["assignees"][0]["login"].as_str().map(String::from),
-        })
+        .filter_map(|a| a["login"].as_str().map(String::from))
         .collect();
-    // No sub-issues: use the task list in its description.
-    if items.is_empty() {
-        items = task_list(issue["body"].as_str().unwrap_or(""), owner, repo);
+    let url = s["html_url"].as_str().map(String::from);
+    Item {
+        // The number alone within the epic's repo; repo#number elsewhere.
+        key: url
+            .as_deref()
+            .and_then(github_ref)
+            .map(|(_, n)| n.to_string())
+            .unwrap_or_else(|| s["number"].as_u64().unwrap_or(0).to_string()),
+        title: s["title"].as_str().unwrap_or("").to_string(),
+        status: github_status(s),
+        url,
+        labels: labels(s),
+        mine: me.is_some_and(|me| assignees.iter().any(|a| a.eq_ignore_ascii_case(me))),
+        assignee: (!assignees.is_empty()).then(|| assignees.join(", ")),
+        parent: None,
+        depth: 0,
     }
-    let mut numbers = vec![number];
-    numbers.extend(items.iter().filter_map(|i| i.key.parse::<u64>().ok()));
-    let needles = numbers
-        .iter()
-        .flat_map(|n| {
-            [
-                format!("github.com/{owner}/{repo}/issues/{n}"),
-                format!("{owner}/{repo}#{n}"),
-            ]
-        })
+}
+
+/// The sub-issues of `issue`, and theirs, depth first.
+fn github_children(
+    gh: &PathBuf,
+    issue: &Value,
+    parent: Option<&str>,
+    depth: u8,
+    me: Option<&str>,
+    items: &mut Vec<Item>,
+) -> Result<()> {
+    let Some(api) = issue["url"]
+        .as_str()
+        .and_then(|u| u.strip_prefix("https://api.github.com/"))
+    else {
+        bail!("GitHub's reply had no issue address");
+    };
+    let pages = run(
+        gh,
+        &[
+            "api",
+            "--paginate",
+            "--slurp",
+            &format!("{api}/sub_issues?per_page=100"),
+        ],
+    )?;
+    let subs: Vec<&Value> = pages
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|p| p.as_array().into_iter().flatten())
         .collect();
+    for s in subs {
+        if items.len() >= MAX_ITEMS {
+            break;
+        }
+        let mut it = github_item(s, me);
+        it.parent = parent.map(String::from);
+        it.depth = depth;
+        let key = it.key.clone();
+        items.push(it);
+        if depth + 1 < MAX_DEPTH && s["sub_issues_summary"]["total"].as_u64().unwrap_or(0) > 0 {
+            github_children(gh, s, Some(&key), depth + 1, me, items)?;
+        }
+    }
+    Ok(())
+}
+
+fn github_epic(owner: &str, repo: &str, issue: &Value, items: Vec<Item>) -> Epic {
+    let number = issue["number"].as_u64().unwrap_or(0);
+    let url = issue["html_url"]
+        .as_str()
+        .map(String::from)
+        .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/issues/{number}"));
+    // The issue may have moved: name it by where it is now.
+    let (full, _) = github_ref(&url).unwrap_or_else(|| (format!("{owner}/{repo}"), number));
+    let mut needles = vec![];
+    let mut numbers = vec![(number, None)];
+    let mut add = |link: &str, item: Option<String>| {
+        if let Some((r, n)) = github_ref(link) {
+            needles.push(Needle {
+                text: format!("github.com/{r}/issues/{n}"),
+                item: item.clone(),
+            });
+            needles.push(Needle {
+                text: format!("{r}#{n}"),
+                item: item.clone(),
+            });
+            if r.eq_ignore_ascii_case(&full) && item.is_some() {
+                numbers.push((n, item));
+            }
+        }
+    };
+    add(&url, None);
+    for it in &items {
+        if let Some(u) = &it.url {
+            add(u, Some(it.key.clone()));
+        }
+    }
     Epic {
         title: issue["title"]
             .as_str()
             .unwrap_or("Untitled issue")
             .to_string(),
-        url: issue["html_url"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/issues/{number}")),
+        url,
         status: github_status(issue),
         items,
         needles,
         numbers,
-        repo: Some(repo.to_string()),
+        repo: Some(full),
     }
 }
 
@@ -319,9 +483,13 @@ fn task_list(body: &str, owner: &str, repo: &str) -> Vec<Item> {
                 .and_then(|n| n.split_whitespace().next())
                 .and_then(|n| n.parse::<u64>().ok());
             Some(Item {
-                key: issue
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| text.to_string()),
+                // A plain line is keyed by its words, so a reworded line is a new item.
+                key: issue.map(|n| n.to_string()).unwrap_or_else(|| {
+                    text.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase()
+                }),
                 title: text.to_string(),
                 status: if done {
                     TaskStatus::Done
@@ -329,8 +497,7 @@ fn task_list(body: &str, owner: &str, repo: &str) -> Vec<Item> {
                     TaskStatus::Pending
                 },
                 url: issue.map(|n| format!("https://github.com/{owner}/{repo}/issues/{n}")),
-                labels: vec![],
-                assignee: None,
+                ..Default::default()
             })
         })
         .take(MAX_ITEMS)
@@ -342,6 +509,7 @@ fn ado_status(state: &str) -> TaskStatus {
         "closed" | "done" | "resolved" | "completed" => TaskStatus::Done,
         "removed" | "cut" => TaskStatus::Cancelled,
         "active" | "in progress" | "doing" | "committed" | "in review" => TaskStatus::InProgress,
+        "blocked" | "on hold" => TaskStatus::Blocked,
         _ => TaskStatus::Pending,
     }
 }
@@ -357,45 +525,60 @@ fn ado_children(parent: &Value) -> Vec<u64> {
         .collect()
 }
 
-fn ado_epic(org: &str, project: &str, parent: &Value, children: &Value) -> Epic {
+fn ado_edit(org: &str, project: &str, id: u64) -> String {
+    format!("{org}/{}/_workitems/edit/{id}", project.replace(' ', "%20"))
+}
+
+fn ado_item(org: &str, project: &str, w: &Value, me: Option<&str>) -> Item {
+    let f = &w["fields"];
+    let n = w["id"].as_u64().unwrap_or(0);
+    let who = &f["System.AssignedTo"];
+    Item {
+        key: n.to_string(),
+        title: f["System.Title"].as_str().unwrap_or("").to_string(),
+        status: ado_status(f["System.State"].as_str().unwrap_or("")),
+        url: Some(ado_edit(org, project, n)),
+        labels: f["System.Tags"]
+            .as_str()
+            .unwrap_or("")
+            .split(';')
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect(),
+        assignee: who["displayName"].as_str().map(String::from),
+        mine: me.is_some_and(|me| {
+            who["uniqueName"]
+                .as_str()
+                .is_some_and(|u| u.eq_ignore_ascii_case(me))
+        }),
+        parent: None,
+        depth: 0,
+    }
+}
+
+fn ado_epic(org: &str, project: &str, parent: &Value, items: Vec<Item>) -> Epic {
     let id = parent["id"].as_u64().unwrap_or(0);
-    let edit = |id: u64| format!("{org}/{}/_workitems/edit/{id}", project.replace(' ', "%20"));
-    let items: Vec<Item> = children["value"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|w| {
-            let f = &w["fields"];
-            let n = w["id"].as_u64().unwrap_or(0);
-            Item {
-                key: n.to_string(),
-                title: f["System.Title"].as_str().unwrap_or("").to_string(),
-                status: ado_status(f["System.State"].as_str().unwrap_or("")),
-                url: Some(edit(n)),
-                labels: f["System.Tags"]
-                    .as_str()
-                    .unwrap_or("")
-                    .split(';')
-                    .map(|t| t.trim().to_lowercase())
-                    .filter(|t| !t.is_empty())
-                    .collect(),
-                assignee: f["System.AssignedTo"]["displayName"]
-                    .as_str()
-                    .map(String::from),
-            }
-        })
-        .collect();
     let mut needles = vec![];
-    for n in std::iter::once(id).chain(items.iter().filter_map(|i| i.key.parse().ok())) {
-        needles.push(format!("_workitems/edit/{n}"));
-        needles.push(format!("AB#{n}"));
+    for (n, item) in std::iter::once((id, None)).chain(
+        items
+            .iter()
+            .filter_map(|i| Some((i.key.parse().ok()?, Some(i.key.clone())))),
+    ) {
+        needles.push(Needle {
+            text: format!("_workitems/edit/{n}"),
+            item: item.clone(),
+        });
+        needles.push(Needle {
+            text: format!("AB#{n}"),
+            item,
+        });
     }
     Epic {
         title: parent["fields"]["System.Title"]
             .as_str()
             .unwrap_or("Untitled work item")
             .to_string(),
-        url: edit(id),
+        url: ado_edit(org, project, id),
         status: ado_status(parent["fields"]["System.State"].as_str().unwrap_or("")),
         items,
         needles,
@@ -469,47 +652,59 @@ mod tests {
 
     #[test]
     fn reads_github_epics() {
-        let issue = json!({"number": 27, "title": "Workstream explorer", "state": "open",
-            "html_url": "https://github.com/o/r/issues/27", "body": "- [x] ignored"});
-        let subs = json!([
-            {"number": 28, "title": "Capture tasks", "state": "closed", "state_reason": "completed",
-             "html_url": "https://github.com/o/r/issues/28", "labels": [{"name": "agent"}], "assignees": []},
-            {"number": 34, "title": "Review the design", "state": "open",
-             "html_url": "https://github.com/o/r/issues/34", "labels": [{"name": "Human"}],
-             "assignees": [{"login": "me"}]},
-            {"number": 35, "title": "Dropped", "state": "closed", "state_reason": "not_planned"}
-        ]);
-        let e = github_epic("o", "r", &issue, &subs);
-        assert_eq!(e.title, "Workstream explorer");
+        let sub = |n: u64, state: &str, reason: &str, label: &str, who: &[&str]| {
+            json!({"number": n, "title": format!("Item {n}"), "state": state, "state_reason": reason,
+                "html_url": format!("https://github.com/o/r/issues/{n}"),
+                "labels": [{"name": label}],
+                "assignees": who.iter().map(|w| json!({"login": w})).collect::<Vec<_>>()})
+        };
+        let items = vec![
+            github_item(&sub(28, "closed", "completed", "agent", &[]), Some("me")),
+            github_item(&sub(34, "open", "", "Human", &["Me", "sam"]), Some("me")),
+            github_item(&sub(35, "closed", "not_planned", "", &[]), Some("me")),
+            github_item(&sub(36, "open", "", "blocked", &["sam"]), Some("me")),
+        ];
         assert_eq!(
-            e.items
+            items
                 .iter()
-                .map(|i| (i.key.as_str(), i.status))
+                .map(|i| (i.key.as_str(), i.status, i.mine))
                 .collect::<Vec<_>>(),
             [
-                ("28", TaskStatus::Done),
-                ("34", TaskStatus::Pending),
-                ("35", TaskStatus::Cancelled)
+                ("28", TaskStatus::Done, false),
+                ("34", TaskStatus::Pending, true),
+                ("35", TaskStatus::Cancelled, false),
+                ("36", TaskStatus::Blocked, false)
             ]
         );
-        assert_eq!(e.items[1].labels, ["human"]);
-        assert_eq!(e.items[1].assignee.as_deref(), Some("me"));
-        assert_eq!(e.numbers, [27, 28, 34, 35]);
-        assert!(e.needles.contains(&"o/r#34".to_string()));
+        assert_eq!(items[1].assignee.as_deref(), Some("Me, sam"));
+        // A moved issue is named by where it is now.
+        let issue = json!({"number": 27, "title": "Explorer", "state": "closed",
+            "html_url": "https://github.com/o/new/issues/27"});
+        let e = github_epic("o", "r", &issue, items);
+        assert!(e.closed());
+        assert_eq!(e.repo.as_deref(), Some("o/new"));
+        assert_eq!(e.numbers, [(27, None)]);
+        assert!(
+            e.needles
+                .iter()
+                .any(|n| n.text == "o/r#34" && n.item.as_deref() == Some("34"))
+        );
 
         // Without sub-issues, the description's task list.
-        let issue = json!({"number": 1, "title": "Plan", "state": "open",
-            "body": "Steps:\n- [x] Write spec\n- [ ] #5\n* [ ] Ship it\n- [?] no"});
-        let e = github_epic("o", "r", &issue, &json!([]));
+        let items = task_list(
+            "Steps:\n- [x] Write  Spec\n- [ ] #5\n* [ ] Ship it\n- [?] no",
+            "o",
+            "r",
+        );
         assert_eq!(
-            e.items
+            items
                 .iter()
                 .map(|i| (i.key.as_str(), i.status, i.url.is_some()))
                 .collect::<Vec<_>>(),
             [
-                ("Write spec", TaskStatus::Done, false),
+                ("write spec", TaskStatus::Done, false),
                 ("5", TaskStatus::Pending, true),
-                ("Ship it", TaskStatus::Pending, false)
+                ("ship it", TaskStatus::Pending, false)
             ]
         );
     }
@@ -523,19 +718,39 @@ mod tests {
             {"rel": "System.LinkTypes.Hierarchy-Forward", "url": "https://dev.azure.com/c/_apis/wit/workItems/12"}
         ]});
         assert_eq!(ado_children(&parent), [11, 12]);
-        let children = json!({"value": [
-            {"id": 11, "fields": {"System.Title": "Swap SDK", "System.State": "Closed", "System.Tags": "agent; backend"}},
-            {"id": 12, "fields": {"System.Title": "Approve rollout", "System.State": "New",
-                "System.AssignedTo": {"displayName": "Sam"}}}
-        ]});
-        let e = ado_epic("https://dev.azure.com/c", "My App", &parent, &children);
+        let org = "https://dev.azure.com/c";
+        let a = ado_item(
+            org,
+            "My App",
+            &json!({"id": 11, "fields": {"System.Title": "Swap SDK",
+            "System.State": "Closed", "System.Tags": "agent; backend"}}),
+            Some("sam@x.com"),
+        );
+        let b = ado_item(
+            org,
+            "My App",
+            &json!({"id": 12, "fields": {"System.Title": "Approve rollout",
+            "System.State": "New", "System.AssignedTo": {"displayName": "Sam", "uniqueName": "Sam@x.com"}}}),
+            Some("sam@x.com"),
+        );
+        assert_eq!(
+            (a.status, a.labels.clone(), a.mine),
+            (
+                TaskStatus::Done,
+                vec!["agent".to_string(), "backend".into()],
+                false
+            )
+        );
+        assert_eq!((b.assignee.as_deref(), b.mine), (Some("Sam"), true));
+        let e = ado_epic(org, "My App", &parent, vec![a, b]);
         assert_eq!(e.title, "Checkout");
         assert_eq!(e.status, TaskStatus::InProgress);
         assert_eq!(e.url, "https://dev.azure.com/c/My%20App/_workitems/edit/10");
-        assert_eq!(e.items[0].labels, ["agent", "backend"]);
-        assert_eq!(e.items[0].status, TaskStatus::Done);
-        assert_eq!(e.items[1].assignee.as_deref(), Some("Sam"));
-        assert!(e.needles.contains(&"AB#12".to_string()));
+        assert!(
+            e.needles
+                .iter()
+                .any(|n| n.text == "AB#12" && n.item.as_deref() == Some("12"))
+        );
     }
 
     /// Needs `gh` signed in and the network: `cargo test -- --ignored`.
@@ -545,5 +760,6 @@ mod tests {
         let e = fetch(&parse("xanderlynn/tilly#27").unwrap()).unwrap();
         println!("{e:#?}");
         assert!(e.items.len() >= 8);
+        assert_eq!(e.repo.as_deref(), Some("xanderlynn/tilly"));
     }
 }

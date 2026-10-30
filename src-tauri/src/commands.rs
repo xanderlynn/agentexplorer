@@ -548,7 +548,7 @@ pub async fn import_workstream(state: State<'_, AppState>, url: String) -> CmdRe
     // On its own connection, as the tracker can be slow to answer.
     blocking(&state, move |c, _| {
         let epic = trackers::fetch(&trackers::parse(&url)?)?;
-        workstreams::import(c, &epic)
+        workstreams::import(c, &epic, &url)
     })
     .await
 }

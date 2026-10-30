@@ -267,6 +267,51 @@ pub fn common_dir(repo: &str) -> Option<String> {
 /// Recomputes commit links for every session in `roots`, which must be the
 /// worktrees of one repository. Each commit by the configured author goes to
 /// the most recent session (in any of those worktrees) that started before it
+/// "owner/repo" from a clone's `origin` remote on GitHub, read from its git
+/// config without running git; works for worktrees too.
+pub fn remote_slug(root: &Path) -> Option<String> {
+    let dot = root.join(".git");
+    let git_dir = if dot.is_file() {
+        // A worktree: ".git" names its folder, whose "commondir" leads home.
+        let line = std::fs::read_to_string(&dot).ok()?;
+        let wt = root.join(line.trim().strip_prefix("gitdir:")?.trim());
+        match std::fs::read_to_string(wt.join("commondir")) {
+            Ok(c) => wt.join(c.trim()),
+            Err(_) => wt,
+        }
+    } else {
+        dot
+    };
+    let config = std::fs::read_to_string(git_dir.join("config")).ok()?;
+    let mut in_origin = false;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_origin = line == "[remote \"origin\"]";
+        } else if in_origin
+            && let Some(url) = line
+                .strip_prefix("url")
+                .map(|u| u.trim_start_matches([' ', '=']).trim())
+        {
+            return github_slug(url);
+        }
+    }
+    None
+}
+
+/// "git@github.com:o/r.git" or "https://github.com/o/r" → "o/r".
+fn github_slug(url: &str) -> Option<String> {
+    let rest = url
+        .split_once("github.com")?
+        .1
+        .trim_start_matches([':', '/']);
+    let mut p = rest
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .splitn(3, '/');
+    let (owner, repo) = (p.next()?, p.next()?);
+    (!owner.is_empty() && !repo.is_empty()).then(|| format!("{owner}/{repo}"))
+}
+
 /// and was active within `COMMIT_WINDOW_MS`, so a commit is counted once.
 pub fn link_commits(conn: &Connection, roots: &[String]) -> Result<usize> {
     let mut sessions: Vec<(String, i64, i64)> = vec![];
@@ -395,6 +440,27 @@ fn owning_session(sessions: &[(String, i64, i64)], t: i64) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_github_remotes() {
+        assert_eq!(
+            github_slug("git@github.com:o/r.git").as_deref(),
+            Some("o/r")
+        );
+        assert_eq!(
+            github_slug("https://github.com/o/r").as_deref(),
+            Some("o/r")
+        );
+        assert_eq!(github_slug("https://gitlab.com/o/r"), None);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(
+            dir.path().join(".git/config"),
+            "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://github.com/xanderlynn/tilly.git\n",
+        )
+        .unwrap();
+        assert_eq!(remote_slug(dir.path()).as_deref(), Some("xanderlynn/tilly"));
+    }
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
