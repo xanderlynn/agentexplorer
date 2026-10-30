@@ -32,8 +32,22 @@ To add to the next release, write under **Unreleased**; `npm run release -- <ver
 - Each epic item shows the sessions that worked on it, who it's assigned to (and whether that's you), and turns In progress while an agent on it is working.
 - Workstream cards say **Closed** for a closed epic, **Idle** after a week without activity, and when an imported epic last synced.
 
+- **Parked and Dismiss**: a session waiting on you for over three hours moves to a folded **Parked** section, out of the Awaiting count, the badge and the tray; **Dismiss** clears one you've dealt with elsewhere until it waits again.
+- **Your attention**, on Habits: agent time waiting on you split into replying (waits up to 30 minutes) and away spells (meetings, the night), by hour of day, with your typical reply and the projects that wait most. "Waited on you" in the Control center says how much was away.
+- **Progress** under Outcomes: success, cost per shipped, reply time and waiting month by month, with one line on whether the year got better, worse or stayed flat; what pays off by sub-agent team size, app and kind of work; and the workstreams you finished, by quarter.
+- A **Troubleshooting** kind of work, for "why does…", "investigate", "debug" and "root cause" sessions.
+- **Merged pull requests suggest outcomes**: Tilly checks your sessions' PRs through `gh` in the background; a merged one suggests Shipped, all closed suggests Abandoned. Today confirms all the suggestions at once.
+- A **weekly digest** on Today (Mondays and Fridays) and in the Retro.
+- **Workstream lifecycle**: cards say **Stalled** after two weeks without activity; **Archive** a workstream to put it away; the list opens on **Active** (touched in three days, or needing you), with All, Starred and Needs you, and a search box.
+- **Storage and history** in Settings: keeps every session's summary forever, compacts its detail (prompts, timeline, team, last reply) after 180 days, compresses archived transcripts after a week and deletes them after 90 days. Each is adjustable, or forever. Runs once a day.
+
 ### Changed
 
+- **Sessions** shows 100 at a time with **Show more**, and has a Last 24 hours range, so an active day opens fast.
+- The workstreams list loads summaries and fetches a workstream's detail when you open it: about a quarter of the data at a year's volume.
+- Insights only claim a difference when it's statistically significant, and need 40 rated sessions; otherwise they say how many more would help.
+- Tiles with nothing to show yet (commits, interruptions) are dimmed rather than showing a bare 0. The success rate says how it's counted.
+- Charts draw at once, without animating.
 - Waiting on you is harder to miss: a question asked overnight, or a permission prompt left through a meeting, stays in the Control center for a day instead of turning Done or Idle. Notifications say what the agent wants, remind you every 15 minutes (up to three times) while it waits, and open the session when clicked. "Might need approval" now notifies by default.
 - "Waited on you" today counts the waits still open, not only the ones you've answered.
 - Workstream counts are honest: an imported epic's progress is its own items, not those plus every agent todo; "need you" is split into tasks that are yours (assigned to you or nobody) and agents waiting on you; a todo carried into a later session counts once.

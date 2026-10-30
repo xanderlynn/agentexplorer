@@ -36,6 +36,8 @@ The **Control center** is where Tilly opens. Each session gets one status, worke
 
 Sessions stay in the live view for three hours after their last turn, and one waiting on you (a question or a permission prompt) stays for a day, so a question asked overnight is still there in the morning. The sidebar's **Agents** badge counts the ones awaiting you, and the menu-bar (tray) menu lists them, each a click away. Notifications say what the agent wants and remind you a few times, every 15 minutes, while it's still waiting; clicking one opens that session. **Today** opens with what finished, failed or started waiting while you were away. Sessions are labelled by the app that ran them: Claude Code, the Claude app, Copilot CLI, the Copilot app or Copilot in VS Code. **Go to agent** brings forward where a session runs so you can answer it: the Claude or Copilot app, VS Code on its folder, or a command-line agent's own Terminal or iTerm tab.
 
+A session that has waited on you for over three hours is **Parked**: folded away, out of the badge and the tray, until you open it. **Dismiss** clears one you've already dealt with somewhere else.
+
 Copilot logs its permission prompts, so Tilly sees them exactly. Claude Code doesn't, so Tilly can only guess (**Might need approval**) and misses Bash prompts. For exact ones, open **Settings → Claude Code permission prompts** and add Tilly's hook: one entry in Claude Code's `settings.json` (the previous file is kept as `settings.json.tilly-backup`) that passes Tilly the session and the tool it wants, nothing else. It covers Claude Code in a terminal and in the Claude app. A prompt you've approved shows as answered once the command finishes and Claude writes its next step.
 
 **Workstreams** shows larger efforts that span sessions: everything on one feature branch, or a session whose agent kept a task list. Each card shows progress (done, in progress, waiting on you), the agents on it and their latest update. Open one for its task tree, built from the agents' own task lists (Claude Code's todos and plans, Copilot's todos): each task is marked as agent work or yours (approvals, decisions, credentials, release steps, or anything the agent is waiting on you for), and you can change who it's for.
@@ -47,6 +49,8 @@ Make workstreams your own: **star** one to keep it at the top and listed whateve
 | ![Workstreams: effort cards with progress, agent and human task counts, team and latest update](docs/screenshots/workstreams.png) | ![A workstream's task tree by session, with agent and You badges, the selected task and its updates](docs/screenshots/workstream-detail.png) |
 
 ![A workstream imported from a GitHub epic: its sub-issues as tasks with agent and You badges, a linked session, and the Sync and Open links](docs/screenshots/workstream-import.png)
+
+The list opens on **Active** workstreams (touched in the last three days, or needing you), with All, Starred and Needs you, and a search box. A card says **Stalled** after two weeks without activity; **Archive** puts one away, and **Progress** lists the ones you finished.
 
 **Teams** shows sessions where the lead agent handed work to sub-agents: who is on each team, what each was asked to do, whether it reported back, and what is scheduled to run later.
 
@@ -70,6 +74,8 @@ Make workstreams your own: **star** one to keep it at the top and listed whateve
 
 ![Toolkit: agent roles used per week, and success with and without each one](docs/screenshots/toolkit.png)
 
+**Progress** answers "did I get better?": success, cost per shipped, reply time and waiting month by month, with one line on the trend, and what pays off by team size, app and kind of work. On Habits, **Your attention** splits agents' waiting on you into replying and away spells, by hour and by project. A session whose pull request merged suggests Shipped, and Today confirms suggestions in one click.
+
 ### Usage: tokens and spend
 
 Tokens and spend by tool and model, month-to-date against pace, cache savings, and the cost of each *shipped* session rather than each session.
@@ -85,6 +91,8 @@ A **weekly retro** starts with your own reflection, then Claude reviews the meas
 Pick a sound (a built-in tone or your own WAV or Ogg file), an image and a volume for each status, with quiet hours, mute and background-only alerts. Themes, accents and density are in Settings too.
 
 ![Settings: themes and the status sounds and images table](docs/screenshots/settings.png)
+
+**Storage and history** in Settings keeps every session's summary forever, so trends cover all your history, but compacts the detail of sessions older than 180 days and deletes archived transcripts after 90 days (compressed after a week). A heavy year of use then stays near 85 MB rather than 140 MB, plus the archive. Each limit is adjustable, or forever.
 
 Press ⌘K (Ctrl+K on Windows) anywhere to jump to a page or search every prompt you've written.
 
