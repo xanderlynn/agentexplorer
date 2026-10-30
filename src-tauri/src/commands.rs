@@ -23,7 +23,7 @@ use crate::retro::{self, RetroRow};
 use crate::store::{SessionFilter, SessionRow};
 use crate::updates;
 use crate::util::ErrorKind;
-use crate::{AppState, db, sources, store, trends, workstreams};
+use crate::{AppState, db, sources, store, trackers, trends, workstreams};
 
 type CmdResult<T> = Result<T, CmdError>;
 
@@ -474,6 +474,102 @@ pub fn set_task_kind(
     kind: Option<workstreams::TaskKind>,
 ) -> CmdResult<()> {
     with_db(&state, |c| workstreams::set_kind(c, &task_key, kind))
+}
+
+#[tauri::command(async)]
+pub fn create_workstream(
+    state: State<AppState>,
+    title: String,
+    sessions: Vec<String>,
+) -> CmdResult<String> {
+    with_db(&state, |c| workstreams::create(c, &title, &sessions))
+}
+
+#[tauri::command(async)]
+pub fn rename_workstream(state: State<AppState>, key: String, title: String) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::rename(c, &key, &title))
+}
+
+#[tauri::command(async)]
+pub fn star_workstream(
+    state: State<AppState>,
+    key: String,
+    starred: bool,
+    repo: Option<String>,
+    branch: Option<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        workstreams::set_starred(c, &key, starred, repo.as_deref(), branch.as_deref())
+    })
+}
+
+#[tauri::command(async)]
+pub fn add_to_workstream(
+    state: State<AppState>,
+    key: String,
+    session_ids: Vec<String>,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        session_ids
+            .iter()
+            .try_for_each(|id| workstreams::add_session(c, &key, id))
+    })
+}
+
+#[tauri::command(async)]
+pub fn remove_from_workstream(
+    state: State<AppState>,
+    key: String,
+    session_id: String,
+) -> CmdResult<()> {
+    with_db(&state, |c| {
+        workstreams::remove_session(c, &key, &session_id)
+    })
+}
+
+/// Makes a starred workstream from a GitHub issue or Azure DevOps work item
+/// link, using your `gh` or `az` sign-in. Importing the same link again
+/// refreshes it. Returns its key.
+#[tauri::command]
+pub async fn import_workstream(state: State<'_, AppState>, url: String) -> CmdResult<String> {
+    // On its own connection, as the tracker can be slow to answer.
+    blocking(&state, move |c, _| {
+        let epic = trackers::fetch(&trackers::parse(&url)?)?;
+        workstreams::import(c, &epic)
+    })
+    .await
+}
+
+/// Fetches an imported workstream's epic again.
+#[tauri::command]
+pub async fn sync_workstream(state: State<'_, AppState>, key: String) -> CmdResult<()> {
+    blocking(&state, move |c, _| {
+        let url = workstreams::source_url(c, &key)?;
+        let epic = trackers::fetch(&trackers::parse(&url)?)?;
+        workstreams::sync(c, &key, &epic)
+    })
+    .await
+}
+
+/// Opens a tracker item in the browser. Only GitHub issue and Azure DevOps
+/// work item links open, so the page can't open arbitrary sites.
+#[tauri::command(async)]
+pub fn open_tracker_link(app: tauri::AppHandle, url: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    trackers::parse(&url)
+        .and_then(|_| {
+            anyhow::ensure!(url.starts_with("https://"), "Only https links open");
+            Ok(())
+        })
+        .map_err(err)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| err(e.into()))
+}
+
+#[tauri::command(async)]
+pub fn delete_workstream(state: State<AppState>, key: String) -> CmdResult<()> {
+    with_db(&state, |c| workstreams::delete(c, &key))
 }
 
 // ----------------------------------------------------------------- updates

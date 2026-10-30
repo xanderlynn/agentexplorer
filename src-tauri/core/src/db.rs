@@ -260,6 +260,43 @@ CREATE TABLE task_kinds (
     updated_at INTEGER NOT NULL
 );
 "#,
+    // Your workstreams: stars, names and the ones you made, the sessions you
+    // put in them, and the branches whose sessions join them.
+    r#"
+CREATE TABLE workstream_prefs (
+    ws_key     TEXT PRIMARY KEY,
+    title      TEXT,
+    starred    INTEGER NOT NULL DEFAULT 0,
+    custom     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE workstream_members (
+    session_id TEXT PRIMARY KEY,
+    ws_key     TEXT NOT NULL
+);
+CREATE TABLE workstream_branches (
+    repo   TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    ws_key TEXT NOT NULL,
+    PRIMARY KEY (repo, branch)
+);
+"#,
+    // Workstreams imported from an issue tracker's epic, and its items.
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN source_url TEXT;
+ALTER TABLE workstream_prefs ADD COLUMN synced_at INTEGER;
+CREATE TABLE workstream_items (
+    ws_key   TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    title    TEXT NOT NULL,
+    status   TEXT NOT NULL,
+    url      TEXT,
+    labels   TEXT NOT NULL DEFAULT '[]',
+    assignee TEXT,
+    PRIMARY KEY (ws_key, item_key)
+);
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

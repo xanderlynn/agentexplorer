@@ -227,6 +227,28 @@ pub fn path_within(child: &str, parent: &str) -> bool {
     c == p || c.starts_with(&format!("{p}/"))
 }
 
+/// Finds a command-line tool. GUI apps on macOS do not inherit the shell
+/// PATH, so `extra` (absolute paths, such as Windows install locations) and
+/// the usual install folders are checked as well as PATH.
+pub fn find_program(name: &str, extra: &[&str]) -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let mut candidates: Vec<PathBuf> = extra.iter().map(PathBuf::from).collect();
+    if !cfg!(windows) {
+        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            candidates.push(Path::new(dir).join(name));
+        }
+        candidates.push(home().join(".local/bin").join(name));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|d| d.join(&exe)));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 /// A `Command` that never flashes a console window on Windows.
 pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     #[allow(unused_mut)]

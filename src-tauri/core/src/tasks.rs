@@ -29,7 +29,16 @@ impl TaskStatus {
         TaskStatus::Cancelled,
     ];
 
-    fn parse(s: &str) -> Option<TaskStatus> {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "pending",
+            TaskStatus::InProgress => "in_progress",
+            TaskStatus::Done => "done",
+            TaskStatus::Cancelled => "cancelled",
+        }
+    }
+
+    pub(crate) fn parse(s: &str) -> Option<TaskStatus> {
         Some(match s.to_ascii_lowercase().replace('-', "_").as_str() {
             "pending" | "not_started" | "todo" | "open" | "blocked" => TaskStatus::Pending,
             "in_progress" | "active" | "doing" | "started" => TaskStatus::InProgress,

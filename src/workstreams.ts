@@ -22,11 +22,23 @@ export function taskState(t: WsTask): TaskState {
   return "todo";
 }
 
-/** The tree: each session with its tasks, in the order they were worked. */
+/**
+ * The tree: each session with its tasks, in the order they were worked.
+ * Sessions without a task list are left out, except in ones you made, where
+ * every session you put in shows.
+ */
 export function tree(ws: Workstream) {
   return ws.sessions
     .map((s) => ({ session: s, tasks: ws.tasks.filter((t) => t.sessionId === s.id) }))
-    .filter((n) => n.tasks.length > 0 || ws.sessions.length === 1);
+    .filter((n) => n.tasks.length > 0 || ws.custom || ws.sessions.length === 1);
+}
+
+/** Items from the tracker epic it was imported from, in the epic's order. */
+export const trackerTasks = (ws: Workstream) => ws.tasks.filter((t) => !t.sessionId);
+
+/** "GitHub" or "Azure DevOps", from an imported workstream's link. */
+export function trackerName(url: string) {
+  return /^https:\/\/github\.com\//.test(url) ? "GitHub" : "Azure DevOps";
 }
 
 /** Two-letter initials for an agent's avatar. */
@@ -36,7 +48,9 @@ export function initials(label: string) {
   return words.length === 1 ? words[0].slice(0, 2).replace(/^./, (c) => c.toUpperCase()) : (words[0][0] + words[1][0]).toUpperCase();
 }
 
-/** Workstreams that need you first, then the most recently active. */
+/** Starred first, then ones that need you, then the most recently active. */
 export function sortForYou(list: Workstream[]) {
-  return [...list].sort((a, b) => Number(b.counts.needsYou > 0) - Number(a.counts.needsYou > 0) || b.lastActivity - a.lastActivity);
+  return [...list].sort(
+    (a, b) => Number(b.starred) - Number(a.starred) || Number(b.counts.needsYou > 0) - Number(a.counts.needsYou > 0) || b.lastActivity - a.lastActivity,
+  );
 }
