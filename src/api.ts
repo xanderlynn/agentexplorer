@@ -942,7 +942,9 @@ export const api = {
 
   settings: () => call<Settings>("get_settings"),
   listReleases: () => call<ReleaseInfo[]>("list_releases"),
+  /** Cards only: no task tree, just the latest update. */
   workstreams: (days: number) => call<Workstream[]>("list_workstreams", { days }),
+  workstream: (key: string, days: number) => call<Workstream>("get_workstream", { key, days }),
   setTaskKind: (taskKey: string, kind: TaskKind | null) => call<void>("set_task_kind", { taskKey, kind }),
   createWorkstream: (title: string, sessions: string[]) => call<string>("create_workstream", { title, sessions }),
   renameWorkstream: (key: string, title: string) => call<void>("rename_workstream", { key, title }),

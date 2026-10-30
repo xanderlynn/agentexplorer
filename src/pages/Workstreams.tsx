@@ -38,10 +38,23 @@ const STATE: Record<TaskState, { icon: LucideIcon; className: string; label: str
 /** Imported workstreams fetch their issue or work item again when opened after this long. */
 const SYNC_AFTER_MS = 15 * 60_000;
 
+/** Days since its last activity within which a workstream counts as active. */
+const ACTIVE_DAYS = 3;
+
+/**
+ * The default view: what's in flight. Recent, starred or needing you, and
+ * not finished (done or closed ones are archived out of it, still under All).
+ */
+function isActiveWs(w: Workstream) {
+  const state = cardState(w);
+  if (state.label === "Done" || state.label === "Closed") return w.counts.needsYou > 0;
+  return w.starred || w.counts.needsYou > 0 || Date.now() - w.lastActivity < ACTIVE_DAYS * 86_400_000;
+}
+
 /** A change to your workstreams; the list reloads after it. */
 function useWsChange<A>(fn: (arg: A) => Promise<unknown>) {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: ["workstreams"] }) });
+  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workstreams" || q.queryKey[0] === "workstream" }) });
 }
 
 const agentLabel = (a: { name: string | null; role: string }) => a.name ?? (a.role === "lead" ? "Lead" : roleOf(a.role)[0]);
@@ -53,7 +66,7 @@ const agentLabel = (a: { name: string | null; role: string }) => a.name ?? (a.ro
  */
 export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }) {
   const [days, setDays] = useState(30);
-  const [filter, setFilter] = useState<"all" | "starred" | "you">("all");
+  const [filter, setFilter] = useState<"active" | "all" | "starred" | "you">("active");
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   // The open workstream is remembered, so it stays open across restarts.
@@ -73,18 +86,23 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
       // Without storage it just isn't remembered.
     }
   };
-  const q = useQuery({ queryKey: ["workstreams", days], queryFn: () => api.workstreams(days) });
-  const list = useMemo(
-    () => sortForYou(q.data ?? []).filter((w) => filter === "all" || (filter === "starred" ? w.starred : w.counts.needsYou > 0)),
-    [q.data, filter],
-  );
+  const [search, setSearch] = useState("");
+  const q = useQuery({ queryKey: ["workstreams", days], queryFn: () => api.workstreams(days), enabled: !open });
+  const full = useQuery({ queryKey: ["workstream", open, days], queryFn: () => api.workstream(open!, days), enabled: !!open });
+  const list = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return sortForYou(q.data ?? [])
+      .filter((w) => (filter === "active" ? isActiveWs(w) : filter === "starred" ? w.starred : filter === "you" ? w.counts.needsYou > 0 : true))
+      .filter((w) => !needle || [w.title, w.repo, w.branch, w.trackerRepo].some((x) => x?.toLowerCase().includes(needle)));
+  }, [q.data, filter, search]);
   const create = useWsChange(({ title, ids }: { title: string; ids: string[] }) => api.createWorkstream(title, ids));
-  const selected = q.data?.find((w) => w.key === open);
 
-  if (selected) return <Detail ws={selected} onBack={() => setOpen(null)} onOpen={onOpen} />;
+  if (open && full.data) return <Detail ws={full.data} onBack={() => setOpen(null)} onOpen={onOpen} />;
+  if (open && full.isLoading) return <Loading />;
 
   const needYou = (q.data ?? []).filter((w) => w.counts.needsYou > 0).length;
   const starred = (q.data ?? []).filter((w) => w.starred).length;
+  const active = (q.data ?? []).filter(isActiveWs).length;
   return (
     <>
       <PageHeader
@@ -94,6 +112,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
               options={[
+                { value: "active" as const, label: `Active ${active}` },
                 { value: "all" as const, label: "All" },
                 { value: "starred" as const, label: `Starred ${starred}` },
                 { value: "you" as const, label: `Needs you ${needYou}` },
@@ -101,6 +120,7 @@ export default function Workstreams({ onOpen }: { onOpen: (id: string) => void }
               value={filter}
               onChange={setFilter}
             />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" aria-label="Search workstreams" className={cx(inputClass, "w-40")} />
             <Segmented options={[{ value: 7, label: "7d" }, { value: 30, label: "30d" }, { value: 0, label: "All" }]} value={days} onChange={setDays} />
             <Button size="sm" onClick={() => setImporting(true)}>
               <Download size={14} /> Import from tracker
@@ -528,7 +548,7 @@ function TaskDetail({ t, titleOf, ws, onOpen }: { t: WsTask; titleOf: (key: stri
   const qc = useQueryClient();
   const set = useMutation({
     mutationFn: (kind: TaskKind | null) => api.setTaskKind(t.key, kind),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["workstreams"] }),
+    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workstreams" || q.queryKey[0] === "workstream" }),
   });
   const label = useMutation({ mutationFn: (kind: TaskKind) => api.labelItem(t.key, kind) });
   const st = STATE[taskState(t)];

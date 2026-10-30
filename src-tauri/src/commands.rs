@@ -491,7 +491,17 @@ pub fn list_workstreams(
     state: State<AppState>,
     days: i64,
 ) -> CmdResult<Vec<workstreams::Workstream>> {
-    with_db(&state, |c| workstreams::workstreams(c, days))
+    with_db(&state, |c| workstreams::summaries(c, days))
+}
+
+/// One workstream in full: its task tree, updates and sessions.
+#[tauri::command(async)]
+pub fn get_workstream(
+    state: State<AppState>,
+    key: String,
+    days: i64,
+) -> CmdResult<workstreams::Workstream> {
+    with_db(&state, |c| workstreams::workstream(c, &key, days))
 }
 
 /// `kind` is "agent" or "human"; none clears your choice.

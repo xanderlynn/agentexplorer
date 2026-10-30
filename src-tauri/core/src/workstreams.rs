@@ -509,6 +509,26 @@ pub fn workstreams(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
     Ok(out)
 }
 
+/// The workstream list as the cards need it: each workstream without its
+/// task tree and with only its latest update, so the live list stays small
+/// (a power user's month is ~300 workstreams). Open one with `workstream`.
+pub fn summaries(conn: &Connection, days: i64) -> Result<Vec<Workstream>> {
+    let mut all = workstreams(conn, days)?;
+    for w in &mut all {
+        w.tasks = vec![];
+        w.updates.truncate(1);
+    }
+    Ok(all)
+}
+
+/// One workstream in full, from the same window as the list it was opened from.
+pub fn workstream(conn: &Connection, key: &str, days: i64) -> Result<Workstream> {
+    workstreams(conn, days)?
+        .into_iter()
+        .find(|w| w.key == key)
+        .ok_or_else(|| NotFound("Workstream").into())
+}
+
 fn pairs(conn: &Connection, sql: &str) -> Result<HashMap<String, String>> {
     let mut st = conn.prepare(sql)?;
     let out = st

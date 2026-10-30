@@ -106,6 +106,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_releases,
             commands::list_workstreams,
+            commands::get_workstream,
             commands::set_task_kind,
             commands::create_workstream,
             commands::rename_workstream,
