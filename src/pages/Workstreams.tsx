@@ -237,11 +237,18 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
           </div>
           {ws.counts.needsYou > 0 ? (
             <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">{ws.counts.needsYou} need you</span>
+          ) : ws.syncError ? (
+            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">Out of date</span>
           ) : (
             <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">{allDone ? "Done" : "On track"}</span>
           )}
         </div>
         <ProgressBar ws={ws} />
+        {ws.syncError && (
+          <div className="truncate text-xs text-amber-300" title={ws.syncError}>
+            Couldn't sync: {ws.syncError}
+          </div>
+        )}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
           <span>{ws.tasks.length ? `${ws.counts.done} of ${ws.tasks.length} done` : "No task list"}</span>
           <span className="inline-flex items-center gap-1"><Bot size={12} aria-hidden /> {ws.counts.agent} agent</span>
@@ -249,7 +256,7 @@ function EffortCard({ ws, onClick }: { ws: Workstream; onClick: () => void }) {
         </div>
         <div className="flex items-center justify-between gap-2">
           <Avatars ws={ws} />
-          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : `${ws.sessions.length > 1 ? `${ws.sessions.length} leads` : "Lead"}`}</span>
+          <span className="text-xs text-zinc-500">{subs ? `Lead + ${subs} sub-agent${subs === 1 ? "" : "s"}` : ws.sessions.length > 1 ? `${ws.sessions.length} leads` : ws.sessions.length ? "Lead" : ""}</span>
         </div>
         <div className="border-t border-zinc-800 pt-2 text-sm">
           {latest ? (
@@ -342,6 +349,11 @@ function Detail({ ws, onBack, onOpen }: { ws: Workstream; onBack: () => void; on
             {ws.counts.needsYou > 0 && <span className="text-amber-300">{ws.counts.needsYou} need you</span>}
           </div>
           <div className="mt-2 max-w-md"><ProgressBar ws={ws} /></div>
+          {ws.syncError && !sync.isPending && (
+            <p className="mt-2 text-xs text-amber-300">
+              Couldn't sync{ws.syncedAt ? `; showing the epic as of ${ago(Date.now() - ws.syncedAt)}` : ""}: {ws.syncError}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
           <Avatars ws={ws} max={8} />

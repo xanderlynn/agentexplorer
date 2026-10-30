@@ -132,9 +132,12 @@ export default function App() {
       // The release list comes from GitHub, not the logs: it keeps its own daily schedule.
       qc.invalidateQueries({ predicate: (q) => !LIVE_QUERIES.has(String(q.queryKey[0])) && q.queryKey[0] !== "releases", refetchType: "none" });
     });
+    // Imported workstreams synced from their tracker in the background.
+    const unWs = listen("workstreams-changed", () => qc.invalidateQueries({ queryKey: ["workstreams"] }));
     return () => {
       unLive.then((f) => f());
       un.then((f) => f());
+      unWs.then((f) => f());
     };
   }, [qc]);
 

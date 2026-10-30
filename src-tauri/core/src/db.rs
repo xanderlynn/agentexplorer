@@ -297,6 +297,11 @@ CREATE TABLE workstream_items (
     PRIMARY KEY (ws_key, item_key)
 );
 "#,
+    // Why an imported workstream's last fetch failed, and when it was tried.
+    r#"
+ALTER TABLE workstream_prefs ADD COLUMN sync_error TEXT;
+ALTER TABLE workstream_prefs ADD COLUMN sync_tried_at INTEGER;
+"#,
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {

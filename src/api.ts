@@ -680,6 +680,8 @@ export interface Workstream {
   /** The epic it was imported from, and when it was last fetched. */
   sourceUrl: string | null;
   syncedAt: number | null;
+  /** Why the last fetch from the tracker failed, until one succeeds. */
+  syncError: string | null;
   repo: string | null;
   branch: string | null;
   lastActivity: number;
