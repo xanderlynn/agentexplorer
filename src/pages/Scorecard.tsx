@@ -51,9 +51,9 @@ export default function Scorecard({ days, setDays, drill }: { days: number; setD
               <XAxis dataKey="weekStart" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} />
               <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
               <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} />
-              <Bar dataKey="shipped" name="Shipped" stackId="w" fill={chart.accent} />
-              <Bar dataKey="committedNotShipped" name="Committed, not shipped" stackId="w" fill="var(--color-sky-500)" />
-              <Bar dataKey="rest" name="Other sessions" stackId="w" fill={chart.muted} radius={[3, 3, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="shipped" name="Shipped" stackId="w" fill={chart.accent} />
+              <Bar isAnimationActive={false} dataKey="committedNotShipped" name="Committed, not shipped" stackId="w" fill="var(--color-sky-500)" />
+              <Bar isAnimationActive={false} dataKey="rest" name="Other sessions" stackId="w" fill={chart.muted} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

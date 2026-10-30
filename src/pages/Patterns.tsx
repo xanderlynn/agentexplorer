@@ -113,7 +113,7 @@ export default function Patterns({
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="tool" width={130} tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
-                <Bar dataKey="count" name="Calls" fill={chart.accent} radius={[0, 3, 3, 0]} />
+                <Bar isAnimationActive={false} dataKey="count" name="Calls" fill={chart.accent} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -218,7 +218,7 @@ function Multiple({
             {marks.map((m) => (
               <ReferenceLine key={m.week + m.label} x={m.week} stroke="var(--color-sky-500)" strokeDasharray="1 3" />
             ))}
-            <Line type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+            <Line isAnimationActive={false} type="monotone" dataKey={k as string} stroke={chart.accent} strokeWidth={2} dot={{ r: 2 }} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </div>

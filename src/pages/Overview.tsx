@@ -178,8 +178,8 @@ export default function Overview({
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} />
-                <Bar dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
-                <Bar dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
+                <Bar isAnimationActive={false} dataKey="shipped" name="Shipped" stackId="s" fill={chart.accent} className="cursor-pointer" />
+                <Bar isAnimationActive={false} dataKey="notShipped" name="Other sessions" stackId="s" fill={chart.muted} radius={[3, 3, 0, 0]} className="cursor-pointer" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -199,7 +199,7 @@ export default function Overview({
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis tick={{ fill: chart.axis, fontSize: 12 }} />
                 <Tooltip {...chart.tooltip} formatter={(v) => [`${Math.round(Number(v))} min`, "Active"]} />
-                <Area type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
+                <Area isAnimationActive={false} type="monotone" dataKey="activeMinutes" stroke={chart.accent} fill="url(#activeFill)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -214,7 +214,7 @@ export default function Overview({
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="key" width={95} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(k: string) => sourceLabel(k)} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => [`${Number(v).toFixed(1)}h`, "Active"]} />
-                <Bar dataKey="activeHours" radius={[0, 4, 4, 0]}>
+                <Bar isAnimationActive={false} dataKey="activeHours" radius={[0, 4, 4, 0]}>
                   {o.bySource.map((g) => <Cell key={g.key} fill={SOURCE_COLOR[g.key as Source] ?? chart.muted} />)}
                 </Bar>
               </BarChart>

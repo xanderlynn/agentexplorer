@@ -84,8 +84,8 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                 {u.budgetUsd != null && (
                   <ReferenceLine y={u.budgetUsd} stroke="var(--color-amber-500)" strokeDasharray="4 3" label={{ value: "budget", fill: "var(--color-amber-500)", fontSize: 12, position: "insideTopLeft" }} />
                 )}
-                <Line type="linear" dataKey="pace" stroke={chart.axis} strokeDasharray="4 3" dot={false} />
-                <Line type="monotone" dataKey="actual" stroke={chart.accent} strokeWidth={2} dot={false} connectNulls={false} />
+                <Line isAnimationActive={false} type="linear" dataKey="pace" stroke={chart.axis} strokeDasharray="4 3" dot={false} />
+                <Line isAnimationActive={false} type="monotone" dataKey="actual" stroke={chart.accent} strokeWidth={2} dot={false} connectNulls={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -110,7 +110,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                   formatter={(v, name) => [unit === "cost" ? money(Number(v)) : compact(Number(v)), sourceLabel(String(name))]}
                 />
                 {SOURCES.map((s) => (
-                  <Bar key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} className="cursor-pointer" />
+                  <Bar isAnimationActive={false} key={s} dataKey={s} stackId="cost" fill={SOURCE_COLOR[s]} className="cursor-pointer" />
                 ))}
               </BarChart>
             </ResponsiveContainer>
@@ -124,7 +124,7 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis domain={[0, 1]} tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => `${Math.round(v * 100)}%`} />
                 <Tooltip {...chart.tooltip} formatter={(v) => [pct(Number(v)), "Hit rate"]} />
-                <Line type="monotone" dataKey="hitRate" stroke="var(--color-sky-500)" strokeWidth={2} dot={false} connectNulls />
+                <Line isAnimationActive={false} type="monotone" dataKey="hitRate" stroke="var(--color-sky-500)" strokeWidth={2} dot={false} connectNulls />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -138,9 +138,9 @@ export default function Usage({ days, setDays, drill }: { days: number; setDays:
                 <XAxis dataKey="date" tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
                 <YAxis tick={{ fill: chart.axis, fontSize: 12 }} tickFormatter={(v: number) => compact(v)} />
                 <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => compact(Number(v))} />
-                <Bar dataKey="input" name="Input" stackId="t" fill={chart.axis} />
-                <Bar dataKey="cacheWrite" name="Cache write" stackId="t" fill="var(--color-amber-500)" />
-                <Bar dataKey="output" name="Output" stackId="t" fill={chart.accent} />
+                <Bar isAnimationActive={false} dataKey="input" name="Input" stackId="t" fill={chart.axis} />
+                <Bar isAnimationActive={false} dataKey="cacheWrite" name="Cache write" stackId="t" fill="var(--color-amber-500)" />
+                <Bar isAnimationActive={false} dataKey="output" name="Output" stackId="t" fill={chart.accent} />
               </BarChart>
             </ResponsiveContainer>
           </div>

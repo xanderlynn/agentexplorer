@@ -85,7 +85,7 @@ export default function Execution({ days, setDays, drill }: { days: number; setD
                       <YAxis tick={{ fill: chart.axis, fontSize: 12 }} />
                       <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} labelFormatter={(l) => `Week of ${l}`} formatter={(v, name) => [`${Number(v).toFixed(1)}h`, MODE_LABEL[name as Mode] ?? name]} />
                       {MODES.map((m) => (
-                        <Bar key={m} dataKey={m} stackId="m" fill={MODE_COLOR[m]} />
+                        <Bar isAnimationActive={false} key={m} dataKey={m} stackId="m" fill={MODE_COLOR[m]} />
                       ))}
                     </BarChart>
                   </ResponsiveContainer>
@@ -165,7 +165,7 @@ export default function Execution({ days, setDays, drill }: { days: number; setD
               <YAxis allowDecimals={false} tick={{ fill: chart.axis, fontSize: 12 }} />
               <Tooltip {...chart.tooltip} cursor={{ fill: chart.grid }} formatter={(v) => [v, "Sessions"]} />
               <ReferenceLine x={zoneBucket(c.smartZoneTokens)} stroke="var(--color-amber-500)" strokeDasharray="4 3" />
-              <Bar dataKey="sessions" fill={chart.accent} radius={[3, 3, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="sessions" fill={chart.accent} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
